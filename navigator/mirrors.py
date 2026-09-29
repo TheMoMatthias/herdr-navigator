@@ -83,6 +83,7 @@ def _reconcile() -> list[str]:
         pane = ((res.get("plugin_pane") or {}).get("pane") or {})
         if pane.get("pane_id"):
             m[pane["pane_id"]] = a.session_id
+            save(m)  # at once: hooks running meanwhile must already see this pane as a mirror
             herdr.run("tab", "rename", pane["tab_id"], f"↗ {a.display}"[:28], check=False)
             msgs.append(f"＋ mirror {a.display}")
     # mirrors of projects that left the sidebar

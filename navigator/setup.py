@@ -55,7 +55,7 @@ POPUPS = [
     (["prefix+u", "f2"], "resume", "Navigator: resume a Claude/Codex session"),
     (["prefix+i", "f3"], "agents", "Navigator: every agent and sub-agent"),
     (["prefix+slash", "f4"], "keys", "Navigator: key cheat sheet"),
-    (["prefix+m", "f6"], "panes", "Navigator: arrange panes (split, move, resize)"),
+    (["prefix+m", "f6"], "panes", "Navigator: layout (arrange, split, move panes)"),
     (["prefix+shift+o", "f7"], "recent", "Navigator: recent places"),
 ]
 
@@ -70,7 +70,8 @@ UI = {
     "agent_panel_sort": "priority",
     "status_indicators": "symbols",
     "show_agent_labels_on_pane_borders": True,
-    "sidebar_max_width": 40,
+    "sidebar_max_width": 120,
+    "sidebar_min_width": 16,
     "window_title": "herdr - {workspace} - {tab}",
     "tab_bar_right_separator": "  ",
 }
@@ -150,6 +151,9 @@ def install(doc, added: dict) -> list[str]:
         if k not in ui:
             ui[k] = v
             added.setdefault("ui", []).append(k)
+    # herdr clamps a mouse-dragged sidebar to sidebar_max_width: leave room to drag it wide
+    if int(ui.get("sidebar_max_width", 36)) < UI["sidebar_max_width"]:
+        ui["sidebar_max_width"] = UI["sidebar_max_width"]
     # tab bar: replace our old entry, keep everything else
     bar = ui.get("tab_bar_right")
     if bar is None:

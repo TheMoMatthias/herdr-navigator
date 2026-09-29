@@ -242,3 +242,32 @@ def test_sidebar_width_edits_config_and_rolls_back_on_refusal(tmp_path, monkeypa
     with pytest.raises(RuntimeError):
         uiwidth.set_width("+6")
     assert cfg.read_text(encoding="utf-8") == before
+
+
+@pytest.mark.parametrize("kind,n", [(k, n) for k in ("columns", "rows", "grid", "main") for n in (2, 3, 4, 5)])
+def test_arrange_shapes_have_one_leaf_per_pane(kind, n):
+    from navigator import arrange
+
+    def leaves(t):
+        return [t["i"]] if t["type"] == "pane" else leaves(t["first"]) + leaves(t["second"])
+    tree = arrange.shape(kind, n)
+    assert sorted(leaves(tree)) == list(range(n))
+
+
+def test_arrange_move_plan_builds_grid():
+    from navigator import arrange
+    plan = []
+    arrange._moves(arrange.shape("grid", 4), plan)
+    # 4 panes, 3 moves; every moved pane is placed next to an already-placed anchor
+    placed = {0}
+    for moving, anchor, _ in plan:
+        assert anchor in placed and moving not in placed
+        placed.add(moving)
+    assert placed == {0, 1, 2, 3}
+
+
+def test_columns_are_equal_thirds():
+    from navigator import arrange
+    ratios = []
+    arrange._paths(arrange.shape("columns", 3), [], ratios)
+    assert [round(r, 3) for _, r in ratios] == [0.333, 0.5]

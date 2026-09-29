@@ -145,6 +145,14 @@ def session_name(r: "live.Running | None", s: "Session | None", terminal_title: 
     return terminal_title or (s.title if s else "") or (r.name if r else "")
 
 
+PLUGIN_ROOT = projects.key(str(__import__("pathlib").Path(__file__).resolve().parent.parent))
+
+
+def is_plugin_pane(cwd: str) -> bool:
+    """Plugin panes (mirrors, popups) run from the plugin folder; they are never user agents."""
+    return bool(cwd) and projects.key(cwd) == PLUGIN_ROOT
+
+
 def mirror_panes() -> dict[str, str]:
     """pane_id -> session_id of the mirror panes the Navigator opened."""
     try:
@@ -221,7 +229,7 @@ def build(with_sessions: bool = True) -> World:
     by_session = {s.id: s for s in all_sessions}
     mirrors = mirror_panes()
     for a in herdr_agents:
-        if a["pane_id"] in mirrors:
+        if a["pane_id"] in mirrors or is_plugin_pane(a.get("cwd", "")):
             continue  # a mirror pane stands in for an outside session: listed once, below
         sid = (a.get("agent_session") or {}).get("value", "")
         cwd = a.get("cwd", "")

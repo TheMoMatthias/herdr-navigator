@@ -145,7 +145,7 @@ class Mirror(App):
     def report(self, state: str, name: str, activity: str, subs: int, proj: str) -> None:
         if not self.pane:
             return
-        key = (state, name, activity, subs)
+        key = (state, name, activity, subs, proj, int(time.time() // 60))  # re-assert every minute
         if key == self.last_state:
             return
         self.last_state = key

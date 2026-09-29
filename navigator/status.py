@@ -39,7 +39,7 @@ def line() -> str:
     _maybe_reconcile(outside)
     if outside:
         parts.append(f"↗{len(outside)} in other windows: F3")
-    parts.append("F2 resume · F6 panes · F7 recent · Ctrl+Alt+R back")
+    parts.append("F2 resume · F6 layout · F7 recent · Ctrl+Alt+R back")
     return "  │  ".join(parts)
 
 
