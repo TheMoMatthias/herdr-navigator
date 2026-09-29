@@ -97,7 +97,7 @@ def test_setup_merge_keeps_user_settings_and_uninstalls_cleanly():
     assert doc["ui"]["status_indicators"] == "dots"            # user value kept
     assert doc["keys"]["next_tab"] == ["prefix+m", "ctrl+alt+n"]  # chord added beside it
     cmds = doc["keys"]["command"]
-    assert sum(1 for c in cmds if str(c.get("description", "")).startswith("Navigator:")) == len(setup.POPUPS)
+    assert sum(1 for c in cmds if str(c.get("description", "")).startswith("Navigator:")) == len(setup.POPUPS) + len(setup.SHELLS)
     assert any(c["command"] == "lazygit" for c in cmds)
     bar = doc["ui"]["tab_bar_right"]
     assert [e["type"] for e in bar] == ["hostname", "command"]
@@ -172,3 +172,73 @@ def test_mirror_feed_reads_claude_and_codex(tmp_path):
     ])
     lines = [t.plain for t in mirror.feed(str(f))]
     assert lines == ["👤 please fix the ledger", "💬 On it.", "⚙ Edit: ledger.py", "👤 codex ask"]
+
+
+def test_history_is_mru_and_deduplicated():
+    from navigator import history
+    for p in ("w1:p1", "w2:p1", "w1:p1", "w3:p2"):
+        history.record(p)
+    assert [e["pane_id"] for e in history.load()] == ["w3:p2", "w1:p1", "w2:p1"]
+    assert [e["pane_id"] for e in history.recent({"w1:p1", "w2:p1"})] == ["w1:p1", "w2:p1"]
+
+
+def test_history_reads_event_json(monkeypatch):
+    from navigator import history
+    monkeypatch.setenv("HERDR_PLUGIN_EVENT_JSON", json.dumps({"type": "pane.focused", "data": {"pane_id": "w9:p4"}}))
+    history.record()
+    assert history.load()[0]["pane_id"] == "w9:p4"
+
+
+def test_attention_queue_blocked_first_then_oldest():
+    from navigator import attention
+    snap = {"agents": [
+        {"pane_id": "a", "agent_status": "done", "state_change_seq": 1},
+        {"pane_id": "b", "agent_status": "blocked", "state_change_seq": 9},
+        {"pane_id": "c", "agent_status": "working", "state_change_seq": 0},
+        {"pane_id": "d", "agent_status": "blocked", "state_change_seq": 3},
+    ]}
+    assert [a["pane_id"] for a in attention.queue(snap)] == ["d", "b", "a"]
+
+
+def test_drop_zones():
+    from navigator import panes
+    assert panes.zone(0.05, 0.5) == "left"
+    assert panes.zone(0.95, 0.5) == "right"
+    assert panes.zone(0.5, 0.05) == "up"
+    assert panes.zone(0.5, 0.95) == "down"
+    assert panes.zone(0.5, 0.5) == "center"
+
+
+def test_layout_roundtrip_keeps_shape_and_agents():
+    from navigator import layouts
+    saved = {"type": "split", "direction": "right", "ratio": 0.6,
+             "first": {"type": "pane", "cwd": "/r", "agent": {"cli": "claude", "session": "S", "name": "LEAD"}},
+             "second": {"type": "pane", "cwd": "/r/wt", "label": "tests"}}
+    applied = layouts._for_apply(saved)
+    assert applied["ratio"] == 0.6 and "agent" not in applied["first"]
+    assert applied["second"]["label"] == "tests"
+    assert [l.get("agent", {}).get("name") for l in layouts._leaves(saved)] == ["LEAD", None]
+
+
+def test_sidebar_width_edits_config_and_rolls_back_on_refusal(tmp_path, monkeypatch):
+    from navigator import uiwidth
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('[ui]\nsidebar_width = 30\nsidebar_max_width = 36\n# keep me\n', encoding="utf-8")
+    monkeypatch.setattr(uiwidth, "herdr_config_path", lambda: cfg)
+
+    class R:
+        def __init__(self, out):
+            self.stdout, self.stderr = out, ""
+    calls = []
+    monkeypatch.setattr(uiwidth.subprocess, "run",
+                        lambda args, **kw: calls.append(args) or R('{"status":"applied"}'))
+    assert uiwidth.set_width("+12") == 42
+    doc = tomlkit.parse(cfg.read_text(encoding="utf-8"))
+    assert doc["ui"]["sidebar_width"] == 42 and doc["ui"]["sidebar_max_width"] == 42
+    assert "# keep me" in cfg.read_text(encoding="utf-8")
+    assert uiwidth.set_width("-100") == uiwidth.LOW
+    monkeypatch.setattr(uiwidth.subprocess, "run", lambda args, **kw: R('{"error":"bad"}'))
+    before = cfg.read_text(encoding="utf-8")
+    with pytest.raises(RuntimeError):
+        uiwidth.set_width("+6")
+    assert cfg.read_text(encoding="utf-8") == before

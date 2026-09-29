@@ -22,12 +22,12 @@ from textual.widget import Widget
 from textual.widgets import Button, DataTable, Footer, Input, Static, TabbedContent, TabPane
 
 from . import keys as keymap
-from . import launch, model, panes, settings, sidebar
+from . import attention, history, launch, layouts, model, panes, settings, sidebar, uiwidth
 from .model import STATE_ICON, Agent, World, age, summarize
 
 STATE_STYLE = {"blocked": "bold red", "done": "bold green", "working": "yellow", "idle": "dim", "unknown": "magenta"}
 CLI_STYLE = {"claude": "#d97757", "codex": "#10a37f"}
-TABS = ["projects", "agents", "resume", "keys", "panes"]
+TABS = ["projects", "agents", "resume", "keys", "panes", "recent"]
 WT_SEP = "|wt|"
 
 
@@ -84,10 +84,52 @@ class LayoutMap(Widget):
             self.pane_id = pane_id
             self.double = double
 
+    class Dropped(Message):
+        def __init__(self, src: str, target: str, where: str) -> None:
+            super().__init__()
+            self.src, self.target, self.where = src, target, where
+
     def __init__(self, **kw) -> None:
         super().__init__(**kw)
         self.layout_data: panes.TabLayout | None = None
         self.selected: str | None = None
+        self._drag: str | None = None
+        self._drop: tuple[str, str] | None = None
+        self._suppress_click = False
+
+    def _hit(self, x: int, y: int):
+        if not self.layout_data:
+            return None
+        boxes, _, _ = self._scaled()
+        for b, x0, y0, x1, y1 in boxes:
+            if x0 <= x < x1 and y0 <= y < y1:
+                return b, (x - x0) / max(1, x1 - x0), (y - y0) / max(1, y1 - y0)
+        return None
+
+    def on_mouse_down(self, event: events.MouseDown) -> None:
+        hit = self._hit(event.x, event.y)
+        self._drag = hit[0].pane_id if hit else None
+        self._drop = None
+        if self._drag:
+            self.capture_mouse()
+
+    def on_mouse_move(self, event: events.MouseMove) -> None:
+        if not self._drag:
+            return
+        hit = self._hit(event.x, event.y)
+        drop = (hit[0].pane_id, panes.zone(hit[1], hit[2])) if hit and hit[0].pane_id != self._drag else None
+        if drop != self._drop:
+            self._drop = drop
+            self.refresh()
+
+    def on_mouse_up(self, event: events.MouseUp) -> None:
+        if self._drag:
+            self.release_mouse()
+        if self._drag and self._drop:
+            self._suppress_click = True
+            self.post_message(self.Dropped(self._drag, self._drop[0], self._drop[1]))
+        self._drag, self._drop = None, None
+        self.refresh()
 
     def show(self, layout, selected) -> None:
         self.layout_data, self.selected = layout, selected
@@ -115,6 +157,11 @@ class LayoutMap(Widget):
         for b, x0, y0, x1, y1 in boxes:
             sel = b.pane_id == self.selected
             fill = "bold reverse cyan" if sel else ""
+            if self._drop and b.pane_id == self._drop[0]:
+                fill = "bold reverse yellow"
+            elif self._drag and b.pane_id == self._drag:
+                fill = "bold reverse magenta"
+            sel = sel or bool(fill)
             for y in range(y0, y1):
                 for x in range(x0, x1):
                     edge_x, edge_y = x in (x0, x1 - 1), y in (y0, y1 - 1)
@@ -133,6 +180,8 @@ class LayoutMap(Widget):
             inner = max(1, x1 - x0 - 2)
             icon = model.STATE_ICON.get(b.status, "") if b.status else ""
             lines = [f"{icon} {b.label}".strip()[:inner], (b.pane_id + ("  ◀ you" if b.focused else ""))[:inner]]
+            if self._drop and b.pane_id == self._drop[0]:
+                lines.append(panes.ZONE_LABEL[self._drop[1]][:inner])
             cy = y0 + max(1, (y1 - y0) // 2 - 1)
             for i, line in enumerate(lines):
                 yy = cy + i
@@ -151,6 +200,9 @@ class LayoutMap(Widget):
         return out
 
     def on_click(self, event: events.Click) -> None:
+        if self._suppress_click:
+            self._suppress_click = False
+            return
         if not self.layout_data:
             return
         boxes, _, _ = self._scaled()
@@ -185,6 +237,13 @@ class Navigator(App):
     #preset-bar Static { width: auto; margin-top: 1; }
     #pane-rename { display: none; }
     #pane-rename.show { display: block; }
+    #agent-detail { height: 16; border-top: tall $primary 40%; }
+    #agent-preview { height: 1fr; padding: 0 1; }
+    #agent-send { height: 3; }
+    #agent-msg { width: 1fr; }
+    #layout-bar { height: 3; }
+    #layout-name { width: 1fr; }
+    #saved-table { height: 7; }
     """
 
     BINDINGS = [
@@ -193,6 +252,12 @@ class Navigator(App):
         Binding("3", "tab('resume')", "Resume"),
         Binding("4", "tab('keys')", "Keys"),
         Binding("5", "tab('panes')", "Panes"),
+        Binding("6", "tab('recent')", "Recent"),
+        Binding("m", "message", "Message agent"),
+        Binding("g", "attention", "Next needing you"),
+        Binding("l", "restore_layout", "Restore layout"),
+        Binding("less_than_sign", "sidebar_width('-6')", "Sidebar narrower", show=False),
+        Binding("greater_than_sign", "sidebar_width('+6')", "Sidebar wider", show=False),
         Binding("left", "pane_sel('left')", "", show=False),
         Binding("right", "pane_sel('right')", "", show=False),
         Binding("up", "pane_sel('up')", "", show=False),
@@ -257,6 +322,7 @@ class Navigator(App):
                             yield Button("Resume r", id="btn-resume")
                             yield Button("+Claude c", id="btn-claude")
                             yield Button("+Codex x", id="btn-codex")
+                            yield Button("▦ Layout l", id="btn-layout")
                         yield VerticalScroll(Static(id="proj-info"))
             with TabPane("2 Agents", id="agents"):
                 with Horizontal(id="agent-bar", classes="btnrow"):
@@ -264,6 +330,15 @@ class Navigator(App):
                                      ("◐ Working w", "working"), ("○ Idle i", "idle"), ("↗ Other windows o", "outside")):
                         yield Button(label, id=f"flt-{f or 'all'}")
                 yield ClickTwiceTable(id="agent-table")
+                with Vertical(id="agent-detail"):
+                    yield VerticalScroll(Static(id="agent-preview"))
+                    with Horizontal(id="agent-send", classes="btnrow"):
+                        yield Input(placeholder="m: message the selected agent, Enter sends", id="agent-msg")
+                        yield Button("✉ Send", id="send-msg", variant="primary")
+                        yield Button("⏎ Enter", id="key-enter")
+                        yield Button("Esc", id="key-esc")
+                        yield Button("^C", id="key-ctrl_c")
+                        yield Button("⚑ Next needing you g", id="btn-attention")
             with TabPane("3 Resume", id="resume"):
                 with Horizontal(id="resume-bar", classes="btnrow"):
                     yield Input(placeholder="/ search title, prompt, project, worktree, branch…", id="resume-search")
@@ -276,6 +351,12 @@ class Navigator(App):
                     with Vertical():
                         yield LayoutMap(id="pane-map")
                         yield Input(placeholder="new pane name, Enter applies, empty clears", id="pane-rename")
+                        with Horizontal(id="layout-bar", classes="btnrow"):
+                            yield Input(placeholder="name this layout, Enter saves it for the project", id="layout-name")
+                            yield Button("💾 Save", id="layout-save")
+                            yield Button("▦ Restore", id="layout-restore")
+                            yield Button("🗑", id="layout-delete")
+                        yield ClickTwiceTable(id="saved-table")
                         with Horizontal(id="preset-bar", classes="btnrow"):
                             yield Static("New tab: ")
                             for i, name in enumerate(panes.PRESETS):
@@ -305,6 +386,14 @@ class Navigator(App):
                         with Horizontal():
                             yield Button("✎ Rename  n", id="pop-rename")
                             yield Button("✕ Close  Del", id="pop-close", variant="error")
+                        yield Static("Drag a pane onto another: middle swaps, an edge puts it on that side",
+                                     classes="title")
+                        yield Static("herdr sidebar width  (< >  ·  Ctrl+Alt+Shift+← →)", classes="title")
+                        with Horizontal():
+                            yield Button("◂ narrower", id="sbw-minus")
+                            yield Button("wider ▸", id="sbw-plus")
+            with TabPane("6 Recent", id="recent"):
+                yield ClickTwiceTable(id="recent-table")
         yield Static("", id="hint")
         yield Footer()
 
@@ -312,6 +401,8 @@ class Navigator(App):
         self.query_one("#proj-table", DataTable).add_columns("Sidebar", "Project / worktree", "Agents", "Last", "Sessions")
         self.query_one("#agent-table", DataTable).add_columns("State", "Project", "Agent", "Where", "Doing now")
         self.query_one("#resume-table", DataTable).add_columns("When", "CLI", "Project", "Title", "Branch", "")
+        self.query_one("#recent-table", DataTable).add_columns("When", "Project", "Where", "Pane / agent", "Status")
+        self.query_one("#saved-table", DataTable).add_columns("Saved layout", "Panes", "Agents", "Saved")
         self.render_keys()
         self.load_world()
         self.focus_table()
@@ -346,6 +437,8 @@ class Navigator(App):
         self.fill_resume()
         self.set_hint()
         self.load_panes()
+        self.fill_recent()
+        self.fill_saved()
 
     # ---- panes ----------------------------------------------------------------------------
     @work(thread=True, exclusive=True, group="panes")
@@ -357,9 +450,12 @@ class Navigator(App):
             if a.mirror_pane:
                 names[a.mirror_pane] = "↗ " + a.display
         try:
-            lay = panes.current(names=names)
+            snap = model.herdr.snapshot()
+            self._pane_info = {p["pane_id"]: p for p in snap.get("panes", [])}
+            lay = panes.current(snap, names=names)
         except Exception:
             lay = None
+        self.call_from_thread(self.fill_recent)
         self.call_from_thread(self.show_panes, lay)
 
     def show_panes(self, lay) -> None:
@@ -444,6 +540,211 @@ class Navigator(App):
         self.call_from_thread(self.notify, msg, timeout=2)
         self.load_panes()
 
+    # ---- drag and drop / saved layouts / sidebar width ------------------------------------
+    @on(LayoutMap.Dropped)
+    def _dropped(self, ev) -> None:
+        self.pane_selected = ev.src
+        self.run_drop(ev.src, ev.target, ev.where)
+
+    @work(thread=True, exclusive=True, group="pane-op")
+    def run_drop(self, src: str, target: str, where: str) -> None:
+        try:
+            msg = panes.drop(src, target, where, self.pane_layout.tab_id)
+        except Exception as e:
+            self.call_from_thread(self.notify, str(e)[:300], title="herdr refused", severity="error")
+            return
+        self.call_from_thread(self.notify, msg, timeout=3)
+        self.load_panes()
+
+    def layout_project(self):
+        """The project the Panes tab saves to: the project of the tab being shown."""
+        if not self.world or not self.pane_layout:
+            return None
+        p = self.world.project_of_workspace(self.pane_layout.workspace_id)
+        return model.projects.Project(p.root, p.name, "", p.path) if p else None
+
+    def fill_saved(self) -> None:
+        t = self.query_one("#saved-table", DataTable)
+        t.clear()
+        p = self.layout_project() or (self.selected()[0].project if self.selected()[0] else None)
+        if not p:
+            return
+        for name, spec in sorted(layouts.saved(p).items(), key=lambda kv: -kv[1].get("saved_at", 0)):
+            leaves = layouts._leaves(spec["root"])
+            agents = ", ".join(sorted({l["agent"]["name"][:14] for l in leaves if l.get("agent")}))[:40]
+            t.add_row(Text(name, style="bold"), str(len(leaves)), agents or "·", age(spec.get("saved_at", 0)),
+                      key=name)
+
+    def saved_selected(self) -> str | None:
+        t = self.query_one("#saved-table", DataTable)
+        if not t.row_count:
+            return None
+        return t.coordinate_to_cell_key(t.cursor_coordinate).row_key.value
+
+    @on(Input.Submitted, "#layout-name")
+    def _layout_name(self, ev: Input.Submitted) -> None:
+        self.layout_op("save", ev.value.strip() or "default")
+        ev.input.value = ""
+
+    @on(DataTable.RowSelected, "#saved-table")
+    def _saved_sel(self, ev: DataTable.RowSelected) -> None:
+        if not ev.data_table.fresh_highlight():
+            self.layout_op("restore", self.saved_selected())
+
+    @work(thread=True, exclusive=True, group="layout-op")
+    def layout_op(self, op: str, name: str | None) -> None:
+        p = self.layout_project()
+        if op == "restore_project":
+            v, _ = self.selected()
+            p = v.project if v else None
+            data = layouts.saved(p) if p else {}
+            name = max(data, key=lambda k: data[k].get("saved_at", 0)) if data else None
+            op = "restore"
+        if not p or not name:
+            self.call_from_thread(self.notify, "Nothing to do: pick a layout (or save one in tab 5 first).",
+                                  severity="warning")
+            return
+        try:
+            msg = {"save": lambda: layouts.save(self.world, p, self.pane_layout.tab_id, name),
+                   "restore": lambda: layouts.restore(self.world, p, name),
+                   "delete": lambda: layouts.delete(p, name)}[op]()
+        except Exception as e:
+            self.call_from_thread(self.notify, str(e)[:300], title="herdr refused", severity="error")
+            return
+        if op == "restore" and not msg.startswith("✗"):
+            self.call_from_thread(self.exit, msg)
+            return
+        self.call_from_thread(self.notify, msg, timeout=4)
+        self.call_from_thread(self.fill_saved)
+
+    def action_restore_layout(self) -> None:
+        self.layout_op("restore_project", None)
+
+    def action_sidebar_width(self, delta: str) -> None:
+        self.run_sidebar_width(delta)
+
+    @work(thread=True, exclusive=True, group="sbw")
+    def run_sidebar_width(self, delta: str) -> None:
+        try:
+            w = uiwidth.set_width(delta)
+        except Exception as e:
+            self.call_from_thread(self.notify, str(e)[:300], title="herdr refused", severity="error")
+            return
+        self.call_from_thread(self.notify, f"herdr sidebar width: {w} columns", timeout=2)
+
+    # ---- recent places ----------------------------------------------------------------------
+    def fill_recent(self) -> None:
+        t = self.query_one("#recent-table", DataTable)
+        t.clear()
+        if not self.world:
+            return
+        names = {a.pane_id: a for a in self.world.agents if a.pane_id}
+        mirrors = {a.mirror_pane: a for a in self.world.agents if a.mirror_pane}
+        info = getattr(self, "_pane_info", {})
+        for e in history.recent(set(info)):
+            pid = e["pane_id"]
+            p = info[pid]
+            a = names.get(pid) or mirrors.get(pid)
+            proj = self.world.project_of_workspace(p.get("workspace_id", ""))
+            label = (("↗ " if pid in mirrors else "") + a.display) if a else (
+                p.get("label") or os.path.basename((p.get("cwd") or "").rstrip("\\/")) or pid)
+            status = model.STATE_ICON.get(a.status, "") + " " + a.status if a else "shell"
+            where = f"{self.world.tab_labels.get(p.get('tab_id', ''), '')} · {pid}"
+            t.add_row(age(e["at"]), proj.label if proj else "?", where, label[:60], status, key=pid)
+
+    @on(DataTable.RowSelected, "#recent-table")
+    def _recent_sel(self, ev: DataTable.RowSelected) -> None:
+        if not ev.data_table.fresh_highlight():
+            self.action_open()
+
+    # ---- agents: preview, message, keys ------------------------------------------------------
+    def agent_selected(self):
+        t = self.query_one("#agent-table", DataTable)
+        if not t.row_count:
+            return None, -1
+        k = t.coordinate_to_cell_key(t.cursor_coordinate).row_key.value
+        return self.agent_rows.get(k, (None, -1))
+
+    @on(DataTable.RowHighlighted, "#agent-table")
+    def _agent_hl(self) -> None:
+        self.load_preview()
+
+    @work(thread=True, exclusive=True, group="preview")
+    def load_preview(self) -> None:
+        a, sub = self.agent_selected()
+        out = Text()
+        if a is None:
+            self.call_from_thread(self.query_one("#agent-preview", Static).update, out)
+            return
+        head = f"{a.display}  ·  {a.cli}  ·  {a.status}  ·  {a.project.label}"
+        out.append(head + "\n", style="bold cyan")
+        if sub >= 0 and sub < len(a.subagents):
+            sa = a.subagents[sub]
+            out.append(f"↳ sub-agent {sa.name} ({sa.kind}, {sa.model})\n{sa.description}\n{sa.activity}\n")
+        elif a.in_herdr:
+            try:
+                raw = model.herdr.run("agent", "read", a.pane_id, "--source", "recent-unwrapped",
+                                      "--lines", "14").get("raw", "")
+            except Exception as e:
+                raw = f"(could not read: {e})"
+            lines = [l for l in raw.splitlines() if l.strip() and not set(l.strip()) <= set("─━═-")]
+            out.append("\n".join(lines[-12:]))
+        else:
+            from . import mirror
+            s = next((s for s in self.world.sessions if s.id == a.session_id), None)
+            path = s.path if s else ""
+            if not path and a.session_id:
+                hits = list(model.live._claude_root().glob(f"*/{a.session_id}.jsonl"))
+                path = str(hits[0]) if hits else ""
+            for line in (mirror.feed(path, 10) if path else []):
+                out.append_text(line)
+                out.append("\n")
+            out.append("↗ runs in another window: type there. The mirror resumes it here once it exits.",
+                       style="dim magenta")
+        self.call_from_thread(self.query_one("#agent-preview", Static).update, out)
+
+    def action_message(self) -> None:
+        self.query_one("#agent-msg", Input).focus()
+
+    @on(Input.Submitted, "#agent-msg")
+    def _msg(self, ev: Input.Submitted) -> None:
+        self.send_to_agent(ev.value)
+        ev.input.value = ""
+
+    def send_to_agent(self, text: str = "", key: str = "") -> None:
+        a, _ = self.agent_selected()
+        if a is None:
+            return
+        if not a.in_herdr:
+            self.notify(f"'{a.display}' runs in another terminal window, so herdr can't type into it. "
+                        "Use that window, or resume it here after it exits.", severity="warning", timeout=8)
+            return
+        self.run_send(a.pane_id, a.display, text, key)
+
+    @work(thread=True, group="send")
+    def run_send(self, pane: str, name: str, text: str, key: str) -> None:
+        try:
+            if key:
+                model.herdr.run("agent", "send-keys", pane, key)
+                msg = f"sent {key} to {name}"
+            elif text.strip():
+                model.herdr.run("agent", "prompt", pane, text)
+                msg = f"✉ sent to {name}"
+            else:
+                return
+        except Exception as e:
+            err = str(e)
+            if "agent_blocked" in err:
+                err = f"{name} is waiting on a question or approval: answer it with ⏎ Enter / Esc, or jump there."
+            self.call_from_thread(self.notify, err[:300], title="not sent", severity="warning", timeout=8)
+            return
+        self.call_from_thread(self.notify, msg, timeout=3)
+        time.sleep(1.5)
+        self.load_preview()
+
+    def action_attention(self) -> None:
+        self.finish(attention.next_)
+
     def _pane_cwd(self, pane_id) -> str:
         snap = model.herdr.snapshot()
         return next((p.get("cwd", "") for p in snap.get("panes", []) if p.get("pane_id") == pane_id), "") \
@@ -523,6 +824,14 @@ class Navigator(App):
                 elif not w.exists:
                     out.append("  (removed)", style="dim red")
                 out.append("\n")
+            out.append("\n")
+        saved_layouts = layouts.saved(v.project)
+        if saved_layouts and not wt:
+            out.append("Saved layouts  (l restores the newest)\n", style="bold underline")
+            for name, spec in sorted(saved_layouts.items(), key=lambda kv: -kv[1].get("saved_at", 0)):
+                out.append(f"  ▦ {name}  ", style="bold")
+                out.append(f"{len(layouts._leaves(spec['root']))} panes · {age(spec.get('saved_at', 0))} ago\n",
+                           style="dim")
             out.append("\n")
         out.append("Agents\n", style="bold underline")
         if agents:
@@ -695,6 +1004,11 @@ class Navigator(App):
                         ("5 · click / arrows", "Panes: pick a pane on the map"),
                         ("v s z = t n Del", "Panes: split → / ↓, zoom, even out, to new tab, rename, close"),
                         ("Shift / Ctrl + arrows", "Panes: swap / resize the selected pane"),
+                        ("drag on the map", "Panes: middle of a pane swaps, an edge puts it on that side"),
+                        ("m", "Agents: message the selected agent (⏎ / Esc / ^C buttons answer prompts)"),
+                        ("g", "jump to the next agent that needs you"),
+                        ("l", "Projects: restore the project's newest saved layout"),
+                        ("6", "Recent places"), ("< >", "herdr sidebar narrower / wider"),
                         ("F5", "refresh (also opens newly active worktrees)"), ("Esc", "clear search / close")):
             out.append(f"  {k:<34}", style="bold yellow")
             out.append(f"{what}\n")
@@ -710,17 +1024,19 @@ class Navigator(App):
             self.query_one("#pane-map", LayoutMap).focus()
             self.load_panes()
             return
-        tid = {"projects": "#proj-table", "agents": "#agent-table", "resume": "#resume-table"}.get(tab)
+        tid = {"projects": "#proj-table", "agents": "#agent-table", "resume": "#resume-table",
+               "recent": "#recent-table"}.get(tab)
         if tid:
             self.query_one(tid, DataTable).focus()
 
     def set_hint(self) -> None:
         hint = {
             "projects": "Click twice (or ⏎) to go there · click ☐/☑ (or Space) to show/hide in herdr's sidebar · c/x new agent · r resume",
-            "agents": "Everything running: herdr panes, ↗ sessions in other windows (mirrored in herdr), ↳ sub-agents · click twice (or ⏎) to jump",
+            "agents": "Everything running · click twice (or ⏎) to jump · m: message it · ⏎/Esc/^C buttons answer prompts · g: next agent needing you",
             "resume": "Type to search · click twice (or ⏎) to resume in its project · ● live jumps there · ↗ runs in another window",
             "keys": "Your live key bindings, read from herdr's defaults + config.toml · F1 opens the Navigator anytime",
-            "panes": "Click a pane to select, double-click to jump there · arrows select · buttons act on the selection · in herdr itself: drag borders, right-click a pane",
+            "panes": "Click to select, double-click to jump, drag onto another pane to swap/move · buttons act on the selection · 💾 saves this tab as a project layout",
+            "recent": "Places you were, most recent first · click twice (or ⏎) to go back · Ctrl+Alt+R flips to the previous pane without opening this",
         }.get(self.active_tab(), "")
         self.query_one("#hint", Static).update(Text(hint, style="dim"))
 
@@ -744,8 +1060,16 @@ class Navigator(App):
             return tab == "agents"
         if action in ("pane_sel", "pane_op", "pane_rename"):
             return tab == "panes" and not typing
+        if action == "message":
+            return tab == "agents" and not typing
+        if action == "attention":
+            return tab in ("agents", "projects", "recent") and not typing
+        if action == "restore_layout":
+            return tab == "projects" and not typing
+        if action == "sidebar_width":
+            return not typing
         if action == "open":
-            return tab in ("projects", "agents", "resume", "panes")
+            return tab in ("projects", "agents", "resume", "panes", "recent")
         return True
 
     def action_tab(self, name: str) -> None:
@@ -823,6 +1147,12 @@ class Navigator(App):
         if tab == "panes":
             self.action_pane_op("focus")
             return
+        if tab == "recent":
+            t = self.query_one("#recent-table", DataTable)
+            if t.row_count:
+                pid = t.coordinate_to_cell_key(t.cursor_coordinate).row_key.value
+                self.finish(lambda: panes.focus(pid))
+            return
         if tab == "projects":
             v, wt = self.selected()
             if v and wt:
@@ -885,6 +1215,25 @@ class Navigator(App):
                 self.action_pane_rename()
             else:
                 self.action_pane_op(parts[0], parts[1] if len(parts) > 1 else "")
+        elif bid == "send-msg":
+            self.send_to_agent(self.query_one("#agent-msg", Input).value)
+            self.query_one("#agent-msg", Input).value = ""
+        elif bid.startswith("key-"):
+            self.send_to_agent(key=bid[4:].replace("_", "+"))
+        elif bid == "btn-attention":
+            self.action_attention()
+        elif bid == "layout-save":
+            inp = self.query_one("#layout-name", Input)
+            self.layout_op("save", inp.value.strip() or "default")
+            inp.value = ""
+        elif bid == "layout-restore":
+            self.layout_op("restore", self.saved_selected())
+        elif bid == "layout-delete":
+            self.layout_op("delete", self.saved_selected())
+        elif bid in ("sbw-minus", "sbw-plus"):
+            self.action_sidebar_width("-6" if bid == "sbw-minus" else "+6")
+        elif bid == "btn-layout":
+            self.action_restore_layout()
         elif bid.startswith("preset-"):
             self.action_pane_op("preset", list(panes.PRESETS)[int(bid[7:])])
         elif bid.startswith("flt-"):

@@ -1,6 +1,6 @@
 id = "momatthias.navigator"
 name = "Navigator"
-version = "0.3.0"
+version = "0.4.0"
 min_herdr_version = "0.9.3"
 description = "Clickable navigator for herdr: projects, worktrees, every agent and sub-agent (in herdr or not), cross-CLI session resume, project-grouped sidebar, key hints"
 platforms = ["linux", "macos", "windows"]
@@ -192,3 +192,28 @@ title = "Mirror of an outside session"
 placement = "tab"
 platforms = ["linux", "macos"]
 command = ["sh", "run.sh", "mirror"]
+
+# Recent places: remember every pane you focus.
+[[events]]
+on = "pane.focused"
+platforms = ["windows"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "history", "record"]
+
+[[events]]
+on = "pane.focused"
+platforms = ["linux", "macos"]
+command = ["sh", "run.sh", "history", "record"]
+
+[[actions]]
+id = "next-attention"
+title = "Navigator: jump to the next agent that needs you"
+contexts = ["workspace"]
+platforms = ["windows"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "attention", "next"]
+
+[[actions]]
+id = "next-attention-unix"
+title = "Navigator: jump to the next agent that needs you"
+contexts = ["workspace"]
+platforms = ["linux", "macos"]
+command = ["sh", "run.sh", "attention", "next"]

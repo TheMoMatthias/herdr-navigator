@@ -46,6 +46,7 @@ CHORDS = {
     "next_workspace": ["prefix+shift+j", "ctrl+alt+d"],
     "switch_workspace": ["alt+1..9"],
     "next_agent": ["prefix+a", "ctrl+alt+a"],
+    "last_pane": ["prefix+semicolon", "ctrl+alt+r"],
     "previous_agent": ["prefix+shift+a", "ctrl+alt+shift+a"],
 }
 
@@ -55,6 +56,14 @@ POPUPS = [
     (["prefix+i", "f3"], "agents", "Navigator: every agent and sub-agent"),
     (["prefix+slash", "f4"], "keys", "Navigator: key cheat sheet"),
     (["prefix+m", "f6"], "panes", "Navigator: arrange panes (split, move, resize)"),
+    (["prefix+shift+o", "f7"], "recent", "Navigator: recent places"),
+]
+
+# Detached commands (no window): (keys, launcher args, description)
+SHELLS = [
+    (["ctrl+alt+i", "f8"], ("attention", "next"), "Navigator: next agent that needs you"),
+    (["prefix+shift+right", "ctrl+alt+shift+right"], ("uiwidth", "+6"), "Navigator: sidebar wider"),
+    (["prefix+shift+left", "ctrl+alt+shift+left"], ("uiwidth", "-6"), "Navigator: sidebar narrower"),
 ]
 
 UI = {
@@ -192,6 +201,10 @@ def install(doc, added: dict) -> list[str]:
         t = tomlkit.table()
         t.update({"key": key, "type": "popup", "command": launcher("app", tab),
                   "width": "94%", "height": "90%", "description": desc})
+        cmds.append(t)
+    for key, args, desc in SHELLS:
+        t = tomlkit.table()
+        t.update({"key": key, "type": "shell", "command": launcher(*args), "description": desc})
         cmds.append(t)
     added["commands"] = True
     return notes

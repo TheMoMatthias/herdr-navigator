@@ -31,15 +31,15 @@ def line() -> str:
     blocked = [a for a in elsewhere if a.get("agent_status") == "blocked"]
     if blocked:
         names = sorted({labels.get(a.get("workspace_id"), "?") for a in blocked})
-        parts.append(f"{STATE_ICON['blocked']} {', '.join(names)[:28]} waits: Ctrl+Alt+A")
+        parts.append(f"{STATE_ICON['blocked']} {', '.join(names)[:28]} waits · {len(elsewhere)} need you: Ctrl+Alt+I")
     elif elsewhere:
-        parts.append(f"{STATE_ICON['done']}{len(elsewhere)} done elsewhere: Ctrl+Alt+A")
+        parts.append(f"{STATE_ICON['done']}{len(elsewhere)} need you: Ctrl+Alt+I")
     in_herdr = {(a.get("agent_session") or {}).get("value") for a in agents}
     outside = [r for r in live._claude_registry(time.time()) if r.session_id not in in_herdr]
     _maybe_reconcile(outside)
     if outside:
         parts.append(f"↗{len(outside)} in other windows: F3")
-    parts.append("F2 resume · F6 panes · F4 keys")
+    parts.append("F2 resume · F6 panes · F7 recent · Ctrl+Alt+R back")
     return "  │  ".join(parts)
 
 

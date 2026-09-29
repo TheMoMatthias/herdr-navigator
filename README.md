@@ -20,6 +20,17 @@ everything your coding agents are doing:
 * **Arrange panes with the mouse:** a to-scale map of the current tab. Click a pane, then
   split, swap, resize, zoom, even out, move to a new tab or workspace, rename or close it
   with buttons. Or open a new tab from a preset (2 columns, 2×2 grid, …).
+* **Get back and get to what matters:** `Ctrl+Alt+R` flips to the pane you were just in,
+  `F7` lists every recent place, and `Ctrl+Alt+I` jumps to the next agent that needs you
+  (blocked first, then finished, oldest first).
+* **Talk to agents from one place:** read an agent's latest output, send it a message, or
+  answer its prompt (`⏎` / `Esc` / `^C`) without switching panes.
+* **Saved project layouts:** save a tab as a named layout. Restoring it rebuilds the panes
+  and starts the agents again: each resumes its own session if that session isn't running
+  elsewhere, otherwise a fresh agent starts in its place.
+* **Drag and drop panes:** drag one pane onto another on the map. The middle swaps them, an
+  edge puts the pane on that side.
+* **A wider sidebar** when names don't fit: `Ctrl+Alt+Shift+→` / `←`, live.
 * **What do I press?** The key for everything is shown on screen: in the tab bar, in the
   Navigator's footer (clickable) and in a live cheat sheet built from your actual config.
 
@@ -54,7 +65,11 @@ herdr plugin uninstall momatthias.navigator
 | `F2` · `Ctrl+B › U` | **Resume.** Search every Claude/Codex session and open it in its project |
 | `F3` · `Ctrl+B › I` | **Agents.** Every agent, inside herdr or not, with its current activity |
 | `F4` · `Ctrl+B › /` | **Keys.** Your live key bindings |
-| `F6` · `Ctrl+B › M` | **Panes.** Click-to-arrange map of the current tab |
+| `F6` · `Ctrl+B › M` | **Panes.** Click or drag to arrange the current tab; saved layouts |
+| `F7` · `Ctrl+B › Shift+O` | **Recent.** Every place you were, most recent first |
+| `Ctrl+Alt+R` · `Ctrl+B › ;` | Back to the previous pane (press again to flip back) |
+| `Ctrl+Alt+I` · `F8` | Jump to the next agent that needs you |
+| `Ctrl+Alt+Shift+→` / `←` | herdr sidebar wider / narrower, applied live |
 
 Inside the Navigator:
 
@@ -70,7 +85,15 @@ Inside the Navigator:
   it live, but typing still happens in that window. Resuming it a second time would fork the
   conversation, so the mirror's **▶ Resume here** button unlocks only after the other window
   exits.
-- In **Panes** (tab 5): click a pane to select it and double-click to jump into it.
+- In **Agents** (tab 2): the lower half shows what the selected agent last did. `m` types a
+  message to it; the `⏎ Enter` / `Esc` / `^C` buttons answer a question or approval it's
+  waiting on. `g` jumps to the next agent that needs you. Sessions in other windows are read
+  only, so type into their own window.
+- **Saved layouts:** in Panes (tab 5), name the tab and press 💾 to save it for its
+  project. ▦ Restore (or `l` in Projects) rebuilds it as a *new* tab in the project's
+  workspace, creating the workspace if needed.
+- In **Panes** (tab 5): drag a pane onto another to swap it (middle) or place it beside
+  (edges). Click a pane to select it and double-click to jump into it.
   Arrows move the selection, `v`/`s` split, `z` zooms, `=` evens out, `t` moves the pane to a
   new tab, `n` renames it and `Del` closes it (press twice). `Shift+arrows` swap panes and
   `Ctrl+arrows` resize.
@@ -129,6 +152,7 @@ The settings file is `navigator.toml` in the plugin's config directory
 - turn workspace auto-naming off,
 - stop worktrees from opening automatically in the sidebar,
 - turn mirror tabs off (`[sidebar] mirror_outside = false`),
+- *sidebar width* lives in herdr's own config (`[ui] sidebar_width`); the shortcuts above edit it for you,
 - change the launch commands (for example `claude --dangerously-skip-permissions --resume {id}`).
 
 ## Develop

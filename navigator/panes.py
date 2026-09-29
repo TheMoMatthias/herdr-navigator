@@ -180,3 +180,33 @@ def preset(name: str, workspace_id: str, cwd: str) -> str:
     herdr.request("layout.apply", {"workspace_id": workspace_id, "tab_label": name, "focus": True,
                                    "root": PRESETS[name](cwd)})
     return f"＋ new tab: {name}"
+
+
+# --- drag and drop ----------------------------------------------------------------------------
+
+def zone(dx: float, dy: float) -> str:
+    """Where in the target box a drop landed: an edge third puts the pane on that side,
+    the middle swaps the two panes."""
+    edges = {"left": dx, "right": 1 - dx, "up": dy, "down": 1 - dy}
+    side, dist = min(edges.items(), key=lambda kv: kv[1])
+    return side if dist < 0.28 else "center"
+
+
+ZONE_LABEL = {"center": "⇆ swap", "left": "◀ put left", "right": "▶ put right", "up": "▲ put above",
+              "down": "▼ put below"}
+
+
+def drop(src: str, target: str, where: str, tab_id: str) -> str:
+    if src == target:
+        return ""
+    if where == "center":
+        herdr.run("pane", "swap", "--source-pane", src, "--target-pane", target)
+        return f"⇆ swapped {src} and {target}"
+    # herdr ignores a move inside the same tab, so park the pane in a temporary tab first
+    moved = herdr.run("pane", "move", src, "--new-tab", "--no-focus")
+    src_now = ((moved.get("move_result") or {}).get("pane") or {}).get("pane_id", src)
+    split = "right" if where in ("left", "right") else "down"
+    herdr.run("pane", "move", src_now, "--tab", tab_id, "--target-pane", target, "--split", split, "--focus")
+    if where in ("left", "up"):
+        herdr.run("pane", "swap", "--source-pane", src_now, "--target-pane", target)
+    return f"{ZONE_LABEL[where]}: {src_now} next to {target}"
