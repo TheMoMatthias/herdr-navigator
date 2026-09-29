@@ -10,6 +10,16 @@ everything your coding agents are doing:
   **sub-agents**, each with what it is doing right now (`⚙ Bash: run tests`, `💬 …`).
 * **How do I get back in?** Every Claude Code and Codex session from the last 45 days can be
   searched and resumed with one click, in the right project, worktree and tab.
+* **Sessions in other windows show up in herdr.** Each one gets a *mirror* tab in its
+  project's workspace. The mirror appears in herdr's Agents panel under the session's real
+  name and state, shows its live conversation, and resumes it inside herdr once the other
+  window exits.
+* **Real session names, for every CLI:** the name you gave it (`claude -n`, `/rename`), else
+  the provider's title (Codex thread name, Claude session title), else the terminal title.
+  Worktree workspaces are named after the session working in them.
+* **Arrange panes with the mouse:** a to-scale map of the current tab. Click a pane, then
+  split, swap, resize, zoom, even out, move to a new tab or workspace, rename or close it
+  with buttons. Or open a new tab from a preset (2 columns, 2×2 grid, …).
 * **What do I press?** The key for everything is shown on screen: in the tab bar, in the
   Navigator's footer (clickable) and in a live cheat sheet built from your actual config.
 
@@ -44,6 +54,7 @@ herdr plugin uninstall momatthias.navigator
 | `F2` · `Ctrl+B › U` | **Resume.** Search every Claude/Codex session and open it in its project |
 | `F3` · `Ctrl+B › I` | **Agents.** Every agent, inside herdr or not, with its current activity |
 | `F4` · `Ctrl+B › /` | **Keys.** Your live key bindings |
+| `F6` · `Ctrl+B › M` | **Panes.** Click-to-arrange map of the current tab |
 
 Inside the Navigator:
 
@@ -55,15 +66,24 @@ Inside the Navigator:
 - Hiding a project never kills anything. A workspace that still has an agent or a running
   command stays open, and the Navigator tells you why.
 - `c` / `x` starts a new Claude / Codex agent in the selected project or worktree.
-- A session marked **⧉ outside** is running in another terminal. The Navigator shows it but
-  won't resume it a second time, because two copies would fork the conversation.
+- A session marked **↗ other window** is running in another terminal. Its mirror tab follows
+  it live, but typing still happens in that window. Resuming it a second time would fork the
+  conversation, so the mirror's **▶ Resume here** button unlocks only after the other window
+  exits.
+- In **Panes** (tab 5): click a pane to select it and double-click to jump into it.
+  Arrows move the selection, `v`/`s` split, `z` zooms, `=` evens out, `t` moves the pane to a
+  new tab, `n` renames it and `Del` closes it (press twice). `Shift+arrows` swap panes and
+  `Ctrl+arrows` resize.
 
 Always visible in herdr:
 
-- **Tab bar:** `F1 ☰ Navigator │ ▣ project ◐2 │ ⚠ other-project waits: Ctrl+Alt+A │ ⧉3 outside herdr`
-- **Sidebar, spaces:** the agent counts per workspace, plus `⧉n outside` for that repo or worktree.
-- **Sidebar, agents:** `project ⎇ worktree`, the number of running sub-agents (`↳2`) and the
-  session title.
+- **Tab bar:** `F1 ☰ Navigator │ ▣ project ◐2 │ ⚠ other-project waits: Ctrl+Alt+A │ ↗3 in other windows: F3`
+- **Sidebar, spaces:** one group per repo. The repo's own checkout comes first (its second
+  line shows the branch, e.g. `main`), and the active worktrees are indented under it, named
+  after the session working there. `◐2 ○1` counts agents by state (working, idle, …).
+  `↗ NAME` lists sessions in other windows that have no mirror (only when mirrors are off).
+- **Sidebar, agents:** the session name, its state, running sub-agents (`↳2`) and, on the
+  second line, `project ⎇ worktree` and the CLI. `↗ other window` marks a mirror.
 
 Direct chords (no prefix) that setup adds:
 
@@ -87,12 +107,16 @@ own F1/F2 shortcuts (command help, prediction view).
 | Signal | Source |
 |---|---|
 | Agents in herdr | herdr's socket API (`herdr api snapshot`) |
-| Claude sessions in other terminals | `~/.claude/sessions/<pid>.json`, kept only while that process is alive |
+| Claude sessions in other terminals | `~/.claude/sessions/<pid>.json`, kept only while that process is alive (`busy`/`shell` → working, `idle`) |
+| Codex sessions in other terminals | a top-level rollout written in the last ~2 minutes |
 | Sub-agents | `…/<session>/subagents/agent-*.jsonl` + `.meta.json` (Claude); child threads (Codex), both written in the last ~2 minutes |
 | Resumable sessions | `~/.claude/projects/**/*.jsonl` and `~/.codex/sessions/**/rollout-*.jsonl` (head and tail only, cached) |
 | Projects and worktrees | the nearest `.git` directory; a `.git` *file* points a linked worktree at its main repo |
 
-Everything is read-only apart from what you click. Nothing leaves your machine.
+Apart from mirror tabs and the names and labels it reports to herdr, the Navigator changes
+only what you click. Nothing leaves your machine. Pane operations use herdr's CLI or its
+socket API (`pane.focus`, `layout.*`). Presets always build a *new* tab, so no running pane
+is ever rebuilt.
 
 ## Settings
 
@@ -104,6 +128,7 @@ The settings file is `navigator.toml` in the plugin's config directory
 - set directories to hide (temp folders are hidden by default),
 - turn workspace auto-naming off,
 - stop worktrees from opening automatically in the sidebar,
+- turn mirror tabs off (`[sidebar] mirror_outside = false`),
 - change the launch commands (for example `claude --dangerously-skip-permissions --resume {id}`).
 
 ## Develop

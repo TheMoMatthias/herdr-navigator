@@ -8,6 +8,7 @@ again (or press Enter) to open it, so a stray click never launches anything. Cli
 """
 from __future__ import annotations
 
+import os
 import sys
 import time
 
@@ -17,15 +18,16 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
+from textual.widget import Widget
 from textual.widgets import Button, DataTable, Footer, Input, Static, TabbedContent, TabPane
 
 from . import keys as keymap
-from . import launch, model, settings, sidebar
+from . import launch, model, panes, settings, sidebar
 from .model import STATE_ICON, Agent, World, age, summarize
 
 STATE_STYLE = {"blocked": "bold red", "done": "bold green", "working": "yellow", "idle": "dim", "unknown": "magenta"}
 CLI_STYLE = {"claude": "#d97757", "codex": "#10a37f"}
-TABS = ["projects", "agents", "resume", "keys"]
+TABS = ["projects", "agents", "resume", "keys", "panes"]
 WT_SEP = "|wt|"
 
 
@@ -70,6 +72,94 @@ class ClickTwiceTable(DataTable):
         await super()._on_click(event)
 
 
+class LayoutMap(Widget):
+    """A to-scale map of the focused tab's panes. Click a pane to select it, double-click to jump
+    to it. The selected pane is what the buttons act on."""
+
+    can_focus = True
+
+    class Picked(Message):
+        def __init__(self, pane_id: str, double: bool) -> None:
+            super().__init__()
+            self.pane_id = pane_id
+            self.double = double
+
+    def __init__(self, **kw) -> None:
+        super().__init__(**kw)
+        self.layout_data: panes.TabLayout | None = None
+        self.selected: str | None = None
+
+    def show(self, layout, selected) -> None:
+        self.layout_data, self.selected = layout, selected
+        self.refresh()
+
+    def _scaled(self):
+        lay = self.layout_data
+        W, H = max(self.size.width, 10), max(self.size.height, 5)
+        aw, ah = lay.area
+        out = []
+        for b in lay.panes:
+            x0 = round(b.x * W / aw)
+            y0 = round(b.y * H / ah)
+            x1 = max(x0 + 3, round((b.x + b.w) * W / aw))
+            y1 = max(y0 + 3, round((b.y + b.h) * H / ah))
+            out.append((b, x0, y0, min(x1, W), min(y1, H)))
+        return out, W, H
+
+    def render(self) -> Text:
+        if not self.layout_data or not self.layout_data.panes:
+            return Text("no layout (is herdr running?)", style="dim")
+        boxes, W, H = self._scaled()
+        grid = [[" "] * W for _ in range(H)]
+        style = [[""] * W for _ in range(H)]
+        for b, x0, y0, x1, y1 in boxes:
+            sel = b.pane_id == self.selected
+            fill = "bold reverse cyan" if sel else ""
+            for y in range(y0, y1):
+                for x in range(x0, x1):
+                    edge_x, edge_y = x in (x0, x1 - 1), y in (y0, y1 - 1)
+                    ch = " "
+                    if edge_x and edge_y:
+                        ch = {(x0, y0): "┌", (x1 - 1, y0): "┐", (x0, y1 - 1): "└"}.get((x, y), "┘")
+                    elif edge_y:
+                        ch = "─"
+                    elif edge_x:
+                        ch = "│"
+                    grid[y][x] = ch
+                    if sel:
+                        style[y][x] = fill
+                    elif edge_x or edge_y:
+                        style[y][x] = "bold green" if b.focused else "dim"
+            inner = max(1, x1 - x0 - 2)
+            icon = model.STATE_ICON.get(b.status, "") if b.status else ""
+            lines = [f"{icon} {b.label}".strip()[:inner], (b.pane_id + ("  ◀ you" if b.focused else ""))[:inner]]
+            cy = y0 + max(1, (y1 - y0) // 2 - 1)
+            for i, line in enumerate(lines):
+                yy = cy + i
+                if yy >= y1 - 1:
+                    break
+                xs = x0 + 1 + max(0, (inner - len(line)) // 2)
+                for j, ch in enumerate(line):
+                    grid[yy][xs + j] = ch
+                    style[yy][xs + j] = fill or ("bold" if i == 0 else "dim")
+        out = Text()
+        for y in range(H):
+            for x in range(W):
+                out.append(grid[y][x], style=style[y][x] or None)
+            if y < H - 1:
+                out.append("\n")
+        return out
+
+    def on_click(self, event: events.Click) -> None:
+        if not self.layout_data:
+            return
+        boxes, _, _ = self._scaled()
+        for b, x0, y0, x1, y1 in boxes:
+            if x0 <= event.x < x1 and y0 <= event.y < y1:
+                self.post_message(self.Picked(b.pane_id, event.chain >= 2))
+                return
+
+
 class Navigator(App):
     ENABLE_COMMAND_PALETTE = False
     TITLE = "herdr navigator"
@@ -85,6 +175,16 @@ class Navigator(App):
     #resume-search { width: 1fr; }
     DataTable { height: 1fr; }
     #keys-body { padding: 0 1; }
+    #pane-map { width: 1fr; height: 1fr; min-height: 12; }
+    #pane-controls { width: 46; padding: 0 1; }
+    #pane-controls Button { width: 100%; min-width: 6; margin: 0; }
+    #pane-controls Horizontal { height: 3; }
+    #pane-controls Horizontal Button { width: 1fr; }
+    .title { color: $text-muted; height: 1; margin-top: 1; }
+    #preset-bar { height: 3; }
+    #preset-bar Static { width: auto; margin-top: 1; }
+    #pane-rename { display: none; }
+    #pane-rename.show { display: block; }
     """
 
     BINDINGS = [
@@ -92,6 +192,26 @@ class Navigator(App):
         Binding("2", "tab('agents')", "Agents"),
         Binding("3", "tab('resume')", "Resume"),
         Binding("4", "tab('keys')", "Keys"),
+        Binding("5", "tab('panes')", "Panes"),
+        Binding("left", "pane_sel('left')", "", show=False),
+        Binding("right", "pane_sel('right')", "", show=False),
+        Binding("up", "pane_sel('up')", "", show=False),
+        Binding("down", "pane_sel('down')", "", show=False),
+        Binding("shift+left", "pane_op('swap','left')", "", show=False),
+        Binding("shift+right", "pane_op('swap','right')", "", show=False),
+        Binding("shift+up", "pane_op('swap','up')", "", show=False),
+        Binding("shift+down", "pane_op('swap','down')", "", show=False),
+        Binding("ctrl+left", "pane_op('resize','left')", "", show=False),
+        Binding("ctrl+right", "pane_op('resize','right')", "", show=False),
+        Binding("ctrl+up", "pane_op('resize','up')", "", show=False),
+        Binding("ctrl+down", "pane_op('resize','down')", "", show=False),
+        Binding("v", "pane_op('split','right')", "Split →"),
+        Binding("s", "pane_op('split','down')", "Split ↓"),
+        Binding("z", "pane_op('zoom')", "Zoom"),
+        Binding("equals_sign", "pane_op('equalize')", "Even out"),
+        Binding("t", "pane_op('newtab')", "→ new tab"),
+        Binding("n", "pane_rename", "Rename"),
+        Binding("delete", "pane_op('close')", "Close pane"),
         Binding("enter", "open", "Open", priority=False),
         Binding("space", "toggle_sidebar", "☑ Sidebar"),
         Binding("c", "new('claude')", "New Claude"),
@@ -119,6 +239,9 @@ class Navigator(App):
         self.agent_filter = ""
         self.selected_key: str | None = None  # project root, or root|wt|label
         self.agent_rows: dict[str, tuple[Agent, int]] = {}
+        self.pane_layout = None
+        self.pane_selected: str | None = None
+        self.close_armed = ""
 
     # ---- layout ---------------------------------------------------------------------------
     def compose(self) -> ComposeResult:
@@ -138,7 +261,7 @@ class Navigator(App):
             with TabPane("2 Agents", id="agents"):
                 with Horizontal(id="agent-bar", classes="btnrow"):
                     for label, f in (("All a", ""), ("⚠ Blocked b", "blocked"), ("✔ Done d", "done"),
-                                     ("◐ Working w", "working"), ("○ Idle i", "idle"), ("⧉ Outside o", "outside")):
+                                     ("◐ Working w", "working"), ("○ Idle i", "idle"), ("↗ Other windows o", "outside")):
                         yield Button(label, id=f"flt-{f or 'all'}")
                 yield ClickTwiceTable(id="agent-table")
             with TabPane("3 Resume", id="resume"):
@@ -148,6 +271,40 @@ class Navigator(App):
                 yield ClickTwiceTable(id="resume-table")
             with TabPane("4 Keys", id="keys"):
                 yield VerticalScroll(Static(id="keys-body"))
+            with TabPane("5 Panes", id="panes"):
+                with Horizontal():
+                    with Vertical():
+                        yield LayoutMap(id="pane-map")
+                        yield Input(placeholder="new pane name, Enter applies, empty clears", id="pane-rename")
+                        with Horizontal(id="preset-bar", classes="btnrow"):
+                            yield Static("New tab: ")
+                            for i, name in enumerate(panes.PRESETS):
+                                yield Button(name, id=f"preset-{i}")
+                    with VerticalScroll(id="pane-controls"):
+                        yield Static("", id="pane-selected")
+                        yield Button("⇥ Go to pane  ⏎", id="pop-focus", variant="primary")
+                        yield Static("Split", classes="title")
+                        with Horizontal():
+                            yield Button("◫ right  v", id="pop-split-right")
+                            yield Button("⊟ down  s", id="pop-split-down")
+                        yield Static("Swap with neighbour  (Shift+arrows)", classes="title")
+                        with Horizontal():
+                            for d, a in (("left", "←"), ("up", "↑"), ("down", "↓"), ("right", "→")):
+                                yield Button(a, id=f"pop-swap-{d}")
+                        yield Static("Resize  (Ctrl+arrows)", classes="title")
+                        with Horizontal():
+                            for d, a in (("left", "◂"), ("up", "▴"), ("down", "▾"), ("right", "▸")):
+                                yield Button(a, id=f"pop-resize-{d}")
+                        yield Static("Arrange", classes="title")
+                        with Horizontal():
+                            yield Button("⛶ Zoom  z", id="pop-zoom")
+                            yield Button("= Even out", id="pop-equalize")
+                        with Horizontal():
+                            yield Button("↦ New tab  t", id="pop-newtab")
+                            yield Button("↦ New space", id="pop-newws")
+                        with Horizontal():
+                            yield Button("✎ Rename  n", id="pop-rename")
+                            yield Button("✕ Close  Del", id="pop-close", variant="error")
         yield Static("", id="hint")
         yield Footer()
 
@@ -177,7 +334,7 @@ class Navigator(App):
         bar = Text.assemble(("herdr navigator", "bold"), "  ·  you are in ", (where, "bold cyan"),
                             "  ·  agents ", summarize(total) or "none")
         if outside:
-            bar.append(f"  ·  ⧉{outside} outside herdr", style="magenta")
+            bar.append(f"  ·  ↗{outside} in other windows", style="magenta")
         if subs:
             bar.append(f"  ·  ↳{subs} sub-agents", style="dim")
         bar.append("  ·  F1 opens this anytime", style="dim italic")
@@ -188,6 +345,109 @@ class Navigator(App):
         self.fill_agents()
         self.fill_resume()
         self.set_hint()
+        self.load_panes()
+
+    # ---- panes ----------------------------------------------------------------------------
+    @work(thread=True, exclusive=True, group="panes")
+    def load_panes(self) -> None:
+        names = {}
+        for a in (self.world.agents if self.world else []):
+            if a.pane_id:
+                names[a.pane_id] = a.display
+            if a.mirror_pane:
+                names[a.mirror_pane] = "↗ " + a.display
+        try:
+            lay = panes.current(names=names)
+        except Exception:
+            lay = None
+        self.call_from_thread(self.show_panes, lay)
+
+    def show_panes(self, lay) -> None:
+        self.pane_layout = lay
+        ids = [b.pane_id for b in lay.panes] if lay else []
+        if self.pane_selected not in ids:
+            self.pane_selected = next((b.pane_id for b in lay.panes if b.focused), ids[0] if ids else None) \
+                if lay else None
+        self.query_one("#pane-map", LayoutMap).show(lay, self.pane_selected)
+        b = next((b for b in lay.panes if b.pane_id == self.pane_selected), None) if lay else None
+        info = Text()
+        if b:
+            info.append(f"{b.label}\n", style="bold cyan")
+            info.append(f"{b.pane_id} · {b.w}×{b.h}" + ("  ◀ focused" if b.focused else ""), style="dim")
+            if lay.zoomed:
+                info.append("  · tab is zoomed", style="yellow")
+        self.query_one("#pane-selected", Static).update(info)
+
+    @on(LayoutMap.Picked)
+    def _picked(self, ev) -> None:
+        self.pane_selected = ev.pane_id
+        self.show_panes(self.pane_layout)
+        if ev.double:
+            self.action_pane_op("focus")
+
+    def action_pane_sel(self, direction: str) -> None:
+        if self.pane_layout and self.pane_selected:
+            n = panes.neighbor(self.pane_layout, self.pane_selected, direction)
+            if n:
+                self.pane_selected = n
+                self.show_panes(self.pane_layout)
+
+    def action_pane_rename(self) -> None:
+        inp = self.query_one("#pane-rename", Input)
+        inp.add_class("show")
+        inp.value = ""
+        inp.focus()
+
+    @on(Input.Submitted, "#pane-rename")
+    def _rename_done(self, ev: Input.Submitted) -> None:
+        ev.input.remove_class("show")
+        self.run_pane_op("rename", ev.value.strip())
+        self.query_one("#pane-map", LayoutMap).focus()
+
+    def action_pane_op(self, op: str, arg: str = "") -> None:
+        if not self.pane_selected:
+            return
+        if op == "close" and self.close_armed != self.pane_selected:
+            self.close_armed = self.pane_selected
+            self.notify(f"Close {self.pane_selected}? Its process ends. Press Del / ✕ again to confirm.",
+                        severity="warning", timeout=5)
+            return
+        self.close_armed = ""
+        self.run_pane_op(op, arg)
+
+    @work(thread=True, exclusive=True, group="pane-op")
+    def run_pane_op(self, op: str, arg: str = "") -> None:
+        p = self.pane_selected
+        lay = self.pane_layout
+        try:
+            msg = {
+                "focus": lambda: panes.focus(p),
+                "split": lambda: panes.split(p, arg),
+                "zoom": lambda: panes.zoom(p),
+                "swap": lambda: panes.swap(p, arg),
+                "resize": lambda: panes.resize(p, arg),
+                "equalize": lambda: panes.equalize(lay.tab_id),
+                "newtab": lambda: panes.to_new_tab(p),
+                "newws": lambda: panes.to_new_workspace(p),
+                "rename": lambda: panes.rename(p, arg),
+                "close": lambda: panes.close(p),
+                "preset": lambda: panes.preset(arg, lay.workspace_id, self._pane_cwd(p)),
+            }[op]()
+        except Exception as e:
+            self.call_from_thread(self.notify, str(e)[:300], title="herdr refused", severity="error")
+            return
+        if op == "focus":
+            self.call_from_thread(self.exit, msg)
+            return
+        if op == "split":
+            self.pane_selected = None  # follow the new, focused pane
+        self.call_from_thread(self.notify, msg, timeout=2)
+        self.load_panes()
+
+    def _pane_cwd(self, pane_id) -> str:
+        snap = model.herdr.snapshot()
+        return next((p.get("cwd", "") for p in snap.get("panes", []) if p.get("pane_id") == pane_id), "") \
+            or os.path.expanduser("~")
 
     # ---- projects -------------------------------------------------------------------------
     def selected(self):
@@ -271,7 +531,7 @@ class Navigator(App):
                 out.append_text(state_text(a.status))
                 out.append(f"  {a.cli} ")
                 out.append(a.name or a.title[:30], style="bold")
-                where = a.pane_id if a.in_herdr else f"outside herdr, pid {a.pid}"
+                where = a.pane_id if a.in_herdr else (f"other window · mirror {a.mirror_pane}" if a.mirror_pane else f"other window, pid {a.pid}")
                 out.append(f"  [{where}]\n", style="dim" if a.in_herdr else "magenta")
                 if a.activity:
                     out.append(f"      {a.activity[:70]}\n", style="dim")
@@ -291,7 +551,7 @@ class Navigator(App):
             wtl = f"[{s.project.worktree}] " if s.project.worktree and not wt else ""
             out.append(f" {wtl}{s.title[:46]}")
             if live:
-                out.append(" ● live" if live.in_herdr else " ⧉ running outside", style="green" if live.in_herdr else "magenta")
+                out.append(" ● live" if live.in_herdr else " ↗ other window", style="green" if live.in_herdr else "magenta")
             out.append("\n")
         if not sessions:
             out.append("  none in the last %d days\n" % settings.load().max_age_days, style="dim")
@@ -336,8 +596,10 @@ class Navigator(App):
             who.append(a.name or "", style="bold")
             if a.in_herdr:
                 where = Text(f"{a.pane_id} · {self.world.tab_labels.get(a.tab_id, '')}" + (" ◀" if a.focused else ""))
+            elif a.mirror_pane:
+                where = Text(f"↗ other window · mirror {a.mirror_pane}", style="magenta")
             else:
-                where = Text(f"⧉ outside, pid {a.pid}", style="magenta")
+                where = Text(f"↗ other window, pid {a.pid}", style="magenta")
             doing = a.activity or a.title
             t.add_row(state_text(a.status), proj, who, where, doing[:80], key=a.key)
             self.agent_rows[a.key] = (a, -1)
@@ -374,7 +636,7 @@ class Navigator(App):
             live = self.world.live_sessions.get(s.id)
             mark = ""
             if live:
-                mark = Text("● live", style="green") if live.in_herdr else Text("⧉ outside", style="magenta")
+                mark = Text("● live", style="green") if live.in_herdr else Text("↗ other window", style="magenta")
             t.add_row(age(s.mtime), Text(s.cli, style=CLI_STYLE.get(s.cli, "")), s.project.label,
                       s.title[:70], s.branch[:18], mark, key=f"{s.cli}:{s.id}")
         scope = self.query_one("#btn-scope", Button)
@@ -429,7 +691,10 @@ class Navigator(App):
                         ("Space / click ☐", "show the project in herdr's sidebar (or hide it)"),
                         ("c / x", "new Claude / Codex in the project or worktree"),
                         ("r", "resume a session of this project/worktree"), ("p", "Resume: this project ↔ all"),
-                        ("/", "search sessions"), ("b d w i o a", "Agents: filter by state / outside herdr"),
+                        ("/", "search sessions"), ("b d w i o a", "Agents: filter by state / other windows"),
+                        ("5 · click / arrows", "Panes: pick a pane on the map"),
+                        ("v s z = t n Del", "Panes: split → / ↓, zoom, even out, to new tab, rename, close"),
+                        ("Shift / Ctrl + arrows", "Panes: swap / resize the selected pane"),
                         ("F5", "refresh (also opens newly active worktrees)"), ("Esc", "clear search / close")):
             out.append(f"  {k:<34}", style="bold yellow")
             out.append(f"{what}\n")
@@ -440,16 +705,22 @@ class Navigator(App):
         return self.query_one("#tabs", TabbedContent).active
 
     def focus_table(self) -> None:
-        tid = {"projects": "#proj-table", "agents": "#agent-table", "resume": "#resume-table"}.get(self.active_tab())
+        tab = self.active_tab()
+        if tab == "panes":
+            self.query_one("#pane-map", LayoutMap).focus()
+            self.load_panes()
+            return
+        tid = {"projects": "#proj-table", "agents": "#agent-table", "resume": "#resume-table"}.get(tab)
         if tid:
             self.query_one(tid, DataTable).focus()
 
     def set_hint(self) -> None:
         hint = {
             "projects": "Click twice (or ⏎) to go there · click ☐/☑ (or Space) to show/hide in herdr's sidebar · c/x new agent · r resume",
-            "agents": "Everything running: herdr panes, ⧉ sessions in other terminals, ↳ sub-agents · click twice (or ⏎) to jump",
-            "resume": "Type to search · click twice (or ⏎) to resume in its project · ● live jumps there · ⧉ runs elsewhere",
+            "agents": "Everything running: herdr panes, ↗ sessions in other windows (mirrored in herdr), ↳ sub-agents · click twice (or ⏎) to jump",
+            "resume": "Type to search · click twice (or ⏎) to resume in its project · ● live jumps there · ↗ runs in another window",
             "keys": "Your live key bindings, read from herdr's defaults + config.toml · F1 opens the Navigator anytime",
+            "panes": "Click a pane to select, double-click to jump there · arrows select · buttons act on the selection · in herdr itself: drag borders, right-click a pane",
         }.get(self.active_tab(), "")
         self.query_one("#hint", Static).update(Text(hint, style="dim"))
 
@@ -471,8 +742,10 @@ class Navigator(App):
             return tab == "resume"
         if action == "filter":
             return tab == "agents"
+        if action in ("pane_sel", "pane_op", "pane_rename"):
+            return tab == "panes" and not typing
         if action == "open":
-            return tab in ("projects", "agents", "resume")
+            return tab in ("projects", "agents", "resume", "panes")
         return True
 
     def action_tab(self, name: str) -> None:
@@ -547,6 +820,9 @@ class Navigator(App):
         if not self.world:
             return
         tab = self.active_tab()
+        if tab == "panes":
+            self.action_pane_op("focus")
+            return
         if tab == "projects":
             v, wt = self.selected()
             if v and wt:
@@ -567,6 +843,8 @@ class Navigator(App):
                 return
             if a.in_herdr:
                 self.finish(lambda: (model.herdr.focus_agent(a.pane_id), f"→ {a.pane_id}")[1])
+            elif a.mirror_pane:
+                self.finish(lambda: panes.focus(a.mirror_pane))
             else:
                 self.notify(f"'{a.name}' runs in another terminal window (pid {a.pid}), so herdr can't "
                             "jump to it. To bring it here: exit it there, then resume it from tab 3.",
@@ -601,6 +879,14 @@ class Navigator(App):
         }
         if bid in actions:
             actions[bid]()
+        elif bid.startswith("pop-"):
+            parts = bid[4:].split("-")
+            if parts[0] == "rename":
+                self.action_pane_rename()
+            else:
+                self.action_pane_op(parts[0], parts[1] if len(parts) > 1 else "")
+        elif bid.startswith("preset-"):
+            self.action_pane_op("preset", list(panes.PRESETS)[int(bid[7:])])
         elif bid.startswith("flt-"):
             f = bid[4:]
             self.action_filter("" if f == "all" else f)

@@ -54,6 +54,7 @@ POPUPS = [
     (["prefix+u", "f2"], "resume", "Navigator: resume a Claude/Codex session"),
     (["prefix+i", "f3"], "agents", "Navigator: every agent and sub-agent"),
     (["prefix+slash", "f4"], "keys", "Navigator: key cheat sheet"),
+    (["prefix+m", "f6"], "panes", "Navigator: arrange panes (split, move, resize)"),
 ]
 
 UI = {
@@ -70,9 +71,8 @@ SPACE_ROWS = [
     ["branch", "git_status", {"token": "$outside", "fg": "#d3869b"}],
 ]
 AGENT_ROWS = [
-    ["state_icon", "agent", "state_text", {"token": "$subagents", "fg": "#fabd2f"}],
-    [{"token": "$project", "fg": "#83a598"}, "tab"],
-    [{"token": "terminal_title_stripped", "dim": True}],
+    ["state_icon", {"token": "$session", "bold": True}, "state_text", {"token": "$subagents", "fg": "#fabd2f"}],
+    [{"token": "$project", "fg": "#83a598"}, "agent", {"token": "$where", "fg": "#d3869b"}],
 ]
 
 

@@ -1,9 +1,11 @@
 """Startup/event hook: keep herdr's own UI project-aware.
 
 * auto-named workspaces are renamed to their project (never a name you typed yourself);
-* every workspace reports `$agents` (e.g. "⚠1 ◐2") and `$outside` (sessions of that project or
-  worktree running in other terminals, e.g. "⧉2") for the sidebar Space rows;
-* every agent pane reports `$project` (project ⎇ worktree) for the sidebar Agent rows.
+* linked-worktree workspaces are named after the session(s) working in them;
+* every workspace reports `$agents` (e.g. "⚠1 ◐2") and `$outside` (names of sessions running in
+  other windows that have no mirror pane) for the sidebar Space rows;
+* every agent pane reports `$session` (its name as the CLI shows it), `$project`
+  (project ⎇ worktree) and `$subagents` for the sidebar Agent rows.
 Only changed values are sent, so frequent status events stay cheap. Idempotent.
 """
 from __future__ import annotations
@@ -55,6 +57,19 @@ def _report(kind: str, target: str, name: str, value: str, old: dict, sent: dict
         pass
 
 
+def _named(ws: str | None = None, label: str | None = None) -> dict:
+    """Labels the Navigator gave workspaces, so it may update them but never your own names."""
+    f = settings.state_dir() / "named.json"
+    try:
+        d = json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        d = {}
+    if ws:
+        d[ws] = label
+        f.write_text(json.dumps(d), encoding="utf-8")
+    return d
+
+
 def sync(force: bool = False) -> None:
     started = time.time()
     world = model.build()
@@ -75,17 +90,28 @@ def sync(force: bool = False) -> None:
                 herdr.run("workspace", "rename", w.id, p.label, check=False)
         inside = Counter(a.status for a in world.agents if a.workspace_id == w.id)
         v = world.view(p.root)
-        # sessions in other terminals belong to the workspace of their worktree, else the primary
+        # sessions in other windows belong to the workspace of their worktree, else the primary
         open_wts = {x.project.worktree for x in world.workspaces if x.project and x.project.root == p.root}
-        outside = [a for a in (v.agents if v else []) if not a.in_herdr and (
+        mine = [a for a in (v.agents if v else []) if (
             a.project.worktree == p.worktree if p.worktree else a.project.worktree not in open_wts - {""})]
+        outside = [a for a in mine if not a.in_herdr and not a.mirror_pane]
         _report("workspace", w.id, "agents", summarize(inside), old, sent, seq)
-        _report("workspace", w.id, "outside", f"⧉{len(outside)} outside" if outside else "", old, sent, seq)
+        _report("workspace", w.id, "outside",
+                ("↗ " + ", ".join(a.display for a in outside))[:40] if outside else "", old, sent, seq)
+        # a worktree workspace is named after the session(s) working in it, as your CLI shows them
+        if w.linked_worktree and cfg.auto_name:
+            names = sorted({a.display for a in mine if a.display})
+            want = " · ".join(names)[:32] if names else os.path.basename(w.cwd.rstrip("\\/"))
+            ours = _named().get(w.id)
+            if want != w.label and (w.label == os.path.basename(w.cwd.rstrip("\\/")) or w.label == ours):
+                herdr.run("workspace", "rename", w.id, want, check=False)
+                _named(w.id, want)
 
     for a in world.agents:
-        if a.in_herdr:
+        if a.in_herdr:  # mirror panes report their own tokens
             subs = f"↳{len(a.subagents)}" if a.subagents else ""
             _report("pane", a.pane_id, "project", a.project.label, old, sent, seq)
+            _report("pane", a.pane_id, "session", a.display, old, sent, seq)
             _report("pane", a.pane_id, "subagents", subs, old, sent, seq)
     _save_sent(sent, started, force)
 

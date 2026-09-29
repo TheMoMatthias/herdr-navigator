@@ -42,6 +42,44 @@ def run(*args: str, timeout: float = 10.0, check: bool = True) -> dict:
     return data.get("result", data)
 
 
+def request(method: str, params: dict | None = None, timeout: float = 10.0) -> dict:
+    """One raw socket-API request, for methods the CLI does not expose (pane.focus, layout.*).
+    Windows: a named pipe named after HERDR_SOCKET_PATH. Unix: a Unix socket at that path."""
+    path = os.environ.get("HERDR_SOCKET_PATH") or _default_socket()
+    payload = (json.dumps({"id": f"nav:{method}", "method": method, "params": params or {}}) + "\n").encode()
+    buf = b""
+    if os.name == "nt":
+        with open(r"\\.\pipe" + "\\" + path, "r+b", buffering=0) as f:
+            f.write(payload)
+            while not buf.endswith(b"\n"):
+                chunk = f.read(65536)
+                if not chunk:
+                    break
+                buf += chunk
+    else:
+        import socket
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+            s.settimeout(timeout)
+            s.connect(path)
+            s.sendall(payload)
+            while not buf.endswith(b"\n"):
+                chunk = s.recv(65536)
+                if not chunk:
+                    break
+                buf += chunk
+    data = json.loads(buf.decode("utf-8", "replace").splitlines()[0])
+    if "error" in data:
+        raise HerdrError(json.dumps(data["error"])[:500])
+    return data.get("result", {})
+
+
+def _default_socket() -> str:
+    if os.name == "nt":
+        return os.path.join(os.environ.get("APPDATA", ""), "herdr", "herdr.sock")
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    return os.path.join(base, "herdr", "herdr.sock")
+
+
 def snapshot() -> dict:
     return run("api", "snapshot").get("snapshot", {})
 

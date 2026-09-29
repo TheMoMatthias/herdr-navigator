@@ -40,6 +40,7 @@ class Running:
     cwd: str
     status: str                 # busy | idle | active (codex, inferred)
     pid: int = 0
+    user_named: bool = False    # the user named it (claude -n / /rename), vs. a derived name
     transcript: str = ""
     activity: str = ""
     subagents: list[SubAgent] = field(default_factory=list)
@@ -181,6 +182,7 @@ def _claude_registry(now: float) -> list[Running]:
         out.append(Running(
             cli="claude", session_id=d.get("sessionId", ""), name=d.get("name", ""),
             cwd=d.get("cwd", ""), status=d.get("status", "idle"), pid=int(d.get("pid", 0)),
+            user_named=d.get("nameSource") == "user",
         ))
     return out
 
@@ -209,7 +211,7 @@ def running(sessions: list[Session]) -> list[Running]:
                 activity=activity(s.path)))
         else:
             out.append(Running(cli="codex", session_id=s.id, name=s.title, cwd=s.cwd,
-                               status="active", transcript=s.path))
+                               status="active", transcript=s.path, user_named=s.named))
     for r in out:
         if r.transcript:
             r.activity = activity(r.transcript)

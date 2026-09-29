@@ -13,7 +13,9 @@ from .sessions import Session, is_listed, load_sessions
 
 STATE_ORDER = {"blocked": 0, "done": 1, "working": 2, "idle": 3, "unknown": 4}
 STATE_ICON = {"blocked": "⚠", "done": "✔", "working": "◐", "idle": "○", "unknown": "?"}
-EXTERNAL_STATUS = {"busy": "working", "idle": "idle", "active": "working"}
+# Claude's registry: busy (thinking), shell (running a command), idle; Codex (inferred): active
+EXTERNAL_STATUS = {"busy": "working", "shell": "working", "active": "working", "idle": "idle",
+                   "waiting": "blocked", "permission": "blocked", "blocked": "blocked"}
 
 
 @dataclass
@@ -32,10 +34,16 @@ class Agent:
     pid: int = 0
     activity: str = ""
     subagents: list[live.SubAgent] = field(default_factory=list)
+    mirror_pane: str = ""        # herdr pane mirroring this outside session, if any
 
     @property
     def in_herdr(self) -> bool:
         return bool(self.pane_id)
+
+    @property
+    def display(self) -> str:
+        """The session's name as its CLI shows it, for any provider."""
+        return self.name or self.title or self.cli
 
     @property
     def key(self) -> str:
@@ -126,6 +134,25 @@ class World:
         return next((v for v in self.projects if v.project.root == root), None)
 
 
+def session_name(r: "live.Running | None", s: "Session | None", terminal_title: str) -> str:
+    """User-given name > provider title (Codex thread name, Claude session title) > terminal title."""
+    if r and r.user_named and r.name:
+        return r.name
+    if s and s.named:
+        return s.title
+    if r and r.name and r.cli != "claude":
+        return r.name
+    return terminal_title or (s.title if s else "") or (r.name if r else "")
+
+
+def mirror_panes() -> dict[str, str]:
+    """pane_id -> session_id of the mirror panes the Navigator opened."""
+    try:
+        return json.loads((settings.state_dir() / "mirrors.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
 def summarize(counts: Counter) -> str:
     parts = [f"{STATE_ICON[s]}{counts[s]}" for s in ("blocked", "done", "working", "idle") if counts.get(s)]
     return " ".join(parts)
@@ -191,26 +218,35 @@ def build(with_sessions: bool = True) -> World:
     ws_project = {w.id: w.project for w in workspaces}
     agents: list[Agent] = []
     seen_ids = set()
+    by_session = {s.id: s for s in all_sessions}
+    mirrors = mirror_panes()
     for a in herdr_agents:
+        if a["pane_id"] in mirrors:
+            continue  # a mirror pane stands in for an outside session: listed once, below
         sid = (a.get("agent_session") or {}).get("value", "")
         cwd = a.get("cwd", "")
         r = run_by_id.get(sid)
         seen_ids.add(sid)
+        term_title = a.get("terminal_title_stripped") or a.get("terminal_title") or ""
         agents.append(Agent(
             cli=a.get("agent", "?"), status=a.get("agent_status", "unknown"),
             project=projects.resolve(r.cwd if r else cwd) if (r or cwd) else (ws_project.get(a.get("workspace_id")) or projects.Project("?", "?")),
-            name=r.name if r else "", title=a.get("terminal_title_stripped") or a.get("terminal_title") or "",
+            name=session_name(r, by_session.get(sid), term_title), title=term_title,
             session_id=sid, pane_id=a["pane_id"], workspace_id=a.get("workspace_id", ""),
             tab_id=a.get("tab_id", ""), focused=bool(a.get("focused")), pid=r.pid if r else 0,
             activity=r.activity if r else "", subagents=r.subagents if r else [],
         ))
+    mirror_of = {sid: pane for pane, sid in mirrors.items()}
     for r in running:
         if r.session_id in seen_ids:
             continue
+        pane = mirror_of.get(r.session_id, "")
+        pane_info = next((a for a in herdr_agents if a["pane_id"] == pane), {})
         agents.append(Agent(
             cli=r.cli, status=EXTERNAL_STATUS.get(r.status, "unknown"), project=r.project,
-            name=r.name, title=r.name, session_id=r.session_id, pid=r.pid,
-            activity=r.activity, subagents=r.subagents,
+            name=session_name(r, by_session.get(r.session_id), ""), title=r.name,
+            session_id=r.session_id, pid=r.pid, activity=r.activity, subagents=r.subagents,
+            mirror_pane=pane, workspace_id=pane_info.get("workspace_id", ""), tab_id=pane_info.get("tab_id", ""),
         ))
 
     views: dict[str, ProjectView] = {}

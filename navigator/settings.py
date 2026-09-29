@@ -42,6 +42,9 @@ auto_name = true
 # Projects shown in herdr's sidebar are the ones you tick in the Navigator (Space / "Sidebar"
 # button). Active worktrees of a ticked project open as indented children of its workspace.
 open_active_worktrees = true
+# Sessions running in other terminal windows get a "mirror" tab in their project's workspace:
+# it shows what they do and lists them in herdr's Agents panel under their real name.
+mirror_outside = true
 
 [launch]
 # Commands used by "new agent" and "resume". {id} is the session id.
@@ -60,6 +63,7 @@ class Settings:
     hidden_patterns: list[str] = field(default_factory=list)
     auto_name: bool = True
     open_active_worktrees: bool = True
+    mirror_outside: bool = True
     launch: dict[str, str] = field(default_factory=dict)
 
 
@@ -131,5 +135,6 @@ def load() -> Settings:
         hidden_patterns=list(raw.get("hide", defaults["hide"]).get("patterns", [])),
         auto_name=bool(raw.get("workspaces", {}).get("auto_name", True)),
         open_active_worktrees=bool(raw.get("sidebar", {}).get("open_active_worktrees", True)),
+        mirror_outside=bool(raw.get("sidebar", {}).get("mirror_outside", True)),
         launch=launch,
     )

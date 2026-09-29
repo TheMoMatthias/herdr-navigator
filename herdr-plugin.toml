@@ -1,6 +1,6 @@
 id = "momatthias.navigator"
 name = "Navigator"
-version = "0.2.0"
+version = "0.3.0"
 min_herdr_version = "0.9.3"
 description = "Clickable navigator for herdr: projects, worktrees, every agent and sub-agent (in herdr or not), cross-CLI session resume, project-grouped sidebar, key hints"
 platforms = ["linux", "macos", "windows"]
@@ -177,3 +177,18 @@ width = "94%"
 height = "90%"
 platforms = ["linux", "macos"]
 command = ["sh", "run.sh", "app", "keys"]
+
+# Stand-in for an agent session running in another terminal (opened by the Navigator).
+[[panes]]
+id = "mirror"
+title = "Mirror of an outside session"
+placement = "tab"
+platforms = ["windows"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "mirror"]
+
+[[panes]]
+id = "mirror-unix"
+title = "Mirror of an outside session"
+placement = "tab"
+platforms = ["linux", "macos"]
+command = ["sh", "run.sh", "mirror"]

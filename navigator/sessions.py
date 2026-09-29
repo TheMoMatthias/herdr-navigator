@@ -16,7 +16,7 @@ from . import projects, settings
 
 HEAD_BYTES = 96 * 1024
 TAIL_BYTES = 256 * 1024
-CACHE_VERSION = 4
+CACHE_VERSION = 5
 
 
 @dataclass
@@ -31,6 +31,7 @@ class Session:
     path: str
     subagent: bool = False
     origin: str = ""    # e.g. "cli", "Codex Desktop"
+    named: bool = False  # title is a name the user/provider gave it, not a first prompt
 
     @property
     def project(self) -> projects.Project:
@@ -134,6 +135,7 @@ def _parse_claude(path: Path) -> Session | None:
         cli="claude",
         id=sid,
         cwd=cwd,
+        named=bool(title),
         title=_clip(title or first_prompt or _clean(last_prompt) or "(untitled)"),
         last_prompt=_clip(_clean(last_prompt) or first_prompt, 200),
         branch=branch,
@@ -289,6 +291,7 @@ def load_sessions(include_hidden: bool = False) -> list[Session]:
             s = Session(**rec)
             if cli == "codex" and s.id in codex_names:
                 s.title = _clip(codex_names[s.id])
+                s.named = True
             if include_hidden or is_listed(s):
                 out.append(s)
     try:

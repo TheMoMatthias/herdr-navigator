@@ -5,6 +5,7 @@ that gets you there. Stdlib only and no transcript reads: it runs every few seco
 """
 from __future__ import annotations
 
+import json
 import sys
 import time
 from collections import Counter
@@ -35,10 +36,30 @@ def line() -> str:
         parts.append(f"{STATE_ICON['done']}{len(elsewhere)} done elsewhere: Ctrl+Alt+A")
     in_herdr = {(a.get("agent_session") or {}).get("value") for a in agents}
     outside = [r for r in live._claude_registry(time.time()) if r.session_id not in in_herdr]
+    _maybe_reconcile(outside)
     if outside:
-        parts.append(f"⧉{len(outside)} outside herdr: F3")
-    parts.append("F2 resume · F4 keys")
+        parts.append(f"↗{len(outside)} in other windows: F3")
+    parts.append("F2 resume · F6 panes · F4 keys")
     return "  │  ".join(parts)
+
+
+def _maybe_reconcile(outside) -> None:
+    """Sessions started or ended in other windows: refresh their mirror panes, in the background."""
+    from . import mirrors, settings
+    try:
+        sel = (settings.state_dir() / "sidebar.json").stat().st_mtime
+    except OSError:
+        sel = 0
+    sig = json.dumps([sorted(r.session_id for r in outside), sel, sorted(mirrors.load())])
+    f = settings.state_dir() / "status-sig.json"
+    try:
+        if f.read_text(encoding="utf-8") == sig:
+            return
+    except OSError:
+        pass
+    f.write_text(sig, encoding="utf-8")
+    if mirrors.enabled():
+        mirrors.spawn_background()
 
 
 def main() -> None:

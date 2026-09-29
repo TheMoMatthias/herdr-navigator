@@ -97,7 +97,7 @@ def test_setup_merge_keeps_user_settings_and_uninstalls_cleanly():
     assert doc["ui"]["status_indicators"] == "dots"            # user value kept
     assert doc["keys"]["next_tab"] == ["prefix+m", "ctrl+alt+n"]  # chord added beside it
     cmds = doc["keys"]["command"]
-    assert sum(1 for c in cmds if str(c.get("description", "")).startswith("Navigator:")) == 4
+    assert sum(1 for c in cmds if str(c.get("description", "")).startswith("Navigator:")) == len(setup.POPUPS)
     assert any(c["command"] == "lazygit" for c in cmds)
     bar = doc["ui"]["tab_bar_right"]
     assert [e["type"] for e in bar] == ["hostname", "command"]
@@ -117,3 +117,58 @@ def test_unix_style_paths_resolve(tmp_path):
     p = projects.resolve(str(wt))
     assert (p.name, p.worktree) == ("r", "feat")
     assert p.wt_path == os.path.normpath(str(wt))
+
+
+def test_session_name_prefers_user_name_then_provider_title():
+    from navigator import model
+    r = live.Running(cli="claude", session_id="s", name="QUALITY-FIX", cwd="", status="idle", user_named=True)
+    assert model.session_name(r, None, "Some auto title") == "QUALITY-FIX"
+    r.user_named = False  # derived name like "mauri-b6": the session title is more telling
+    s = sessions.Session("claude", "s", "", "Ledger rework", "", "", 0, "", named=True)
+    assert model.session_name(r, s, "term title") == "Ledger rework"
+    assert model.session_name(None, None, "term title") == "term title"
+    codex = live.Running(cli="codex", session_id="c", name="Named thread", cwd="", status="active")
+    assert model.session_name(codex, None, "") == "Named thread"
+
+
+def test_external_status_mapping_covers_shell():
+    from navigator import model
+    assert model.EXTERNAL_STATUS["shell"] == "working"
+    assert model.EXTERNAL_STATUS["idle"] == "idle"
+
+
+def test_pane_neighbor_by_geometry():
+    from navigator import panes
+    lay = panes.TabLayout("t", "w", (100, 40), False, [
+        panes.PaneBox("a", 0, 0, 50, 40, True, "a"),
+        panes.PaneBox("b", 50, 0, 50, 20, False, "b"),
+        panes.PaneBox("c", 50, 20, 50, 20, False, "c"),
+    ])
+    assert panes.neighbor(lay, "a", "right") in ("b", "c")
+    assert panes.neighbor(lay, "b", "down") == "c"
+    assert panes.neighbor(lay, "c", "up") == "b"
+    assert panes.neighbor(lay, "b", "left") == "a"
+    assert panes.neighbor(lay, "a", "left") is None
+
+
+def test_presets_are_valid_bsp_trees():
+    from navigator import panes
+
+    def leaves(n):
+        return 1 if n["type"] == "pane" else leaves(n["first"]) + leaves(n["second"])
+    counts = {name: leaves(fn("/x")) for name, fn in panes.PRESETS.items()}
+    assert counts == {"2 columns": 2, "3 columns": 3, "2 rows": 2, "2×2 grid": 4, "main + 2 stacked": 3}
+
+
+def test_mirror_feed_reads_claude_and_codex(tmp_path):
+    from navigator import mirror
+    f = tmp_path / "c.jsonl"
+    jl(f, [
+        {"type": "user", "message": {"content": "please fix the ledger"}},
+        {"type": "user", "message": {"content": "<command-name>/model</command-name>"}},
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": "On it."},
+                                                       {"type": "tool_use", "name": "Edit", "input": {"file_path": "/r/ledger.py"}}]}},
+        {"type": "event_msg", "payload": {"type": "user_message", "message": "codex ask"}},
+    ])
+    lines = [t.plain for t in mirror.feed(str(f))]
+    assert lines == ["👤 please fix the ledger", "💬 On it.", "⚙ Edit: ledger.py", "👤 codex ask"]
