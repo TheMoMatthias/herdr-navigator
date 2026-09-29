@@ -1,0 +1,179 @@
+id = "momatthias.navigator"
+name = "Navigator"
+version = "0.2.0"
+min_herdr_version = "0.9.3"
+description = "Clickable navigator for herdr: projects, worktrees, every agent and sub-agent (in herdr or not), cross-CLI session resume, project-grouped sidebar, key hints"
+platforms = ["linux", "macos", "windows"]
+
+# Creates .venv with Textual + tomlkit (Python 3.11+ required).
+[[build]]
+platforms = ["windows"]
+command = ["python", "bootstrap.py"]
+
+[[build]]
+platforms = ["linux", "macos"]
+command = ["python3", "bootstrap.py"]
+
+# After a server (re)start: re-report sidebar metadata and show the "press F1" hint.
+
+[[startup]]
+platforms = ["windows"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "sync"]
+
+[[startup]]
+platforms = ["linux", "macos"]
+command = ["sh", "run.sh", "sync"]
+
+[[events]]
+on = "workspace.created"
+platforms = ["windows"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "sync"]
+
+[[events]]
+on = "workspace.created"
+platforms = ["linux", "macos"]
+command = ["sh", "run.sh", "sync"]
+
+[[events]]
+on = "pane.agent_detected"
+platforms = ["windows"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "sync"]
+
+[[events]]
+on = "pane.agent_detected"
+platforms = ["linux", "macos"]
+command = ["sh", "run.sh", "sync"]
+
+[[events]]
+on = "pane.agent_status_changed"
+platforms = ["windows"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "sync"]
+
+[[events]]
+on = "pane.agent_status_changed"
+platforms = ["linux", "macos"]
+command = ["sh", "run.sh", "sync"]
+
+[[events]]
+on = "pane.closed"
+platforms = ["windows"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "sync"]
+
+[[events]]
+on = "pane.closed"
+platforms = ["linux", "macos"]
+command = ["sh", "run.sh", "sync"]
+
+[[actions]]
+id = "setup"
+title = "Navigator: install keys, status bar and sidebar layout into config.toml"
+contexts = ["workspace"]
+platforms = ["windows"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "setup", "install"]
+
+[[actions]]
+id = "setup-unix"
+title = "Navigator: install keys, status bar and sidebar layout into config.toml"
+contexts = ["workspace"]
+platforms = ["linux", "macos"]
+command = ["sh", "run.sh", "setup", "install"]
+
+[[actions]]
+id = "uninstall-config"
+title = "Navigator: remove everything setup added to config.toml"
+contexts = ["workspace"]
+platforms = ["windows"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "setup", "uninstall"]
+
+[[actions]]
+id = "uninstall-config-unix"
+title = "Navigator: remove everything setup added to config.toml"
+contexts = ["workspace"]
+platforms = ["linux", "macos"]
+command = ["sh", "run.sh", "setup", "uninstall"]
+
+[[actions]]
+id = "sync"
+title = "Navigator: refresh sidebar labels"
+contexts = ["workspace"]
+platforms = ["windows"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "sync"]
+
+[[actions]]
+id = "sync-unix"
+title = "Navigator: refresh sidebar labels"
+contexts = ["workspace"]
+platforms = ["linux", "macos"]
+command = ["sh", "run.sh", "sync"]
+
+[[panes]]
+id = "navigator"
+title = "Navigator"
+placement = "popup"
+width = "94%"
+height = "90%"
+platforms = ["windows"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "app", "projects"]
+
+[[panes]]
+id = "navigator-unix"
+title = "Navigator"
+placement = "popup"
+width = "94%"
+height = "90%"
+platforms = ["linux", "macos"]
+command = ["sh", "run.sh", "app", "projects"]
+
+[[panes]]
+id = "resume"
+title = "Resume a session"
+placement = "popup"
+width = "94%"
+height = "90%"
+platforms = ["windows"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "app", "resume"]
+
+[[panes]]
+id = "resume-unix"
+title = "Resume a session"
+placement = "popup"
+width = "94%"
+height = "90%"
+platforms = ["linux", "macos"]
+command = ["sh", "run.sh", "app", "resume"]
+
+[[panes]]
+id = "agents"
+title = "All agents"
+placement = "popup"
+width = "94%"
+height = "90%"
+platforms = ["windows"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "app", "agents"]
+
+[[panes]]
+id = "agents-unix"
+title = "All agents"
+placement = "popup"
+width = "94%"
+height = "90%"
+platforms = ["linux", "macos"]
+command = ["sh", "run.sh", "app", "agents"]
+
+[[panes]]
+id = "keys"
+title = "Key bindings"
+placement = "popup"
+width = "94%"
+height = "90%"
+platforms = ["windows"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "app", "keys"]
+
+[[panes]]
+id = "keys-unix"
+title = "Key bindings"
+placement = "popup"
+width = "94%"
+height = "90%"
+platforms = ["linux", "macos"]
+command = ["sh", "run.sh", "app", "keys"]

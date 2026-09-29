@@ -1,0 +1,135 @@
+"""User settings: <HERDR_PLUGIN_CONFIG_DIR>/navigator.toml (a commented default is written on first run)."""
+from __future__ import annotations
+
+import json
+import os
+import tomllib
+from dataclasses import dataclass, field
+from functools import lru_cache
+from pathlib import Path
+
+DEFAULT_TOML = """\
+# herdr-navigator settings. Edit freely; changes apply the next time the Navigator opens.
+
+# Pin projects (they appear even with no recent sessions) and optionally rename them.
+# Keys are directories, values are display names ("" keeps the folder name).
+[projects]
+# '~/code/my-repo' = "My Repo"
+
+[sessions]
+# How far back the Resume list and project discovery look.
+max_age_days = 45
+# Skip Codex sub-agent threads and headless Claude runs in the Resume list (they still show
+# as sub-agents under their parent in the Agents tab).
+hide_subagents = true
+
+[hide]
+# Regexes (case-insensitive) on a session/pane cwd, matched with "/" as the separator on
+# every OS. Matching directories never become projects.
+patterns = [
+  '/appdata/local/temp/',
+  '/appdata/roaming/claude/scratch',
+  '^/tmp/',
+  '^/private/var/folders/',
+  '/scratchpad',
+]
+
+[workspaces]
+# Rename auto-named herdr workspaces to their project name (never touches names you set).
+auto_name = true
+
+[sidebar]
+# Projects shown in herdr's sidebar are the ones you tick in the Navigator (Space / "Sidebar"
+# button). Active worktrees of a ticked project open as indented children of its workspace.
+open_active_worktrees = true
+
+[launch]
+# Commands used by "new agent" and "resume". {id} is the session id.
+claude_new = "claude"
+claude_resume = "claude --resume {id}"
+codex_new = "codex"
+codex_resume = "codex resume {id}"
+"""
+
+
+@dataclass
+class Settings:
+    projects: dict[str, str] = field(default_factory=dict)
+    max_age_days: int = 45
+    hide_subagents: bool = True
+    hidden_patterns: list[str] = field(default_factory=list)
+    auto_name: bool = True
+    open_active_worktrees: bool = True
+    launch: dict[str, str] = field(default_factory=dict)
+
+
+PLUGIN_ID = "momatthias.navigator"
+
+
+def _dirs_file() -> Path:
+    return Path(__file__).resolve().parent.parent / ".herdr-dirs.json"
+
+
+def _remembered(kind: str) -> str | None:
+    """Keybinding popups don't get HERDR_PLUGIN_* env, so every run under herdr's plugin env
+    records the dirs herdr assigned, and later runs without that env reuse them."""
+    env = os.environ.get(f"HERDR_PLUGIN_{kind}_DIR")
+    if env and os.environ.get("HERDR_PLUGIN_ID") != PLUGIN_ID:
+        return env  # an override (tests, dev), not herdr's assignment: use it, don't remember it
+    f = _dirs_file()
+    try:
+        known = json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        known = {}
+    if env:
+        if known.get(kind) != env:
+            known[kind] = env
+            try:
+                f.write_text(json.dumps(known), encoding="utf-8")
+            except OSError:
+                pass
+        return env
+    return known.get(kind)
+
+
+def config_dir() -> Path:
+    d = _remembered("CONFIG")
+    return Path(d) if d else Path.home() / ".config" / "herdr-navigator"
+
+
+def state_dir() -> Path:
+    d = _remembered("STATE")
+    p = Path(d) if d else Path.home() / ".cache" / "herdr-navigator"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def settings_path() -> Path:
+    return config_dir() / "navigator.toml"
+
+
+@lru_cache(maxsize=1)
+def load() -> Settings:
+    path = settings_path()
+    if not path.exists():
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(DEFAULT_TOML, encoding="utf-8")
+        except OSError:
+            pass
+    try:
+        raw = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        raw = tomllib.loads(DEFAULT_TOML)
+    defaults = tomllib.loads(DEFAULT_TOML)
+    sess = {**defaults["sessions"], **raw.get("sessions", {})}
+    launch = {**defaults["launch"], **raw.get("launch", {})}
+    return Settings(
+        projects=dict(raw.get("projects", {})),
+        max_age_days=int(sess["max_age_days"]),
+        hide_subagents=bool(sess["hide_subagents"]),
+        hidden_patterns=list(raw.get("hide", defaults["hide"]).get("patterns", [])),
+        auto_name=bool(raw.get("workspaces", {}).get("auto_name", True)),
+        open_active_worktrees=bool(raw.get("sidebar", {}).get("open_active_worktrees", True)),
+        launch=launch,
+    )
