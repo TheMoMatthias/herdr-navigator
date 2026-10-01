@@ -9,6 +9,8 @@ again (or press Enter) to open it, so a stray click never launches anything. Cli
 from __future__ import annotations
 
 import os
+import shlex
+import shutil
 import sys
 import time
 
@@ -33,9 +35,37 @@ CLI_STYLE = {
 }
 
 
+# Order of the "+ New" picker and the Resume filter chips; anything else follows alphabetically.
+CLI_ORDER = ["claude", "codex", "pi", "opencode", "kilo", "gemini", "qwen", "copilot",
+             "droid", "amp", "cline", "cursor", "hermes"]
+CLI_NEW_KEY = {"claude": "c", "codex": "x", "pi": "e", "opencode": "u", "kilo": "y"}
+CLI_SHORT = {"opencode": "opencd", "copilot": "copilt", "cursor-agent": "cursor"}
+TAG_WIDTH = 6
+
+
 def cli_tag(cli: str) -> Text:
-    """The source CLI as a coloured [name] tag, shown wherever a session or agent is listed."""
-    return Text(f"[{cli or '?'}]", style=CLI_STYLE.get(cli, "dim"))
+    """The source CLI as a coloured fixed-width name, so titles after it line up."""
+    name = CLI_SHORT.get(cli, cli or "?")[:TAG_WIDTH]
+    return Text(name.ljust(TAG_WIDTH), style=CLI_STYLE.get(cli, "dim"))
+
+
+def cli_rank(cli: str) -> tuple[int, str]:
+    return (CLI_ORDER.index(cli) if cli in CLI_ORDER else len(CLI_ORDER), cli)
+
+
+def installed_clis() -> list[str]:
+    """CLIs whose "new" command is on PATH, in picker order."""
+    launch_cfg = settings.load().launch
+    out = []
+    for key, cmd in launch_cfg.items():
+        if key.endswith("_new") and cmd:
+            try:
+                exe = shlex.split(cmd)[0]
+            except ValueError:
+                continue
+            if shutil.which(exe):
+                out.append(key[:-4])
+    return sorted(out, key=cli_rank)
 TABS = ["projects", "agents", "panes", "resume", "recent", "keys"]
 WT_SEP = "|wt|"
 
@@ -238,7 +268,11 @@ class Navigator(App):
     #keys-body { padding: 0 1; }
     #shape-bar { height: 3; }
     #shape-bar Button { margin: 0 1 0 0; min-width: 12; }
-    #preset-row { height: 3; display: none; }
+    #preset-row, #new-row { height: 3; display: none; }
+    #new-row.show { display: block; }
+    #new-row Button { margin: 0 1 0 0; min-width: 6; }
+    #resume-cli { height: 3; }
+    #resume-cli Button { margin: 0 1 0 0; min-width: 6; }
     #preset-row.show { display: block; }
     #pane-map { width: 1fr; height: 1fr; min-height: 10; }
     #pane-tools { width: 36; padding: 0 1; }
@@ -318,6 +352,7 @@ class Navigator(App):
         self.current_project = None          # project of the focused workspace
         self.only_project = True             # Resume: limit to the selected project
         self.agent_filter = ""
+        self.cli_filter = ""                 # Resume: only this CLI's sessions ("" = all)
         self.selected_key: str | None = None  # project root, or root|wt|label
         self.agent_rows: dict[str, tuple[Agent, int]] = {}
         self.pane_layout = None
@@ -337,12 +372,13 @@ class Navigator(App):
                             yield Button("☑ Sidebar", id="btn-sidebar",
                                          tooltip="Show or hide this project in herdr's sidebar (Space)")
                             yield Button("Resume", id="btn-resume", tooltip="Resume one of its sessions (r)")
-                            yield Button("+ Claude", id="btn-claude", tooltip="New Claude Code agent here (c)")
-                            yield Button("+ Codex", id="btn-codex", tooltip="New Codex agent here (x)")
-                            yield Button("+ Pi", id="btn-pi", tooltip="New pi agent here (e)")
-                            yield Button("+ OpenCode", id="btn-opencode", tooltip="New OpenCode agent here (u)")
-                            yield Button("+ Kilo", id="btn-kilo", tooltip="New Kilo agent here (y)")
+                            yield Button("+ New", id="btn-new", tooltip="Start a new agent here: pick a CLI")
                             yield Button("▦", id="btn-layout", tooltip="Restore the newest saved layout (l)")
+                        with Horizontal(id="new-row"):
+                            for cli in installed_clis():
+                                key = CLI_NEW_KEY.get(cli)
+                                yield Button(Text(cli, style=CLI_STYLE.get(cli, "")), id=f"new-{cli}",
+                                             tooltip=f"New {cli} agent here" + (f" ({key})" if key else ""))
                         yield VerticalScroll(Static(id="proj-info"))
             with TabPane("Agents", id="agents"):
                 with Horizontal(id="agent-bar", classes="btnrow"):
@@ -403,6 +439,10 @@ class Navigator(App):
                 with Horizontal(id="resume-bar", classes="btnrow"):
                     yield Input(placeholder="Search sessions…", id="resume-search")
                     yield Button("This project", id="btn-scope", tooltip="This project ↔ all projects (p)")
+                with Horizontal(id="resume-cli"):
+                    yield Button("All", id="clif-all")
+                    for cli in sorted({c for c in CLI_STYLE if c != "cursor-agent"}, key=cli_rank):
+                        yield Button(cli, id=f"clif-{cli}")
                 yield ClickTwiceTable(id="resume-table")
             with TabPane("Recent", id="recent"):
                 yield ClickTwiceTable(id="recent-table")
@@ -921,10 +961,13 @@ class Navigator(App):
         q = self.query_one("#resume-search", Input).value.strip().lower()
         v, wt = self.selected()
         t.clear()
-        for s in self.world.sessions:
-            if self.only_project and v:
-                if s.project.root != v.project.root or (wt and s.project.worktree != wt.label):
-                    continue
+        in_scope = [s for s in self.world.sessions
+                    if not (self.only_project and v)
+                    or (s.project.root == v.project.root and not (wt and s.project.worktree != wt.label))]
+        self.sync_cli_chips(in_scope)
+        for s in in_scope:  # already newest first
+            if self.cli_filter and s.cli != self.cli_filter:
+                continue
             if q and not all(tok in " ".join((s.title, s.last_prompt, s.project.label, s.branch, s.cli)).lower()
                              for tok in q.split()):
                 continue
@@ -938,6 +981,26 @@ class Navigator(App):
         name = (v.project.name + (f" ⎇ {wt.label}" if wt else "")) if v else ""
         scope.label = (name[:22] if (self.only_project and v) else "All projects")
         scope.variant = "primary" if self.only_project else "default"
+
+    def sync_cli_chips(self, in_scope) -> None:
+        """'All · claude 17 · pi 44 …' above the Resume list: only CLIs that have sessions in
+        scope, and no row at all when there is just one."""
+        counts: dict[str, int] = {}
+        for s in in_scope:
+            counts[s.cli] = counts.get(s.cli, 0) + 1
+        clis = sorted(counts, key=cli_rank)
+        if self.cli_filter not in counts:
+            self.cli_filter = ""
+        bar = self.query_one("#resume-cli", Horizontal)
+        bar.display = len(clis) > 1
+        for b in bar.query(Button):
+            c = (b.id or "")[5:]
+            b.display = c == "all" or c in counts
+            if c == "all":
+                b.label = f"All {len(in_scope)}"
+            else:
+                b.label = Text(f"{c} {counts.get(c, 0)}", style=CLI_STYLE.get(c, ""))
+            b.variant = "primary" if (c == "all" and not self.cli_filter) or c == self.cli_filter else "default"
 
     @on(Input.Changed, "#resume-search")
     def _search(self) -> None:
@@ -1165,9 +1228,7 @@ class Navigator(App):
         bid = ev.button.id or ""
         actions = {
             "btn-go": self.action_open, "btn-resume": self.action_resume_project,
-            "btn-claude": lambda: self.action_new("claude"), "btn-codex": lambda: self.action_new("codex"),
-            "btn-pi": lambda: self.action_new("pi"),
-            "btn-opencode": lambda: self.action_new("opencode"), "btn-kilo": lambda: self.action_new("kilo"),
+            "btn-new": lambda: self.query_one("#new-row").toggle_class("show"),
             "btn-scope": self.action_toggle_project, "btn-sidebar": self.action_toggle_sidebar,
         }
         if bid in actions:
@@ -1203,6 +1264,13 @@ class Navigator(App):
             self.query_one("#preset-row").toggle_class("show")
         elif bid.startswith("preset-"):
             self.action_pane_op("preset", list(panes.PRESETS)[int(bid[7:])])
+        elif bid.startswith("new-"):
+            self.query_one("#new-row").remove_class("show")
+            self.action_new(bid[4:])
+        elif bid.startswith("clif-"):
+            c = bid[5:]
+            self.cli_filter = "" if c == "all" else c
+            self.fill_resume()
         elif bid.startswith("flt-"):
             f = bid[4:]
             self.action_filter("" if f == "all" else f)
