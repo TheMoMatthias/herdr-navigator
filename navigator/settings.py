@@ -52,6 +52,8 @@ claude_new = "claude"
 claude_resume = "claude --resume {id}"
 codex_new = "codex"
 codex_resume = "codex resume {id}"
+pi_new = "pi"
+pi_resume = "pi --session {id}"
 """
 
 

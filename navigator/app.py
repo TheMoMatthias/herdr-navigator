@@ -26,7 +26,7 @@ from . import arrange, attention, history, launch, layouts, model, panes, settin
 from .model import STATE_ICON, Agent, World, age, summarize
 
 STATE_STYLE = {"blocked": "bold red", "done": "bold green", "working": "yellow", "idle": "dim", "unknown": "magenta"}
-CLI_STYLE = {"claude": "#d97757", "codex": "#10a37f"}
+CLI_STYLE = {"claude": "#d97757", "codex": "#10a37f", "pi": "#7aa2f7"}
 TABS = ["projects", "agents", "panes", "resume", "recent", "keys"]
 WT_SEP = "|wt|"
 
@@ -266,6 +266,7 @@ class Navigator(App):
         # everything below works but stays out of the footer (buttons cover it)
         Binding("c", "new('claude')", "New Claude", show=False),
         Binding("x", "new('codex')", "New Codex", show=False),
+        Binding("e", "new('pi')", "New Pi", show=False),
         Binding("l", "restore_layout", "Restore layout", show=False),
         Binding("p", "toggle_project", "This project/all", show=False),
         Binding("b", "filter('blocked')", "Blocked", show=False),
@@ -327,6 +328,7 @@ class Navigator(App):
                             yield Button("Resume", id="btn-resume", tooltip="Resume one of its sessions (r)")
                             yield Button("+ Claude", id="btn-claude", tooltip="New Claude Code agent here (c)")
                             yield Button("+ Codex", id="btn-codex", tooltip="New Codex agent here (x)")
+                            yield Button("+ Pi", id="btn-pi", tooltip="New pi agent here (e)")
                             yield Button("▦", id="btn-layout", tooltip="Restore the newest saved layout (l)")
                         yield VerticalScroll(Static(id="proj-info"))
             with TabPane("Agents", id="agents"):
@@ -1149,6 +1151,7 @@ class Navigator(App):
         actions = {
             "btn-go": self.action_open, "btn-resume": self.action_resume_project,
             "btn-claude": lambda: self.action_new("claude"), "btn-codex": lambda: self.action_new("codex"),
+            "btn-pi": lambda: self.action_new("pi"),
             "btn-scope": self.action_toggle_project, "btn-sidebar": self.action_toggle_sidebar,
         }
         if bid in actions:

@@ -13,6 +13,7 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setenv("HERDR_PLUGIN_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    monkeypatch.setenv("PI_CODING_AGENT_DIR", str(tmp_path / "pi"))
     # pytest's tmp_path is under %TEMP%, which the default config hides
     (tmp_path / "cfg").mkdir()
     (tmp_path / "cfg" / "navigator.toml").write_text("[hide]\npatterns = []\n", encoding="utf-8")
@@ -153,3 +154,29 @@ def test_old_sessions_are_excluded(tmp_path):
 ])
 def test_pretty_keys(raw, want):
     assert keys.pretty(raw, "ctrl+b") == want
+
+
+def test_pi_sessions_listed_named_and_sorted_with_others(tmp_path):
+    proj = make_repo(tmp_path / "work")
+    now = time.time()
+    pdir = tmp_path / "pi" / "sessions" / "--work--"
+    write_jsonl(pdir / "2026-10-01T08-00-00-000Z_P1.jsonl", [
+        {"type": "session", "version": 3, "id": "P1", "cwd": str(proj)},
+        {"type": "message", "message": {"role": "user", "content": [{"type": "text", "text": "first ask"}]}},
+        {"type": "session_info", "name": "MORNING-WORK"},
+        {"type": "message", "message": {"role": "user", "content": [{"type": "text", "text": "latest ask"}]}},
+    ])
+    write_jsonl(pdir / "2026-10-01T09-00-00-000Z_P2.jsonl", [
+        {"type": "session", "version": 3, "id": "P2", "cwd": str(proj)},
+        {"type": "session_info", "name": "function-tester#bae7ea42"},
+    ])
+    cdir = tmp_path / "claude" / "projects" / "work"
+    write_jsonl(cdir / "C1.jsonl", [{"type": "user", "cwd": str(proj), "message": {"content": "claude ask"}}])
+    os.utime(pdir / "2026-10-01T08-00-00-000Z_P1.jsonl", (now, now))
+    os.utime(cdir / "C1.jsonl", (now - 3600, now - 3600))
+    ss = sessions.load_sessions()
+    assert [(s.cli, s.id) for s in ss] == [("pi", "P1"), ("claude", "C1")]
+    p = ss[0]
+    assert p.title == "MORNING-WORK" and p.named
+    assert p.last_prompt == "latest ask"
+    assert p.resume_command() == "pi --session P1"

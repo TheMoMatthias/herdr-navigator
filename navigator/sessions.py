@@ -16,12 +16,12 @@ from . import projects, settings
 
 HEAD_BYTES = 96 * 1024
 TAIL_BYTES = 256 * 1024
-CACHE_VERSION = 5
+CACHE_VERSION = 6
 
 
 @dataclass
 class Session:
-    cli: str            # "claude" | "codex"
+    cli: str            # "claude" | "codex" | "pi"
     id: str
     cwd: str
     title: str
@@ -238,11 +238,85 @@ def _codex_files(cutoff: float) -> list[Path]:
     return out
 
 
+# --- pi ------------------------------------------------------------------------
+
+def _pi_root() -> Path:
+    return Path(os.environ.get("PI_CODING_AGENT_DIR", Path.home() / ".pi" / "agent")) / "sessions"
+
+
+_PI_SUBAGENT_NAME = re.compile(r"#[0-9a-f]{8}$")
+
+
+def _parse_pi(path: Path) -> Session | None:
+    head, tail = _read_head_tail(path)
+    meta = None
+    name = first_prompt = last_prompt = ""
+    for line in head:
+        d = _loads(line)
+        if not d:
+            continue
+        t = d.get("type")
+        if t == "session" and meta is None:
+            meta = d
+        elif t == "session_info" and d.get("name"):
+            name = d["name"]
+        elif t == "message" and not first_prompt:
+            m = d.get("message") or {}
+            if m.get("role") == "user":
+                first_prompt = _text_of(m.get("content"))
+    if not meta or not meta.get("id"):
+        return None
+    for line in tail:
+        d = _loads(line)
+        if d and d.get("type") == "session_info" and d.get("name"):
+            name = d["name"]
+    for line in reversed(tail or head):
+        d = _loads(line)
+        m = (d or {}).get("message") or {}
+        if d and d.get("type") == "message" and m.get("role") == "user":
+            last_prompt = _text_of(m.get("content"))
+            if last_prompt:
+                break
+    st = path.stat()
+    return Session(
+        cli="pi",
+        id=meta["id"],
+        cwd=meta.get("cwd", ""),
+        named=bool(name),
+        title=_clip(name or first_prompt or "(untitled)"),
+        last_prompt=_clip(last_prompt or first_prompt, 200),
+        branch="",
+        mtime=st.st_mtime,
+        path=str(path),
+        # pi names spawned helper sessions "<agent>#<8 hex>"
+        subagent=bool(_PI_SUBAGENT_NAME.search(name)),
+        origin="cli",
+    )
+
+
+def _pi_files(cutoff: float) -> list[Path]:
+    root = _pi_root()
+    out = []
+    if not root.is_dir():
+        return out
+    for proj in root.iterdir():
+        if not proj.is_dir():
+            continue
+        try:
+            for f in proj.glob("*.jsonl"):
+                if f.stat().st_mtime >= cutoff:
+                    out.append(f)
+        except OSError:
+            continue
+    return out
+
+
 # --- index ---------------------------------------------------------------------
 
 PROVIDERS = {
     "claude": (_claude_files, _parse_claude),
     "codex": (_codex_files, _parse_codex),
+    "pi": (_pi_files, _parse_pi),
 }
 
 

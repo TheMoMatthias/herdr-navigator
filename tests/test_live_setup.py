@@ -14,6 +14,7 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setenv("HERDR_PLUGIN_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    monkeypatch.setenv("PI_CODING_AGENT_DIR", str(tmp_path / "pi"))
     (tmp_path / "cfg").mkdir()
     (tmp_path / "cfg" / "navigator.toml").write_text("[hide]\npatterns = []\n", encoding="utf-8")
     settings.load.cache_clear()
