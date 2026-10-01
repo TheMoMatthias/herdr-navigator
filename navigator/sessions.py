@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sqlite3
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -16,12 +17,12 @@ from . import projects, settings
 
 HEAD_BYTES = 96 * 1024
 TAIL_BYTES = 256 * 1024
-CACHE_VERSION = 6
+CACHE_VERSION = 8
 
 
 @dataclass
 class Session:
-    cli: str            # "claude" | "codex" | "pi"
+    cli: str            # provider key: "claude", "codex", "pi", "opencode", "kilo", ...
     id: str
     cwd: str
     title: str
@@ -73,7 +74,7 @@ def _text_of(content) -> str:
         return "" if _NOISE.match(content) else content
     if isinstance(content, list):
         for part in content:
-            if isinstance(part, dict) and part.get("type") in ("text", "input_text"):
+            if isinstance(part, dict) and part.get("type") in ("text", "input_text", None):  # Gemini/Qwen parts are untyped
                 t = part.get("text", "")
                 if t and not _NOISE.match(t):
                     return t
@@ -311,12 +312,244 @@ def _pi_files(cutoff: float) -> list[Path]:
     return out
 
 
+def _recent(root: Path, pattern: str, cutoff: float) -> list[Path]:
+    if not root.is_dir():
+        return []
+    out = []
+    for f in root.glob(pattern):
+        try:
+            if f.is_file() and f.stat().st_mtime >= cutoff:
+                out.append(f)
+        except OSError:
+            continue
+    return out
+
+
+# --- Qwen Code (Claude-style JSONL) ------------------------------------------------
+
+def _qwen_root() -> Path:
+    return Path(os.environ.get("QWEN_RUNTIME_DIR") or os.environ.get("QWEN_HOME") or Path.home() / ".qwen")
+
+
+def _parse_qwen(path: Path) -> Session | None:
+    head, tail = _read_head_tail(path)
+    sid = cwd = branch = title = first_prompt = last_prompt = ""
+    side = False
+    for line in head + tail:
+        d = _loads(line)
+        if not d:
+            continue
+        sid = sid or d.get("sessionId", "")
+        cwd = cwd or d.get("cwd", "")
+        branch = d.get("gitBranch") or branch
+        if d.get("type") == "system" and d.get("subtype") == "custom_title":
+            title = (d.get("systemPayload") or {}).get("customTitle", "") or title
+        elif d.get("type") == "user":
+            side = side or bool(d.get("isSidechain"))
+            msg = d.get("message") or {}
+            t = _text_of(msg.get("content") or msg.get("parts"))
+            if t:
+                first_prompt = first_prompt or t
+                last_prompt = t
+    if not cwd:
+        return None
+    return Session(
+        cli="qwen", id=sid or path.stem, cwd=cwd, named=bool(title),
+        title=_clip(title or first_prompt or "(untitled)"), last_prompt=_clip(last_prompt or first_prompt, 200),
+        branch=branch, mtime=path.stat().st_mtime, path=str(path), subagent=side, origin="cli")
+
+
+def _qwen_files(cutoff: float) -> list[Path]:
+    return _recent(_qwen_root() / "projects", "*/chats/*.jsonl", cutoff)
+
+
+# --- Gemini CLI ----------------------------------------------------------------------
+
+def _gemini_root() -> Path:
+    return Path(os.environ.get("GEMINI_CLI_HOME") or Path.home()) / ".gemini"
+
+
+def _parse_gemini(path: Path) -> Session | None:
+    # Project folders carry a .project_root marker; old sha256-named folders don't, so their
+    # cwd is unknown and they are skipped.
+    chats = next((p for p in path.parents if p.name == "chats"), None)
+    try:
+        cwd = (chats.parent / ".project_root").read_text(encoding="utf-8").strip() if chats else ""
+    except OSError:
+        cwd = ""
+    if not cwd:
+        return None
+    head, tail = _read_head_tail(path)
+    recs = [r for r in (_loads(line) for line in head + tail) if r]
+    if not recs:  # single pretty-printed JSON document
+        recs = [_loads(path.read_text(encoding="utf-8", errors="replace")) or {}]
+    if len(recs) == 1 and isinstance(recs[0].get("messages"), list):
+        recs = [recs[0], *[m for m in recs[0]["messages"] if isinstance(m, dict)]]
+    sid = title = first_prompt = last_prompt = ""
+    sub = path.parent.name != "chats"  # chats/<parentId>/<id>.jsonl
+    for d in recs:
+        sid = sid or d.get("sessionId", "")
+        title = d.get("summary") or title
+        sub = sub or d.get("kind") == "subagent"
+        if d.get("type") == "user":
+            t = _text_of(d.get("content"))
+            if t:
+                first_prompt = first_prompt or t
+                last_prompt = t
+    return Session(
+        cli="gemini", id=sid or path.stem, cwd=cwd, named=bool(title),
+        title=_clip(title or first_prompt or "(untitled)"), last_prompt=_clip(last_prompt or first_prompt, 200),
+        branch="", mtime=path.stat().st_mtime, path=str(path), subagent=sub, origin="cli")
+
+
+def _gemini_files(cutoff: float) -> list[Path]:
+    root = _gemini_root() / "tmp"
+    return _recent(root, "*/chats/*.json*", cutoff) + _recent(root, "*/chats/*/*.jsonl", cutoff)
+
+
+# --- GitHub Copilot CLI ----------------------------------------------------------------
+
+def _copilot_root() -> Path:
+    return Path(os.environ.get("COPILOT_HOME") or Path.home() / ".copilot") / "session-state"
+
+
+def _parse_copilot(path: Path) -> Session | None:
+    """`path` is the session's events.jsonl (or workspace.yaml); metadata is the flat yaml."""
+    meta = {}
+    for line in (path.parent / "workspace.yaml").read_text(encoding="utf-8", errors="replace").splitlines():
+        k, sep, v = line.partition(":")
+        if sep and line[:1] not in (" ", "\t", "#", "-"):
+            meta[k.strip()] = v.strip().strip("'\"")
+    if not meta.get("cwd"):
+        return None
+    name = meta.get("name", "")
+    return Session(
+        cli="copilot", id=meta.get("id") or path.parent.name, cwd=meta["cwd"], named=bool(name),
+        title=_clip(name or "(untitled)"), last_prompt="", branch=meta.get("branch", ""),
+        mtime=path.stat().st_mtime, path=str(path), origin="cli")
+
+
+def _copilot_files(cutoff: float) -> list[Path]:
+    out = []
+    for meta in _recent(_copilot_root(), "*/workspace.yaml", 0):
+        ev = meta.parent / "events.jsonl"
+        f = ev if ev.is_file() else meta  # events.jsonl changes on every turn, so it dates the session
+        try:
+            if f.stat().st_mtime >= cutoff:
+                out.append(f)
+        except OSError:
+            continue
+    return out
+
+
+# --- OpenCode family (SQLite: opencode, kilo) -----------------------------------------
+
+def _xdg_data() -> Path:
+    return Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+
+
+# cli -> database file. Kilo is an OpenCode fork with the same schema.
+SQLITE_STORES = {
+    "opencode": lambda: _xdg_data() / "opencode" / "opencode.db",
+    "kilo": lambda: _xdg_data() / "kilo" / "kilo.db",
+}
+
+_LAST_USER_SQL = """
+SELECT p.data FROM message m JOIN part p ON p.message_id = m.id
+WHERE m.session_id = ? AND json_extract(m.data, '$.role') = 'user'
+  AND json_extract(p.data, '$.type') = 'text'
+ORDER BY m.time_created {order}, p.time_created LIMIT 1
+"""
+
+
+def _sqlite_sessions(cli: str, db: Path, cutoff: float) -> list[Session]:
+    """One cheap query per store; a locked or foreign-schema database yields nothing."""
+    if not db.is_file():
+        return []
+    out = []
+    try:
+        con = sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True, timeout=1)
+        try:
+            rows = con.execute(
+                "SELECT id, directory, title, parent_id, time_updated FROM session"
+                " WHERE time_archived IS NULL AND time_updated >= ?", (int(cutoff * 1000),)).fetchall()
+            for sid, cwd, title, parent, updated in rows:
+                prompts = []
+                for order in ("ASC", "DESC"):
+                    r = con.execute(_LAST_USER_SQL.format(order=order), (sid,)).fetchone()
+                    prompts.append(_text_of([_loads(r[0]) or {}]) if r else "")
+                first, last = prompts
+                out.append(Session(
+                    cli=cli, id=sid, cwd=os.path.normpath(cwd) if cwd else "",
+                    named=bool(title), title=_clip(title or first or "(untitled)"),
+                    last_prompt=_clip(last or first, 200), branch="", mtime=updated / 1000,
+                    path=str(db), subagent=bool(parent), origin="cli"))
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return []
+    return out
+
+
+# --- Hermes Agent (SQLite) -------------------------------------------------------------
+
+def _hermes_sessions(cutoff: float) -> list[Session]:
+    db = Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes") / "state.db"
+    if not db.is_file():
+        return []
+    out = []
+    try:
+        con = sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True, timeout=1)
+        try:
+            rows = con.execute("SELECT id, cwd, title, started_at, ended_at FROM sessions"
+                               " WHERE source = 'cli'").fetchall()
+            for sid, cwd, title, started, ended in rows:
+                upd = con.execute("SELECT max(timestamp) FROM messages WHERE session_id = ?", (sid,)).fetchone()[0]
+                mtime = _epoch(upd) or _epoch(ended) or _epoch(started)
+                if not cwd or mtime < cutoff:
+                    continue
+                first, last = (
+                    (r[0] if r and r[0] else "") for r in (
+                        con.execute("SELECT content FROM messages WHERE session_id = ? AND role = 'user'"
+                                    f" ORDER BY timestamp {order} LIMIT 1", (sid,)).fetchone()
+                        for order in ("ASC", "DESC")))
+                first, last = _text_of(str(first)), _text_of(str(last))
+                out.append(Session(
+                    cli="hermes", id=str(sid), cwd=cwd, named=bool(title),
+                    title=_clip(title or first or "(untitled)"), last_prompt=_clip(last or first, 200),
+                    branch="", mtime=mtime, path=str(db), origin="cli"))
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return []
+    return out
+
+
+def _epoch(v) -> float:
+    """Unix seconds from seconds, milliseconds or an ISO string; 0 when unknown."""
+    if v in (None, ""):
+        return 0.0
+    try:
+        f = float(v)
+        return f / 1000 if f > 1e11 else f
+    except (TypeError, ValueError):
+        pass
+    try:
+        from datetime import datetime
+        return datetime.fromisoformat(str(v).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
+
+
 # --- index ---------------------------------------------------------------------
 
 PROVIDERS = {
     "claude": (_claude_files, _parse_claude),
     "codex": (_codex_files, _parse_codex),
     "pi": (_pi_files, _parse_pi),
+    "qwen": (_qwen_files, _parse_qwen),
+    "gemini": (_gemini_files, _parse_gemini),
+    "copilot": (_copilot_files, _parse_copilot),
 }
 
 
@@ -356,7 +589,7 @@ def load_sessions(include_hidden: bool = False) -> list[Session]:
             else:
                 try:
                     s = parse(f)
-                except OSError:
+                except (OSError, ValueError, TypeError, AttributeError):  # one odd file never sinks the scan
                     s = None
                 rec = asdict(s) if s else None
             fresh[k] = {"m": st.st_mtime, "s": st.st_size, "r": rec}
@@ -368,6 +601,10 @@ def load_sessions(include_hidden: bool = False) -> list[Session]:
                 s.named = True
             if include_hidden or is_listed(s):
                 out.append(s)
+    db_sessions = [s for cli, db in SQLITE_STORES.items() for s in _sqlite_sessions(cli, db(), cutoff)]
+    for s in db_sessions + _hermes_sessions(cutoff):
+        if include_hidden or is_listed(s):
+            out.append(s)
     try:
         _cache_path().write_text(json.dumps({"v": CACHE_VERSION, "files": fresh}), encoding="utf-8")
     except OSError:

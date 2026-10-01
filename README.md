@@ -140,7 +140,7 @@ own F1/F2 shortcuts (command help, prediction view).
 | Claude sessions in other terminals | `~/.claude/sessions/<pid>.json`, kept only while that process is alive (`busy`/`shell` → working, `idle`) |
 | Codex sessions in other terminals | a top-level rollout written in the last ~2 minutes |
 | Sub-agents | `…/<session>/subagents/agent-*.jsonl` + `.meta.json` (Claude); child threads (Codex), both written in the last ~2 minutes |
-| Resumable sessions | `~/.claude/projects/**/*.jsonl` `~/.codex/sessions/**/rollout-*.jsonl` and `~/.pi/agent/sessions/*/*.jsonl` (head and tail only, cached) |
+| Resumable sessions | Claude `~/.claude/projects`, Codex `~/.codex/sessions`, pi `~/.pi/agent/sessions`, Qwen `~/.qwen/projects`, Gemini `~/.gemini/tmp`, Copilot `~/.copilot/session-state` (head and tail only, cached); OpenCode / Kilo `~/.local/share/{opencode,kilo}/*.db` and Hermes `~/.hermes/state.db` (read-only SQLite). Each row carries a coloured `[cli]` tag. Droid, Amp, Cline and Cursor have launch/resume templates but no session reader yet. |
 | Projects and worktrees | the nearest `.git` directory; a `.git` *file* points a linked worktree at its main repo |
 
 Apart from mirror tabs and the names and labels it reports to herdr, the Navigator changes

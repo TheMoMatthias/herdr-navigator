@@ -26,7 +26,16 @@ from . import arrange, attention, history, launch, layouts, model, panes, settin
 from .model import STATE_ICON, Agent, World, age, summarize
 
 STATE_STYLE = {"blocked": "bold red", "done": "bold green", "working": "yellow", "idle": "dim", "unknown": "magenta"}
-CLI_STYLE = {"claude": "#d97757", "codex": "#10a37f", "pi": "#7aa2f7"}
+CLI_STYLE = {
+    "claude": "#d97757", "codex": "#10a37f", "pi": "#7aa2f7", "opencode": "#e5c07b", "kilo": "#f8f675",
+    "gemini": "#4796e3", "qwen": "#8b7cf6", "copilot": "#a371f7", "droid": "#ff7b39", "amp": "#f34e3f",
+    "cline": "#56b6c2", "cursor": "#c8c8c8", "cursor-agent": "#c8c8c8", "hermes": "#d4a72c",
+}
+
+
+def cli_tag(cli: str) -> Text:
+    """The source CLI as a coloured [name] tag, shown wherever a session or agent is listed."""
+    return Text(f"[{cli or '?'}]", style=CLI_STYLE.get(cli, "dim"))
 TABS = ["projects", "agents", "panes", "resume", "recent", "keys"]
 WT_SEP = "|wt|"
 
@@ -267,6 +276,8 @@ class Navigator(App):
         Binding("c", "new('claude')", "New Claude", show=False),
         Binding("x", "new('codex')", "New Codex", show=False),
         Binding("e", "new('pi')", "New Pi", show=False),
+        Binding("u", "new('opencode')", "New OpenCode", show=False),
+        Binding("y", "new('kilo')", "New Kilo", show=False),
         Binding("l", "restore_layout", "Restore layout", show=False),
         Binding("p", "toggle_project", "This project/all", show=False),
         Binding("b", "filter('blocked')", "Blocked", show=False),
@@ -329,6 +340,8 @@ class Navigator(App):
                             yield Button("+ Claude", id="btn-claude", tooltip="New Claude Code agent here (c)")
                             yield Button("+ Codex", id="btn-codex", tooltip="New Codex agent here (x)")
                             yield Button("+ Pi", id="btn-pi", tooltip="New pi agent here (e)")
+                            yield Button("+ OpenCode", id="btn-opencode", tooltip="New OpenCode agent here (u)")
+                            yield Button("+ Kilo", id="btn-kilo", tooltip="New Kilo agent here (y)")
                             yield Button("▦", id="btn-layout", tooltip="Restore the newest saved layout (l)")
                         yield VerticalScroll(Static(id="proj-info"))
             with TabPane("Agents", id="agents"):
@@ -399,8 +412,8 @@ class Navigator(App):
 
     def on_mount(self) -> None:
         self.query_one("#proj-table", DataTable).add_columns("", "Project", "Agents", "Last")
-        self.query_one("#agent-table", DataTable).add_columns("", "Agent", "Project", "Doing")
-        self.query_one("#resume-table", DataTable).add_columns("When", "", "Project", "Session", "")
+        self.query_one("#agent-table", DataTable).add_columns("", "CLI", "Agent", "Project", "Doing")
+        self.query_one("#resume-table", DataTable).add_columns("When", "CLI", "Project", "Session", "")
         self.query_one("#recent-table", DataTable).add_columns("When", "Project", "Pane", "")
         self.query_one("#saved-table", DataTable).add_columns("Saved layout", "Panes", "Saved")
         self.render_keys()
@@ -838,6 +851,8 @@ class Navigator(App):
         for s_ in sessions[:6]:
             live = self.world.live_sessions.get(s_.id)
             out.append(f"{age(s_.mtime):>4}  ", style="dim")
+            out.append(cli_tag(s_.cli))
+            out.append(" ")
             out.append(s_.title[:48], style=CLI_STYLE.get(s_.cli, ""))
             if live:
                 out.append("  ●" if live.in_herdr else "  ↗", style="green" if live.in_herdr else "magenta")
@@ -882,12 +897,12 @@ class Navigator(App):
             if not a.in_herdr:
                 who.append("  ↗", style="magenta")
             proj = Text(a.project.label[:30], style="cyan" if here else "")
-            t.add_row(Text(STATE_ICON.get(a.status, "?"), style=STATE_STYLE.get(a.status, "")), who, proj,
+            t.add_row(Text(STATE_ICON.get(a.status, "?"), style=STATE_STYLE.get(a.status, "")), cli_tag(a.cli), who, proj,
                       (a.activity or a.title)[:70], key=a.key)
             self.agent_rows[a.key] = (a, -1)
             for i, sa in enumerate(a.subagents):
                 k = f"{a.key}#sub{i}"
-                t.add_row(Text("↳", style="yellow"), Text(f"  {sa.name}", style="yellow"),
+                t.add_row(Text("↳", style="yellow"), "", Text(f"  {sa.name}", style="yellow"),
                           Text(sa.kind or "", style="dim"), (sa.activity or sa.description)[:70], key=k)
                 self.agent_rows[k] = (a, i)
         for b in self.query("#agent-bar Button"):
@@ -917,7 +932,7 @@ class Navigator(App):
             mark = ""
             if live:
                 mark = Text("● open", style="green") if live.in_herdr else Text("↗ elsewhere", style="magenta")
-            t.add_row(age(s.mtime), Text("●", style=CLI_STYLE.get(s.cli, "")), s.project.label[:30],
+            t.add_row(age(s.mtime), cli_tag(s.cli), s.project.label[:30],
                       s.title[:80], mark, key=f"{s.cli}:{s.id}")
         scope = self.query_one("#btn-scope", Button)
         name = (v.project.name + (f" ⎇ {wt.label}" if wt else "")) if v else ""
@@ -1152,6 +1167,7 @@ class Navigator(App):
             "btn-go": self.action_open, "btn-resume": self.action_resume_project,
             "btn-claude": lambda: self.action_new("claude"), "btn-codex": lambda: self.action_new("codex"),
             "btn-pi": lambda: self.action_new("pi"),
+            "btn-opencode": lambda: self.action_new("opencode"), "btn-kilo": lambda: self.action_new("kilo"),
             "btn-scope": self.action_toggle_project, "btn-sidebar": self.action_toggle_sidebar,
         }
         if bid in actions:

@@ -14,6 +14,12 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
     monkeypatch.setenv("PI_CODING_AGENT_DIR", str(tmp_path / "pi"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setenv("QWEN_HOME", str(tmp_path / "qwen"))
+    monkeypatch.setenv("GEMINI_CLI_HOME", str(tmp_path / "gemini"))
+    monkeypatch.setenv("COPILOT_HOME", str(tmp_path / "copilot"))
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    monkeypatch.delenv("QWEN_RUNTIME_DIR", raising=False)
     # pytest's tmp_path is under %TEMP%, which the default config hides
     (tmp_path / "cfg").mkdir()
     (tmp_path / "cfg" / "navigator.toml").write_text("[hide]\npatterns = []\n", encoding="utf-8")
@@ -180,3 +186,67 @@ def test_pi_sessions_listed_named_and_sorted_with_others(tmp_path):
     assert p.title == "MORNING-WORK" and p.named
     assert p.last_prompt == "latest ask"
     assert p.resume_command() == "pi --session P1"
+
+
+def test_opencode_and_kilo_sqlite_sessions(tmp_path):
+    import sqlite3
+    proj = make_repo(tmp_path / "work")
+    now_ms = int(time.time() * 1000)
+    for cli, ts in (("opencode", now_ms), ("kilo", now_ms - 60_000)):
+        db = tmp_path / "xdg" / cli / f"{cli}.db"
+        db.parent.mkdir(parents=True)
+        con = sqlite3.connect(db)
+        con.executescript("""
+            CREATE TABLE session (id text, directory text, title text, parent_id text,
+                                  time_updated integer, time_archived integer);
+            CREATE TABLE message (id text, session_id text, time_created integer, data text);
+            CREATE TABLE part (id text, message_id text, session_id text, time_created integer, data text);
+        """)
+        con.execute("INSERT INTO session VALUES ('S', ?, 'Named', NULL, ?, NULL)", (str(proj), ts))
+        con.execute("INSERT INTO session VALUES ('CHILD', ?, 'helper', 'S', ?, NULL)", (str(proj), ts))
+        con.execute("INSERT INTO session VALUES ('OLD', ?, 'archived', NULL, ?, 1)", (str(proj), ts))
+        for i, txt in enumerate(("first", "latest")):
+            con.execute("INSERT INTO message VALUES (?, 'S', ?, ?)", (f"m{i}", i, json.dumps({"role": "user"})))
+            con.execute("INSERT INTO part VALUES (?, ?, 'S', 0, ?)", (f"p{i}", f"m{i}", json.dumps({"type": "text", "text": txt})))
+        con.commit()
+        con.close()
+    ss = sessions.load_sessions()
+    assert [(s.cli, s.id) for s in ss] == [("opencode", "S"), ("kilo", "S")]
+    assert ss[0].title == "Named" and ss[0].last_prompt == "latest"
+    assert ss[1].resume_command() == "kilo --session S"
+
+
+def test_qwen_gemini_copilot_hermes_sessions(tmp_path):
+    import sqlite3
+    proj = make_repo(tmp_path / "work")
+    write_jsonl(tmp_path / "qwen" / "projects" / "work" / "chats" / "Q1.jsonl", [
+        {"sessionId": "Q1", "cwd": str(proj), "type": "user", "message": {"role": "user", "parts": [{"text": "qwen ask"}]}},
+        {"sessionId": "Q1", "type": "system", "subtype": "custom_title", "systemPayload": {"customTitle": "Qwen named"}},
+    ])
+    gproj = tmp_path / "gemini" / ".gemini" / "tmp" / "work"
+    gproj.mkdir(parents=True)
+    (gproj / ".project_root").write_text(str(proj), encoding="utf-8")
+    write_jsonl(gproj / "chats" / "session-2026-10-01T08-00-G1.jsonl", [
+        {"sessionId": "G1", "kind": "main", "summary": "Gemini named"},
+        {"type": "user", "content": [{"text": "gemini ask"}]},
+    ])
+    write_jsonl(gproj / "chats" / "G1" / "G2.jsonl", [{"sessionId": "G2", "kind": "subagent"}])
+    cdir = tmp_path / "copilot" / "session-state" / "C1"
+    cdir.mkdir(parents=True)
+    (cdir / "workspace.yaml").write_text(f"id: C1\ncwd: '{proj}'\nname: Copilot named\nbranch: main\n", encoding="utf-8")
+    (tmp_path / "hermes").mkdir()
+    con = sqlite3.connect(tmp_path / "hermes" / "state.db")
+    con.executescript("CREATE TABLE sessions (id, source, title, cwd, started_at, ended_at);"
+                      "CREATE TABLE messages (session_id, role, content, timestamp);")
+    con.execute("INSERT INTO sessions VALUES ('H1', 'cli', 'Hermes named', ?, ?, NULL)", (str(proj), time.time()))
+    con.execute("INSERT INTO sessions VALUES ('H2', 'telegram', 'chat', ?, ?, NULL)", (str(proj), time.time()))
+    con.execute("INSERT INTO messages VALUES ('H1', 'user', 'hermes ask', ?)", (time.time(),))
+    con.commit()
+    con.close()
+    by = {s.cli: s for s in sessions.load_sessions()}
+    assert set(by) == {"qwen", "gemini", "copilot", "hermes"}
+    assert by["qwen"].title == "Qwen named" and by["qwen"].last_prompt == "qwen ask"
+    assert by["gemini"].id == "G1" and by["gemini"].title == "Gemini named"  # G2 is a hidden sub-agent
+    assert by["copilot"].title == "Copilot named" and by["copilot"].branch == "main"
+    assert by["hermes"].last_prompt == "hermes ask"
+    assert by["hermes"].resume_command() == "hermes --resume H1"
