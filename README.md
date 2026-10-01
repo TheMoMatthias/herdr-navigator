@@ -107,7 +107,7 @@ Inside the Navigator:
 
 Always visible in herdr:
 
-- **Tab bar:** `⚠ other-project waiting for you (Ctrl+Alt+I) │ project: 2 working, 1 idle │ 3 sessions outside herdr (F3) │ F1 menu` (most urgent first, plain words; the full key list is in the Navigator)
+- **Tab bar:** `⚠ other-project waiting for you (Ctrl+Alt+I) │ project: 2 working, 1 idle │ 3 sessions outside herdr (F3) │ F1 Menu · F2 Resume · F6 Layout · F7 Recent · Ctrl+Alt+R Back` (most urgent first, plain words)
 - **Sidebar, spaces:** one group per repo. The repo's own checkout comes first (its second
   line shows the branch, e.g. `main`), and the active worktrees are indented under it, named
   after the session working there. `◐2 ○1` counts agents by state (working, idle, …).
