@@ -11,15 +11,25 @@ import time
 from collections import Counter
 
 from . import herdr, live, projects
-from .model import STATE_ICON, summarize
+from .model import STATE_ICON
+
+
+STATE_WORD = {"blocked": "waiting", "done": "done", "working": "working", "idle": "idle"}
+
+
+def _plain(counts: Counter) -> str:
+    """'1 working, 2 idle' — words, not glyphs, so the bar reads without a legend."""
+    return ", ".join(f"{counts[s]} {w}" for s, w in STATE_WORD.items() if counts.get(s)) or "no agents"
 
 
 def line() -> str:
-    hint = "F1 ☰ Navigator"
+    """Most urgent first, then where you are, then the menu key; every item says what it is and
+    which key acts on it. The full key list lives in the Navigator (F1), not here."""
+    menu = "F1 menu"
     try:
         snap = herdr.snapshot()
     except Exception:
-        return f"{hint}  │  herdr unreachable"
+        return f"herdr unreachable  │  {menu}"
     ws_id = snap.get("focused_workspace_id", "")
     cwd = next((p.get("cwd", "") for p in snap.get("panes", []) if p.get("workspace_id") == ws_id), "")
     here = projects.resolve(cwd).label if cwd else "?"
@@ -27,19 +37,22 @@ def line() -> str:
     mine = Counter(a.get("agent_status") for a in agents if a.get("workspace_id") == ws_id)
     elsewhere = [a for a in agents if a.get("workspace_id") != ws_id and a.get("agent_status") in ("blocked", "done")]
     labels = {w["workspace_id"]: w.get("label", "") for w in snap.get("workspaces", [])}
-    parts = [hint, f"▣ {here} {summarize(mine)}".rstrip()]
+    parts = []
     blocked = [a for a in elsewhere if a.get("agent_status") == "blocked"]
     if blocked:
         names = sorted({labels.get(a.get("workspace_id"), "?") for a in blocked})
-        parts.append(f"{STATE_ICON['blocked']} {', '.join(names)[:28]} waits · {len(elsewhere)} need you: Ctrl+Alt+I")
+        parts.append(f"{STATE_ICON['blocked']} {', '.join(names)[:28]} waiting for you (Ctrl+Alt+I)")
     elif elsewhere:
-        parts.append(f"{STATE_ICON['done']}{len(elsewhere)} need you: Ctrl+Alt+I")
+        n = len(elsewhere)
+        parts.append(f"{STATE_ICON['done']} {n} agent{'s' * (n != 1)} finished elsewhere (Ctrl+Alt+I)")
+    parts.append(f"{here}: {_plain(mine)}")
     in_herdr = {(a.get("agent_session") or {}).get("value") for a in agents}
     outside = [r for r in live._claude_registry(time.time()) if r.session_id not in in_herdr]
     _maybe_reconcile(outside)
     if outside:
-        parts.append(f"↗{len(outside)} in other windows: F3")
-    parts.append("F2 resume · F6 layout · F7 recent · Ctrl+Alt+R back")
+        n = len(outside)
+        parts.append(f"{n} session{'s' * (n != 1)} outside herdr (F3)")
+    parts.append(menu)
     return "  │  ".join(parts)
 
 
