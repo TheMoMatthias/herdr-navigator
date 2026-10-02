@@ -144,9 +144,84 @@ def test_pending_codex_question(tmp_path):
     assert asks.pending("codex", _jsonl(tmp_path / "d.jsonl", [call, out])) is None
 
 
-def test_autostart_entry_lives_in_the_user_startup_location():
+def test_autostart_entry_is_a_user_logon_entry():
     p = str(autostart.entry_path()).replace("\\", "/").lower()
     if os.name == "nt":
-        assert p.endswith("start menu/programs/startup/herdr navigator restore.lnk")
+        assert p.endswith("task scheduler/herdr navigator restore")
     else:
         assert "launchagents" in p or "autostart" in p
+
+
+def _login_cfg(tmp_path, cli="claude"):
+    creds = tmp_path / "home" / ".claude" / ".credentials.json"
+    acct = tmp_path / "home" / ".claude.json"
+    creds.parent.mkdir(parents=True)
+    cfg = tmp_path / "cfg" / "navigator.toml"
+    cfg.write_text(cfg.read_text(encoding="utf-8") + f"""
+[login.{cli}]
+files = ['{creds.as_posix()}']
+json_keys = {{ '{acct.as_posix()}' = ["oauthAccount"] }}
+""", encoding="utf-8")
+    settings.load.cache_clear()
+    return creds, acct
+
+
+def test_profiles_save_switch_and_keep_rotated_tokens(tmp_path):
+    from navigator import profiles
+    creds, acct = _login_cfg(tmp_path)
+    creds.write_text('{"token": "A1"}', encoding="utf-8")
+    acct.write_text(json.dumps({"oauthAccount": {"email": "a@x"}, "other": 1}), encoding="utf-8")
+    assert profiles.save_as("claude", "work", "a@x").startswith("💾")
+    # sign in to another account, save it too
+    creds.write_text('{"token": "B1"}', encoding="utf-8")
+    acct.write_text(json.dumps({"oauthAccount": {"email": "b@x"}, "other": 2}), encoding="utf-8")
+    profiles.save_as("claude", "private")
+    assert profiles.active("claude") == "private" and profiles.names("claude") == ["private", "work"]
+    creds.write_text('{"token": "B2"}', encoding="utf-8")       # private's token rotated meanwhile
+    assert profiles.switch("claude", "work").startswith("⇄")
+    assert json.loads(creds.read_text())["token"] == "A1"
+    data = json.loads(acct.read_text())
+    assert data["oauthAccount"]["email"] == "a@x" and data["other"] == 2   # only the named key swapped
+    profiles.switch("claude", "private")
+    assert json.loads(creds.read_text())["token"] == "B2"                  # the rotated token survived
+    assert profiles.switch("claude", "private").endswith("already active")
+    assert profiles.switch("claude", "nope").startswith("✗")
+
+
+def test_profile_needs_a_login_and_a_name(tmp_path):
+    from navigator import profiles
+    _login_cfg(tmp_path)
+    assert profiles.save_as("claude", "x").startswith("✗")                 # nothing signed in
+    assert profiles.save_as("claude", "  ").startswith("✗")
+
+
+def test_new_command_names_and_options(tmp_path):
+    assert startup.new_command("claude", "Lead 1", {"model": "sonnet", "remote_control": True}) == \
+        'claude -n "Lead 1" --remote-control "Lead 1" --model "sonnet"'
+    assert startup.new_command("codex", "x", {"args": "--full-auto"}) == "codex --full-auto"
+
+
+def test_pending_options_move_to_the_session_once_it_has_an_id(tmp_path):
+    startup.remember_for_pane("w1:p3", {"model": "opus", "effort": ""})
+    startup.claim_pending("w1:p3", "claude:abc")
+    assert startup.prefs_of("claude:abc") == {"model": "opus"}
+    startup.claim_pending("w1:p3", "claude:other")   # claimed once only
+    assert startup.prefs_of("claude:other") == {}
+
+
+def test_record_panes_keeps_sessions_and_drops_quit_agents(tmp_path, monkeypatch):
+    from navigator import restore
+    from navigator.model import Agent
+    p = projects.Project("r", "r")
+    a = Agent("claude", "idle", p, name="LEAD", session_id="s1", pane_id="w1:p2")
+    world = type("W", (), {"agents": [a]})()
+    snap = {"panes": [{"pane_id": "w1:p2", "cwd": "C:/r", "agent": "claude"}, {"pane_id": "w1:p3", "cwd": "C:/r"}]}
+    restore.record_panes(world, snap)
+    assert restore.load_panes()["w1:p2"]["name"] == "LEAD"
+    # the agent was quit in a pane that still exists: forget it
+    restore.record_panes(type("W", (), {"agents": []})(), {"panes": [{"pane_id": "w1:p2", "cwd": "C:/r"}]})
+    assert restore.load_panes() == {}
+    # a pane missing from the snapshot (server restarting) is kept for the resume
+    restore.record_panes(world, snap)
+    restore.record_panes(type("W", (), {"agents": []})(), {"panes": []})
+    assert "w1:p2" in restore.load_panes()

@@ -23,7 +23,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, DataTable, Input, OptionList, Select, Static, Switch
 from textual.widgets.option_list import Option
 
-from . import accounts, autostart, launch, model, restore, settings, startup
+from . import accounts, autostart, launch, model, profiles, restore, settings, startup
 from .model import age
 
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -75,6 +75,32 @@ class ContextMenu(ModalScreen):
     def on_click(self, event: events.Click) -> None:
         if not self.query_one(OptionList).region.contains(event.screen_x, event.screen_y):
             self.dismiss(None)
+
+
+class Prompt(ModalScreen):
+    """One line of text. Returns it, or None."""
+
+    DEFAULT_CSS = """
+    Prompt { align: center middle; background: $background 50%; }
+    #pr { width: 60; height: auto; border: round $primary; background: $panel; padding: 1 2; }
+    """
+    BINDINGS = [("escape", "dismiss(None)", "Cancel")]
+
+    def __init__(self, title: str, placeholder: str = "") -> None:
+        super().__init__()
+        self.title_, self.placeholder = title, placeholder
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="pr"):
+            yield Static(Text(self.title_, style="bold"))
+            yield Input(placeholder=self.placeholder, id="pr-in")
+
+    def on_mount(self) -> None:
+        self.query_one(Input).focus()
+
+    @on(Input.Submitted)
+    def _ok(self, ev: Input.Submitted) -> None:
+        self.dismiss(ev.value.strip() or None)
 
 
 class LaunchOptions(ModalScreen):
@@ -215,6 +241,7 @@ class StartupPane(Vertical):
     #acct-box Horizontal, #relaunch-box Horizontal { height: 3; }
     .acct-name { width: 10; margin-top: 1; }
     .acct-who { width: 1fr; margin-top: 1; color: $text-muted; }
+    .acct-prof { width: 24; }
     #relaunch-text { height: auto; margin: 1 0 0 0; }
     #start-table { height: 1fr; }
     """
@@ -241,6 +268,12 @@ class StartupPane(Vertical):
                 with Horizontal():
                     yield Static(Text(cli, style="bold"), classes="acct-name")
                     yield Static("…", id=f"acct-who-{cli}", classes="acct-who")
+                    if profiles.supported(cli):
+                        yield Select([], prompt="profile", id=f"acct-prof-{cli}", classes="acct-prof")
+                        yield Button("⇄", id=f"acct-switch-{cli}",
+                                     tooltip="Switch to the chosen profile, then relaunch its sessions")
+                        yield Button("💾", id=f"acct-save-{cli}",
+                                     tooltip="Save the current login as a profile, to switch back to it later")
                     yield Button("Sign in", id=f"acct-in-{cli}", variant="primary",
                                  tooltip="Opens the CLI's sign-in in a new tab; relaunch is offered when done")
                     yield Button("Sign out", id=f"acct-out-{cli}")
@@ -325,7 +358,37 @@ class StartupPane(Vertical):
     def load_accounts(self) -> None:
         for cli in accounts.clis():
             who = accounts.status(cli)
-            self.app.call_from_thread(self.query_one(f"#acct-who-{cli}", Static).update, who)
+            self.app.call_from_thread(self.show_account, cli, who)
+
+    def show_account(self, cli: str, who: str) -> None:
+        self.who = {**getattr(self, "who", {}), cli: who}
+        act = profiles.active(cli)
+        self.query_one(f"#acct-who-{cli}", Static).update(Text.assemble(who, (f"  ·  profile {act}" if act else "", "cyan")))
+        if profiles.supported(cli):
+            sel = self.query_one(f"#acct-prof-{cli}", Select)
+            opts = [(f"{n}  {profiles.label(cli, n)}"[:40], n) for n in profiles.names(cli)]
+            sel.set_options(opts)
+            if act in profiles.names(cli):
+                sel.value = act
+
+    def save_profile(self, cli: str) -> None:
+        def done(name):
+            if name:
+                msg = profiles.save_as(cli, name, getattr(self, "who", {}).get(cli, ""))
+                self.app.notify(msg, severity="error" if msg.startswith("✗") else "information")
+                self.load_accounts()
+        self.app.push_screen(Prompt(f"Save the current {cli} login as profile", "e.g. work, private"), done)
+
+    def switch_profile(self, cli: str) -> None:
+        v = self.query_one(f"#acct-prof-{cli}", Select).value
+        if v is Select.NULL:
+            self.app.notify("Pick a profile first (💾 saves the current login as one).", severity="warning")
+            return
+        msg = profiles.switch(cli, str(v))
+        self.app.notify(msg, severity="error" if msg.startswith("✗") else "information", timeout=8)
+        if msg.startswith("⇄"):
+            self.load_accounts()
+            self.open_relaunch(cli)
 
     # ---- relaunch sheet -----------------------------------------------------------------------
     def open_relaunch(self, cli: str = "") -> None:
@@ -521,6 +584,10 @@ class StartupPane(Vertical):
             self.show_all = not self.show_all
             ev.button.variant = "primary" if self.show_all else "default"
             self.refresh_rows()
+        elif bid.startswith("acct-switch-"):
+            self.switch_profile(bid[12:])
+        elif bid.startswith("acct-save-"):
+            self.save_profile(bid[10:])
         elif bid.startswith("acct-in-"):
             self.app.finish(lambda: accounts.sign_in(bid[8:]))
         elif bid.startswith("acct-out-"):
@@ -534,3 +601,101 @@ class StartupPane(Vertical):
             self.app.exit("↻ relaunching in the background")
         elif bid == "rl-cancel":
             self.query_one("#relaunch-box").remove_class("show")
+
+
+class NewSession(ModalScreen):
+    """New session: CLI, folder, name, optional new worktree, launch options. Returns a dict."""
+
+    DEFAULT_CSS = """
+    NewSession { align: center middle; background: $background 50%; }
+    #ns { width: 72; height: auto; border: round $primary; background: $panel; padding: 1 2; }
+    #ns Horizontal { height: 3; }
+    #ns .lbl { width: 18; margin-top: 1; color: $text-muted; }
+    #ns Input, #ns Select { width: 1fr; }
+    #ns-claude { height: auto; }
+    #ns-buttons { margin-top: 1; }
+    #ns-buttons Button { margin-right: 1; }
+    """
+    BINDINGS = [("escape", "dismiss(None)", "Cancel")]
+
+    def __init__(self, clis: list[str], folder: str, project_label: str, is_git: bool) -> None:
+        super().__init__()
+        self.clis, self.folder, self.project_label, self.is_git = clis, folder, project_label, is_git
+
+    def compose(self) -> ComposeResult:
+        rc_default = bool(settings.load().restore.get("claude_remote_control", False))
+        with Vertical(id="ns"):
+            yield Static(Text.assemble(("New session  ", "bold"), (self.project_label[:40], "cyan")))
+            with Horizontal():
+                yield Static("CLI", classes="lbl")
+                yield Select([(c, c) for c in self.clis], value=self.clis[0], allow_blank=False, id="ns-cli")
+            with Horizontal():
+                yield Static("Name", classes="lbl")
+                yield Input(placeholder="how it shows in herdr, Remote Control and the lists", id="ns-name")
+            with Horizontal():
+                yield Static("Folder", classes="lbl")
+                yield Input(self.folder, id="ns-folder")
+            if self.is_git:
+                with Horizontal():
+                    yield Static("New worktree", classes="lbl")
+                    yield Switch(value=False, id="ns-wt")
+                    yield Input(placeholder="branch name (default: the session name)", id="ns-branch")
+            with Vertical(id="ns-claude"):
+                with Horizontal():
+                    yield Static("Model", classes="lbl")
+                    yield Input(placeholder="default (e.g. opus, sonnet)", id="ns-model")
+                with Horizontal():
+                    yield Static("Effort", classes="lbl")
+                    yield Select([(e, e) for e in startup.EFFORTS[1:]], prompt="default", id="ns-effort")
+                with Horizontal():
+                    yield Static("Permission mode", classes="lbl")
+                    yield Select([(m, m) for m in startup.PERMISSION_MODES[1:]], prompt="default", id="ns-perm")
+                with Horizontal():
+                    yield Static("Remote Control", classes="lbl")
+                    yield Switch(value=rc_default, id="ns-rc")
+            with Horizontal():
+                yield Static("Extra arguments", classes="lbl")
+                yield Input(placeholder="appended to the command", id="ns-args")
+            with Horizontal(id="ns-buttons"):
+                yield Button("▶ Start", variant="primary", id="ns-go")
+                yield Button("Cancel", id="ns-cancel")
+
+    def on_mount(self) -> None:
+        self.query_one("#ns-name", Input).focus()
+        self._sync()
+
+    @on(Select.Changed, "#ns-cli")
+    def _sync(self) -> None:
+        self.query_one("#ns-claude").display = self.query_one("#ns-cli", Select).value == "claude"
+
+    @on(Input.Submitted)
+    def _enter(self) -> None:
+        self._go()
+
+    @on(Button.Pressed)
+    def _btn(self, ev: Button.Pressed) -> None:
+        ev.stop()
+        if ev.button.id == "ns-cancel":
+            self.dismiss(None)
+        elif ev.button.id == "ns-go":
+            self._go()
+
+    def _go(self) -> None:
+        cli = self.query_one("#ns-cli", Select).value
+        name = self.query_one("#ns-name", Input).value.strip()
+        branch = ""
+        if self.is_git and self.query_one("#ns-wt", Switch).value:
+            branch = self.query_one("#ns-branch", Input).value.strip() or name.lower().replace(" ", "-")
+            if not branch:
+                self.app.notify("A new worktree needs a branch name (or a session name).", severity="warning")
+                return
+        prefs = {"args": self.query_one("#ns-args", Input).value.strip()}
+        if cli == "claude":
+            eff = self.query_one("#ns-effort", Select).value
+            perm = self.query_one("#ns-perm", Select).value
+            prefs.update(model=self.query_one("#ns-model", Input).value.strip(),
+                         effort="" if eff is Select.NULL else eff,
+                         permission_mode="" if perm is Select.NULL else perm,
+                         remote_control=self.query_one("#ns-rc", Switch).value)
+        self.dismiss({"cli": cli, "name": name, "folder": self.query_one("#ns-folder", Input).value.strip(),
+                      "branch": branch, "prefs": prefs})

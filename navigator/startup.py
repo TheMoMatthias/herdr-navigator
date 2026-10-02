@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import time
+from pathlib import Path
 from dataclasses import dataclass, field
 
 from . import projects, settings
@@ -166,29 +167,71 @@ def _q(text: str) -> str:
     return f'"{safe or "session"}"'
 
 
-def launch_command(cli: str, sid: str, name: str = "", prefs: dict | None = None) -> str:
-    """Resume command for one session, with its name and launch options (Claude flags)."""
-    cfg = settings.load()
-    cmd = cfg.launch.get(f"{cli}_resume", "").format(id=sid)
-    if not cmd:
-        return ""
-    prefs = prefs or {}
+def _options(cli: str, name: str, prefs: dict) -> str:
+    """Name, Remote Control and launch options as flags (Claude), plus extra args (any CLI)."""
+    out = ""
     if cli == "claude":
-        r = cfg.restore
+        r = settings.load().restore
         if name and r.get("claude_name", True):
-            cmd += f" -n {_q(name)}"
+            out += f" -n {_q(name)}"
         rc = prefs.get("remote_control", r.get("claude_remote_control", False))
         if rc:
-            cmd += f" --remote-control {_q(name)}" if name else " --remote-control"
+            out += f" --remote-control {_q(name)}" if name else " --remote-control"
         if prefs.get("model"):
-            cmd += f" --model {_q(prefs['model'])}"
+            out += f" --model {_q(prefs['model'])}"
         if prefs.get("effort") in EFFORTS[1:]:
-            cmd += f" --effort {prefs['effort']}"
+            out += f" --effort {prefs['effort']}"
         if prefs.get("permission_mode") in PERMISSION_MODES[1:]:
-            cmd += f" --permission-mode {prefs['permission_mode']}"
+            out += f" --permission-mode {prefs['permission_mode']}"
     if prefs.get("args"):
-        cmd += " " + str(prefs["args"]).strip()
-    return cmd
+        out += " " + str(prefs["args"]).strip()
+    return out
+
+
+def launch_command(cli: str, sid: str, name: str = "", prefs: dict | None = None) -> str:
+    """Resume command for one session, with its name and launch options."""
+    # templates may use {name} too, so any CLI with a name flag can be taught it in settings
+    tpl = settings.load().launch.get(f"{cli}_resume", "")
+    if not tpl:
+        return ""
+    return tpl.replace("{id}", sid).replace("{name}", _q(name or sid[:8])) + _options(cli, name, prefs or {})
+
+
+def new_command(cli: str, name: str = "", prefs: dict | None = None) -> str:
+    """Command that starts a new session of `cli`, named, with launch options."""
+    tpl = settings.load().launch.get(f"{cli}_new", cli)
+    return tpl.replace("{name}", _q(name or cli)) + _options(cli, name, prefs or {})
+
+
+# ---- launch options for sessions that do not have an id yet -----------------------------------
+
+def _pending_path():
+    return settings.state_dir() / "pending-prefs.json"
+
+
+def remember_for_pane(pane_id: str, prefs: dict) -> None:
+    """A new session gets its id only once it runs: keep its options by pane until then."""
+    clean = {k: v for k, v in prefs.items() if v not in ("", None)}
+    if not clean:
+        return
+    try:
+        data = json.loads(_pending_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    data = {k: v for k, v in data.items() if time.time() - v.get("at", 0) < 3600}
+    data[pane_id] = {"prefs": clean, "at": time.time()}
+    _pending_path().write_text(json.dumps(data), encoding="utf-8")
+
+
+def claim_pending(pane_id: str, key: str) -> None:
+    """Called when a pane's session id appears: its pending options become the session's."""
+    try:
+        data = json.loads(_pending_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if pane_id in data:
+        set_prefs(key, data.pop(pane_id)["prefs"])
+        _pending_path().write_text(json.dumps(data), encoding="utf-8")
 
 
 # ---- one-time import from the session-restore tool ----------------------------------------------
@@ -197,7 +240,7 @@ def import_session_restore(registry_path: str) -> str:
     """Carry over ticks, project switches and Claude launch options from session-restore's
     sessions-registry.json. Only explicit choices (pinned ticks, project on/off) come over:
     its auto-ticks are recomputed here by the same rule."""
-    reg = json.loads(open(registry_path, encoding="utf-8-sig").read())
+    reg = json.loads(Path(registry_path).read_text(encoding="utf-8-sig"))
     data = load()
     n_s = n_p = 0
     for d in reg.get("directories", []):

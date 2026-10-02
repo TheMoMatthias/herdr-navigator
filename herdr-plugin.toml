@@ -1,6 +1,6 @@
 id = "momatthias.navigator"
 name = "Navigator"
-version = "0.6.0"
+version = "0.7.0"
 min_herdr_version = "0.9.3"
 description = "Clickable navigator for herdr: projects, worktrees, every agent and sub-agent (in herdr or not), cross-CLI session resume, project-grouped sidebar, key hints"
 platforms = ["linux", "macos", "windows"]
@@ -14,15 +14,16 @@ command = ["python", "bootstrap.py"]
 platforms = ["linux", "macos"]
 command = ["python3", "bootstrap.py"]
 
-# After a server (re)start: re-report sidebar metadata and show the "press F1" hint.
+# After a server (re)start: resume each recorded agent pane (named, with its launch options),
+# then re-report sidebar metadata and show the "press F1" hint.
 
 [[startup]]
 platforms = ["windows"]
-command = ["cmd.exe", "/d", "/c", "run.cmd", "sync"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "restore", "startup"]
 
 [[startup]]
 platforms = ["linux", "macos"]
-command = ["sh", "run.sh", "sync"]
+command = ["sh", "run.sh", "restore", "startup"]
 
 [[events]]
 on = "workspace.created"

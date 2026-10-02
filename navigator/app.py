@@ -26,7 +26,7 @@ from textual.widgets import Button, DataTable, Footer, Input, Static, TabbedCont
 from . import keys as keymap
 from . import arrange, attention, history, launch, layouts, model, panes, settings, sidebar, uiwidth
 from .model import STATE_ICON, Agent, World, age, summarize
-from .startup_ui import StartupPane
+from .startup_ui import NewSession, StartupPane
 
 STATE_STYLE = {"blocked": "bold red", "done": "bold green", "working": "yellow", "idle": "dim", "unknown": "magenta"}
 CLI_STYLE = {
@@ -79,7 +79,17 @@ class ClickTwiceTable(DataTable):
     """Row table: a click on a new row selects it, a second click opens it.
     A click in the first column posts BoxClicked instead (the sidebar checkbox)."""
 
-    BINDINGS = [Binding("j", "cursor_down", "Down", show=False), Binding("k", "cursor_up", "Up", show=False)]
+    BINDINGS = [Binding("j", "cursor_down", "Down", show=False), Binding("k", "cursor_up", "Up", show=False),
+                Binding("space", "box", "Tick")]
+
+    def check_action(self, action: str, parameters: tuple) -> bool | None:
+        if action == "box":
+            return self.id in ("proj-table", "agent-table")
+        return True
+
+    def action_box(self) -> None:
+        if self.row_count:
+            self.post_message(self.BoxClicked(self, self.coordinate_to_cell_key(self.cursor_coordinate).row_key.value))
 
     class BoxClicked(Message):
         def __init__(self, table: "ClickTwiceTable", row_key: str) -> None:
@@ -102,7 +112,7 @@ class ClickTwiceTable(DataTable):
 
     async def _on_click(self, event: events.Click) -> None:
         meta = event.style.meta if event.style else {}
-        if meta.get("column") == 0 and meta.get("row", -1) >= 0 and self.id == "proj-table":
+        if meta.get("column") == 0 and meta.get("row", -1) >= 0 and self.id in ("proj-table", "agent-table"):
             row = meta["row"]
             self.move_cursor(row=row)
             rk = self.coordinate_to_cell_key(self.cursor_coordinate).row_key.value
@@ -310,6 +320,7 @@ class Navigator(App):
         Binding("escape", "back", "Close"),
         # everything below works but stays out of the footer (buttons cover it)
         Binding("c", "new('claude')", "New Claude", show=False),
+        Binding("N", "new_dialog", "New session…", show=False),
         Binding("x", "new('codex')", "New Codex", show=False),
         Binding("e", "new('pi')", "New Pi", show=False),
         Binding("u", "new('opencode')", "New OpenCode", show=False),
@@ -360,6 +371,7 @@ class Navigator(App):
         self.pane_layout = None
         self.pane_selected: str | None = None
         self.close_armed = ""
+        self.marked: set[str] = set()          # Agents: panes picked for "send to many"
 
     # ---- layout ---------------------------------------------------------------------------
     def compose(self) -> ComposeResult:
@@ -381,6 +393,8 @@ class Navigator(App):
                                 key = CLI_NEW_KEY.get(cli)
                                 yield Button(Text(cli, style=CLI_STYLE.get(cli, "")), id=f"new-{cli}",
                                              tooltip=f"New {cli} agent here" + (f" ({key})" if key else ""))
+                            yield Button("⚙ New…", id="new-dialog",
+                                         tooltip="Name, folder, new worktree, model and options (N)")
                         yield VerticalScroll(Static(id="proj-info"))
             with TabPane("Agents", id="agents"):
                 with Horizontal(id="agent-bar", classes="btnrow"):
@@ -392,7 +406,9 @@ class Navigator(App):
                     yield VerticalScroll(Static(id="agent-preview"))
                     with Horizontal(id="agent-send", classes="btnrow"):
                         yield Input(placeholder="Message…", id="agent-msg")
-                        yield Button("Send", id="send-msg", variant="primary")
+                        yield Button("Send", id="send-msg", variant="primary",
+                                     tooltip="Send to the selected agent, or to every ☑ marked one")
+                        yield Button("✕", id="mark-clear", tooltip="Clear the marks")
                         yield Button("⏎", id="key-enter", tooltip="Press Enter in the agent (accept)")
                         yield Button("Esc", id="key-esc", tooltip="Press Esc in the agent (cancel)")
                         yield Button("^C", id="key-ctrl_c", tooltip="Interrupt the agent")
@@ -456,7 +472,7 @@ class Navigator(App):
 
     def on_mount(self) -> None:
         self.query_one("#proj-table", DataTable).add_columns("", "Project", "Agents", "Last")
-        self.query_one("#agent-table", DataTable).add_columns("", "CLI", "Agent", "Project", "Doing")
+        self.query_one("#agent-table", DataTable).add_columns("", "", "CLI", "Agent", "Project", "Doing")
         self.query_one("#resume-table", DataTable).add_columns("When", "CLI", "Project", "Session", "")
         self.query_one("#recent-table", DataTable).add_columns("When", "Project", "Pane", "")
         self.query_one("#saved-table", DataTable).add_columns("Saved layout", "Panes", "Saved")
@@ -777,6 +793,11 @@ class Navigator(App):
         ev.input.value = ""
 
     def send_to_agent(self, text: str = "", key: str = "") -> None:
+        if self.marked and self.world:
+            for a in self.world.agents:
+                if a.pane_id in self.marked:
+                    self.run_send(a.pane_id, a.display, text, key)
+            return
         a, _ = self.agent_selected()
         if a is None:
             return
@@ -931,8 +952,22 @@ class Navigator(App):
 
     @on(ClickTwiceTable.BoxClicked)
     def _box(self, ev: ClickTwiceTable.BoxClicked) -> None:
+        if ev.table.id == "agent-table":
+            self.toggle_mark(ev.row_key)
+            return
         self.selected_key = ev.row_key
         self.action_toggle_sidebar()
+
+    def toggle_mark(self, key: str) -> None:
+        """Mark agents to message several at once (only agents in herdr can be typed into)."""
+        a, sub = self.agent_rows.get(key, (None, -1))
+        if not a or sub >= 0:
+            return
+        if not a.in_herdr:
+            self.notify(f"'{a.display}' runs in another window: herdr can't type into it.", severity="warning")
+            return
+        self.marked ^= {a.pane_id}
+        self.fill_agents()
 
     # ---- agents ---------------------------------------------------------------------------
     def fill_agents(self) -> None:
@@ -955,16 +990,23 @@ class Navigator(App):
                 who.append("  ↗", style="magenta")
             proj = Text(a.project.label[:30], style="cyan" if here else "")
             doing = Text("❓ " + a.question.text[:66], style="bold red") if a.question else (a.activity or a.title)[:70]
-            t.add_row(Text(STATE_ICON.get(a.status, "?"), style=STATE_STYLE.get(a.status, "")), cli_tag(a.cli), who, proj,
-                      doing, key=a.key)
+            box = (Text("☑", style="bold green") if a.pane_id in self.marked else Text("☐", style="dim")) \
+                if a.in_herdr else ""
+            t.add_row(box, Text(STATE_ICON.get(a.status, "?"), style=STATE_STYLE.get(a.status, "")), cli_tag(a.cli),
+                      who, proj, doing, key=a.key)
             self.agent_rows[a.key] = (a, -1)
             for i, sa in enumerate(a.subagents):
                 k = f"{a.key}#sub{i}"
-                t.add_row(Text("↳", style="yellow"), "", Text(f"  {sa.name}", style="yellow"),
+                t.add_row("", Text("↳", style="yellow"), "", Text(f"  {sa.name}", style="yellow"),
                           Text(sa.kind or "", style="dim"), (sa.activity or sa.description)[:70], key=k)
                 self.agent_rows[k] = (a, i)
         for b in self.query("#agent-bar Button"):
             b.variant = "primary" if b.id == f"flt-{self.agent_filter or 'all'}" else "default"
+        live = {a.pane_id for a in self.world.agents if a.in_herdr}
+        self.marked &= live
+        send = self.query_one("#send-msg", Button)
+        send.label = f"Send to {len(self.marked)}" if self.marked else "Send"
+        self.query_one("#mark-clear", Button).display = bool(self.marked)
 
     @on(DataTable.RowSelected, "#agent-table")
     def _agent_sel(self, ev: DataTable.RowSelected) -> None:
@@ -1091,10 +1133,10 @@ class Navigator(App):
     def check_action(self, action: str, parameters: tuple) -> bool | None:
         tab = self.active_tab() if self.is_mounted else self.start_tab
         typing = isinstance(self.focused, Input)
-        if typing and action in ("new", "resume_project", "toggle_project", "filter", "tab", "quit",
+        if typing and action in ("new", "new_dialog", "resume_project", "toggle_project", "filter", "tab", "quit",
                                  "toggle_sidebar"):
             return False
-        if action in ("new", "resume_project", "toggle_sidebar"):
+        if action in ("new", "new_dialog", "resume_project", "toggle_sidebar"):
             return tab == "projects"
         if action in ("toggle_project", "search"):
             return tab == "resume"
@@ -1184,6 +1226,24 @@ class Navigator(App):
         else:
             self.finish(lambda: launch.new_agent(self.world, v.project, cli))
 
+    def action_new_dialog(self) -> None:
+        v, wt = self.selected()
+        if not v:
+            return
+        folder = wt.path if wt and wt.exists else (v.project.path or v.project.root)
+        is_git = os.path.isdir(os.path.join(v.project.path or v.project.root, ".git"))
+        clis = installed_clis() or ["claude"]
+
+        def done(r):
+            if not r:
+                return
+            p = v.project
+            if wt and wt.exists and not r["branch"]:
+                p = model.projects.Project(v.project.root, v.project.name, wt.label, v.project.path, wt.path)
+            self.finish(lambda: launch.new_session(self.world, p, r["folder"] or folder, r["cli"], r["name"],
+                                                   r["prefs"], r["branch"]))
+        self.push_screen(NewSession(clis, folder, v.project.label + (f" ⎇ {wt.label}" if wt else ""), is_git), done)
+
     def action_open(self) -> None:
         if not self.world:
             return
@@ -1264,6 +1324,9 @@ class Navigator(App):
             self.query_one("#agent-msg", Input).value = ""
         elif bid.startswith("key-"):
             self.send_to_agent(key=bid[4:].replace("_", "+"))
+        elif bid == "mark-clear":
+            self.marked = set()
+            self.fill_agents()
         elif bid == "btn-attention":
             self.action_attention()
         elif bid == "layout-save":
@@ -1284,6 +1347,9 @@ class Navigator(App):
             self.query_one("#preset-row").toggle_class("show")
         elif bid.startswith("preset-"):
             self.action_pane_op("preset", list(panes.PRESETS)[int(bid[7:])])
+        elif bid == "new-dialog":
+            self.query_one("#new-row").remove_class("show")
+            self.action_new_dialog()
         elif bid.startswith("new-"):
             self.query_one("#new-row").remove_class("show")
             self.action_new(bid[4:])

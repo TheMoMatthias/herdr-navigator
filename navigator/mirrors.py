@@ -86,11 +86,12 @@ def _reconcile() -> list[str]:
             save(m)  # at once: hooks running meanwhile must already see this pane as a mirror
             herdr.run("tab", "rename", pane["tab_id"], f"↗ {a.display}"[:28], check=False)
             msgs.append(f"＋ mirror {a.display}")
-    # mirrors of projects that left the sidebar
+    # mirrors of projects that left the sidebar, and of sessions that now run in a herdr pane
+    in_herdr = {a.session_id for a in world.agents if a.in_herdr and a.session_id}
     for pane, sid in list(m.items()):
         a = world.live_sessions.get(sid)
         v = world.view(a.project.root) if a else None
-        if a and v and not v.in_sidebar:
+        if sid in in_herdr or (a and v and not v.in_sidebar):
             herdr.run("pane", "close", pane, check=False)
             del m[pane]
     save(m)

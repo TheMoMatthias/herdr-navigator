@@ -40,7 +40,8 @@ class Session:
 
     def resume_command(self) -> str:
         tpl = settings.load().launch.get(f"{self.cli}_resume", "")
-        return tpl.format(id=self.id)
+        from .startup import _q
+        return tpl.replace("{id}", self.id).replace("{name}", _q(self.title[:40] if self.named else self.id[:8]))
 
 
 def _read_head_tail(path: Path) -> tuple[list[str], list[str]]:

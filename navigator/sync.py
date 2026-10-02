@@ -73,6 +73,11 @@ def _named(ws: str | None = None, label: str | None = None) -> dict:
 def sync(force: bool = False) -> None:
     started = time.time()
     world = model.build()
+    try:  # which session runs in which pane, so a server restart can bring them back named
+        from . import restore
+        restore.record_panes(world, herdr.snapshot())
+    except Exception as e:
+        print(f"navigator: recording panes failed: {e}")
     cfg = settings.load()
     old = {} if force else _load_sent()
     force = force or not old

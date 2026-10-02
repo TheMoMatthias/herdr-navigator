@@ -183,6 +183,12 @@ def install(doc, added: dict) -> list[str]:
         else:
             notes.append(f"kept your own [ui.sidebar.{name}] rows (add $agents/$outside/$project tokens yourself)")
 
+    # the plugin resumes agent panes itself after a restart, named and with launch options
+    sess = doc.setdefault("session", tomlkit.table())
+    if "resume_agents_on_restore" not in sess:
+        sess["resume_agents_on_restore"] = False
+        added["session_resume"] = True
+
     keys = doc.setdefault("keys", tomlkit.table())
     for action, chords in CHORDS.items():
         cur = keys.get(action)
@@ -215,6 +221,10 @@ def install(doc, added: dict) -> list[str]:
 
 
 def uninstall(doc, added: dict) -> None:
+    if added.get("session_resume") and "session" in doc:
+        doc["session"].pop("resume_agents_on_restore", None)
+        if not doc["session"]:
+            doc.pop("session")
     ui = doc.get("ui", {})
     for k in added.get("ui", []):
         ui.pop(k, None)

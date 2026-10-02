@@ -118,10 +118,11 @@ The **Startup** tab (`3` in the Navigator) decides which sessions come back when
   it, relaunch it in place, launch options (Claude: model, effort, permission mode, Remote
   Control; any CLI: extra arguments), back to automatic, show the resume command. On a project:
   restore on/off, auto-tick on/off, open all its ticked now, untick all, back to automatic.
-- **⏻ At logon** adds a logon entry (Windows Startup folder, macOS LaunchAgent, Linux XDG
-  autostart; no admin rights needed). At logon it opens herdr in a terminal. herdr resumes its own
-  Claude/Codex panes, then every ticked session that isn't running yet opens in its project's
-  workspace. Each launch is checked and logged to `restore.log` in the plugin's state directory,
+- **⏻ At logon** adds a logon entry (Windows: a per-user scheduled task; macOS LaunchAgent;
+  Linux XDG autostart; no admin rights needed). At logon it opens herdr in a terminal. Every
+  agent pane from last time comes back in its own pane, named and with its launch options, then
+  every ticked session that isn't running yet opens in its project's workspace. A session in a
+  linked worktree gets the worktree's own workspace, indented under its repo. Each launch is checked and logged to `restore.log` in the plugin's state directory,
   and a notification gives the summary. If the Claude token has expired, one Claude session is
   opened first and the rest wait until its refresh has landed. Many sessions refreshing the
   token at once log each other out.
@@ -129,11 +130,29 @@ The **Startup** tab (`3` in the Navigator) decides which sessions come back when
 - **🔑 Accounts** shows who is signed in to each CLI and offers Sign in / Sign out (Claude, Codex,
   OpenCode and Gemini by default; add any CLI under `[login.<cli>]`). Sign-in opens in a new tab.
   When the CLI has saved the new credentials, the Navigator comes back with **↻ Relaunch**.
+  **Profiles** switch accounts without signing out. 💾 saves the current login as a named profile,
+  and ⇄ switches to another. History stays shared, because only the login files are swapped
+  (`[login.<cli>] files` and `json_keys`). The active profile's refreshed tokens are saved back
+  before every switch. Profiles are stored in the plugin's state directory on this machine. On
+  macOS, Claude keeps its login in the Keychain, so Claude profiles there are not supported yet.
 - **↻ Relaunch** restarts open sessions in their own panes, so the layout stays: it stops the
   agent process and resumes the same conversation there. Sessions that are working right now are
   left alone unless you include them. Sessions in other terminal windows are listed, never killed.
 - Coming from the *session-restore* tool? `python -m navigator.startup import <sessions-registry.json>`
   copies over its ticks, switched-off projects and Claude launch options.
+
+**After a herdr restart** (logon, update, crash) every pane that had an agent gets its session
+back in that same pane, with its name, Remote Control and launch options. herdr keeps pane ids
+across restarts, and setup sets herdr's own `[session] resume_agents_on_restore = false`
+because that resume starts sessions without them. Uninstall restores herdr's default.
+
+**New session** (`⚙ New…` under `+ New` in Projects, or `N`) asks for the CLI, a name, the
+folder, optionally a **new git worktree** (created by herdr, so it is grouped under the repo),
+and, for Claude, model, effort, permission mode and Remote Control. The options stick to the
+session, so later relaunches use them too.
+
+**Send to many:** in Agents, tick agents with ☐ (or Space). `Send` then types the message, or
+presses ⏎ / Esc / ^C, in every ticked agent at once.
 
 Questions an agent is waiting on (Claude `AskUserQuestion`, Codex `request_user_input`) show up
 in **Agents** as `❓` with the question and its options, also for sessions in other windows.

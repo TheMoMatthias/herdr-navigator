@@ -98,29 +98,36 @@ terminal = ""
 
 # Sign in / sign out per CLI (Navigator › Startup › Sign in). `watch` is the file the CLI
 # rewrites when the sign-in succeeds; the Navigator then offers to relaunch that CLI's sessions.
+# `files` (and `json_keys`: keys inside JSON files) hold the login: account profiles save and
+# swap exactly these, so you can switch accounts without signing out.
 [login.claude]
 login = "claude auth login"
 logout = "claude auth logout"
 status = "claude auth status"
 watch = "~/.claude/.credentials.json"
+files = ["~/.claude/.credentials.json"]
+json_keys = { "~/.claude.json" = ["oauthAccount"] }
 
 [login.codex]
 login = "codex login"
 logout = "codex logout"
 status = "codex login status"
 watch = "~/.codex/auth.json"
+files = ["~/.codex/auth.json"]
 
 [login.opencode]
 login = "opencode auth login"
 logout = "opencode auth logout"
 status = "opencode auth list"
 watch = "~/.local/share/opencode/auth.json"
+files = ["~/.local/share/opencode/auth.json"]
 
 [login.gemini]
 login = "gemini"
 logout = ""
 status = ""
 watch = "~/.gemini/oauth_creds.json"
+files = ["~/.gemini/oauth_creds.json", "~/.gemini/google_accounts.json"]
 """
 
 

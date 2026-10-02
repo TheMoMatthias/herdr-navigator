@@ -109,7 +109,11 @@ def restore(world: World, project: Project, name: str) -> str:
         cli, sid = agent.get("cli", ""), agent.get("session", "")
         busy = sid and sid in world.live_sessions
         tpl = launch.get(f"{cli}_resume") if sid and not busy else None
-        cmd = tpl.format(id=sid) if tpl else launch.get(f"{cli}_new", cli)
+        if tpl:  # named, with its launch options, like every other relaunch
+            from . import startup
+            cmd = startup.launch_command(cli, sid, agent.get("name", ""), startup.prefs_of(f"{cli}:{sid}"))
+        else:
+            cmd = launch.get(f"{cli}_new", cli)
         if cmd:
             herdr.run("pane", "run", new["pane_id"], cmd, check=False)
             started += 1
