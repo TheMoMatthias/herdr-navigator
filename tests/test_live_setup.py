@@ -278,3 +278,25 @@ def test_columns_are_equal_thirds():
     ratios = []
     arrange._paths(arrange.shape("columns", 3), [], ratios)
     assert [round(r, 3) for _, r in ratios] == [0.333, 0.5]
+
+
+def test_session_lines_nest_sessions_under_their_space():
+    from navigator import model, sync
+    p = projects.Project("/r", "R")
+
+    def ag(name, status, pane="p1"):
+        return model.Agent("claude", status, p, name=name, pane_id=pane)
+    # a second tab's session shows under the primary Space, urgent first, tree-drawn
+    lines = sync.session_lines("AlgoTrader", [ag("ZED", "idle"), ag("STORAGE", "reply")])
+    assert lines == ["├ ⏳ STORAGE", "└ ○ ZED"]
+    # a worktree Space already named after its only session repeats nothing
+    assert sync.session_lines("QUALITY-FIX", [ag("QUALITY-FIX", "idle")]) == []
+    # sessions in other windows are marked, and long lists end in "+N more"
+    assert sync.session_lines("x", [ag("OUT", "idle", pane="")]) == ["└ ↗ OUT"]
+    many = sync.session_lines("x", [ag(f"S{i}", "idle") for i in range(12)])
+    assert len(many) == sync.SESSION_ROWS and many[-1] == "└ +5 more"
+
+
+def test_sidebar_rows_fit_herdr_limits():
+    assert len(setup.SPACE_ROWS) <= 16 and all(len(r) <= 16 for r in setup.SPACE_ROWS)
+    assert sum("$s" in str(r) for r in setup.SPACE_ROWS) == 8

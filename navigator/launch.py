@@ -119,6 +119,11 @@ def _open_in_tab(world: World, project: Project, cwd: str, label: str, command: 
 
 
 def resume(world: World, s: Session) -> str:
+    from . import model
+    try:  # the list may be minutes old: check what runs right now, so a session is never forked
+        world = model.build()
+    except Exception:
+        pass
     live = world.live_sessions.get(s.id)
     if live and live.in_herdr:
         herdr.focus_agent(live.pane_id)

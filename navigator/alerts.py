@@ -192,6 +192,15 @@ def check_waiting(snap: dict, now: float | None = None, sender=send_background) 
         state = {}
     labels = {w["workspace_id"]: w.get("label", "") for w in snap.get("workspaces", [])}
     waiting = {a["pane_id"]: a for a in snap.get("agents", []) if a.get("agent_status") == "blocked"}
+    idle = {a["pane_id"] for a in snap.get("agents", []) if a.get("agent_status") == "idle"}
+    try:  # written by sync: idle agents whose last message asks you something, outside questions
+        replies = json.loads((settings.state_dir() / "replies.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        replies = {}
+    for key, r in replies.items():
+        if key in idle or key.startswith("out:"):
+            waiting.setdefault(key, {"terminal_title_stripped": r.get("name"), "workspace_id": r.get("workspace_id"),
+                                     "why": r.get("why", "needs a reply")})
     sent = []
     new_state = {}
     for pane, a in waiting.items():
@@ -199,7 +208,7 @@ def check_waiting(snap: dict, now: float | None = None, sender=send_background) 
         if not st["alerted"] and now - st["since"] >= limit:
             name = a.get("terminal_title_stripped") or a.get("agent") or pane
             mins = int((now - st["since"]) // 60)
-            title = f"{name[:40]} waits for you"
+            title = f"{name[:40]} {a.get('why', 'waits for you')}"
             body = f"{labels.get(a.get('workspace_id'), '')}: waiting {mins} min"
             sender(title, body, "warning")
             st["alerted"] = True

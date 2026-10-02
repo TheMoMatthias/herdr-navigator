@@ -77,9 +77,14 @@ UI = {
     "tab_bar_right_separator": "  ",
 }
 
+# one row per session inside the Space ($s1..$s8 from sync.py); empty rows disappear
+_SESSION_RULES = [{"contains": "⚠", "fg": "#fb4934", "bold": True}, {"contains": "⏳", "fg": "#fe8019", "bold": True},
+                  {"contains": "✔", "fg": "#b8bb26"}, {"contains": "◐", "fg": "#fabd2f"},
+                  {"contains": "↗", "fg": "#d3869b"}, {"contains": "more", "dim": True}]
 SPACE_ROWS = [
     ["state_icon", "workspace", {"token": "$agents", "dim": True}],
-    ["branch", "git_status", {"token": "$outside", "fg": "#d3869b"}],
+    ["branch", "git_status"],
+    *[[{"token": f"$s{i}", "fg": "#a89984", "rules": _SESSION_RULES}] for i in range(1, 9)],
 ]
 AGENT_ROWS = [
     ["state_icon", {"token": "$session", "bold": True}, "state_text", {"token": "$subagents", "fg": "#fabd2f"}],
@@ -182,7 +187,7 @@ def install(doc, added: dict) -> list[str]:
             sec["rows"] = _rows(rows)
             added.setdefault("sidebar", []).append(name)
         else:
-            notes.append(f"kept your own [ui.sidebar.{name}] rows (add $agents/$outside/$project tokens yourself)")
+            notes.append(f"kept your own [ui.sidebar.{name}] rows (add $agents/$s1..$s8/$project tokens yourself)")
 
     # the plugin resumes agent panes itself after a restart, named and with launch options
     sess = doc.setdefault("session", tomlkit.table())

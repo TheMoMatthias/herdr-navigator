@@ -91,7 +91,8 @@ HELP = {
                  "⎇ Finish worktree (on a worktree row) checks it is clean, then closes and removes it.\n"
                  "Right-click a row (or press .) for all of this in a menu."),
     "agents": ("Agents: everything running now",
-               "Every agent, inside herdr or in another window (↗). Those that need you come first, longest wait first:\n"
+               "Every agent, inside herdr or in another window (↗), nested under its project. ← → or ▾ folds a project\n"
+               "(a folded one still shows who needs you). Those that need you come first, longest wait first:\n"
                "⚠ waits for an approval or answers a question · ⏳ its last message asks you something · ✔ finished.\n"
                "○ Parked = idle, nothing asked. Waits = how long it has been waiting. Ctx = context fill.\n\n"
                "⚑ Next waiting (g) selects the next one that needs you and puts you in the message box.\n"
@@ -233,7 +234,7 @@ class ClickTwiceTable(DataTable):
         if action in ("box", "menu"):
             return self.id in ("proj-table", "agent-table")
         if action == "fold":
-            return self.id == "proj-table"
+            return self.id in ("proj-table", "agent-table")
         return True
 
     def action_box(self) -> None:
@@ -465,7 +466,7 @@ class Navigator(App):
     .empty-note { height: auto; padding: 1 2; color: $text-muted; display: none; }
     .empty-note.show { display: block; }
     #proj-filter { width: 1fr; min-width: 12; margin: 0 0 0 1; }
-    #agent-detail { height: 16; border-top: tall $primary 40%; padding: 0 0 0 0; }
+    #agent-detail { height: 40%; min-height: 9; max-height: 16; border-top: tall $primary 40%; padding: 0 0 0 0; }
     #agent-preview { height: 1fr; padding: 0 1; }
     #agent-send { margin: 0; }
     #agent-keys { margin: 0; }
@@ -537,7 +538,7 @@ class Navigator(App):
         Binding("t", "pane_op('newtab')", "To new tab", show=False),
         Binding("n", "pane_rename", "Rename", show=False),
         Binding("delete", "pane_op('close')", "Close pane", show=False),
-        Binding("f5", "refresh", "Refresh", show=False),
+        Binding("f5", "refresh", "Refresh"),
         Binding("q", "quit", "Close", show=False),
     ]
 
@@ -663,12 +664,38 @@ class Navigator(App):
 
     def on_mount(self) -> None:
         self.query_one("#proj-table", DataTable).add_columns("", "Side", "Project", "Agents", "Last")
-        self.query_one("#agent-table", DataTable).add_columns("Send", "", "CLI", "Agent", "Waits", "Ctx", "Project",
+        self.query_one("#agent-table", DataTable).add_columns("Send", "State", "CLI", "Agent", "Waits", "Ctx", "Project",
                                                               "Doing")
         self.query_one("#saved-table", DataTable).add_columns("Saved layout", "Panes", "Saved")
         self.render_keys()
         self.load_world()
         self.focus_table()
+        self.set_interval(5, self.auto_refresh)
+
+    def auto_refresh(self) -> None:
+        """Keep Projects and Agents live while the Navigator is open (only when something changed)."""
+        if self.world is None or len(self.screen_stack) > 1 or self.active_tab() not in ("projects", "agents"):
+            return
+        self.load_live()
+
+    @work(thread=True, exclusive=True, group="live")
+    def load_live(self) -> None:
+        world = model.build()
+        self.call_from_thread(self.apply_live, world)
+
+    @staticmethod
+    def _live_sig(world: World) -> tuple:
+        return tuple((a.key, a.status, a.activity, a.title, a.context.pct if a.context else -1,
+                      len(a.subagents), a.waiting_since, bool(a.question)) for a in world.agents)
+
+    def apply_live(self, world: World) -> None:
+        if self.world is None or self._live_sig(world) == self._live_sig(self.world):
+            return
+        self.world = world
+        self.render_topbar(world)
+        self.fill_agents()
+        if self.active_tab() == "projects":
+            self.fill_projects()
 
     # ---- data -----------------------------------------------------------------------------
     @work(thread=True, exclusive=True)
@@ -681,6 +708,23 @@ class Navigator(App):
         self.current_project = world.project_of_workspace(world.focused_workspace)
         if self.selected_key is None and self.current_project:
             self.selected_key = self.current_project.root
+        self.render_topbar(world)
+        self.fill_projects()
+        self.fill_agents()
+        pane = self.query_one(StartupPane)
+        pane.show(world)
+        if self.active_tab() == "usage":
+            self.query_one(UsagePane).load(world)
+        relaunch = os.environ.pop("NAV_RELAUNCH", None)  # after a sign-in: offer the relaunch once
+        if relaunch is not None:
+            pane.open_relaunch(relaunch)
+            self.digest_checked = True
+        self.show_digest(world)
+        self.set_hint()
+        self.load_panes()
+        self.fill_saved()
+
+    def render_topbar(self, world: World) -> None:
         total = model.Counter(a.status for a in world.agents)
         outside = sum(1 for a in world.agents if not a.in_herdr)
         subs = sum(len(a.subagents) for a in world.agents)
@@ -699,20 +743,6 @@ class Navigator(App):
         if world.error:
             bar.append(f"    herdr unreachable", style="red")
         self.query_one("#topbar", Static).update(bar)
-        self.fill_projects()
-        self.fill_agents()
-        pane = self.query_one(StartupPane)
-        pane.show(world)
-        if self.active_tab() == "usage":
-            self.query_one(UsagePane).load(world)
-        relaunch = os.environ.pop("NAV_RELAUNCH", None)  # after a sign-in: offer the relaunch once
-        if relaunch is not None:
-            pane.open_relaunch(relaunch)
-            self.digest_checked = True
-        self.show_digest(world)
-        self.set_hint()
-        self.load_panes()
-        self.fill_saved()
 
     # ---- panes ----------------------------------------------------------------------------
     @work(thread=True, exclusive=True, group="panes")
@@ -928,7 +958,9 @@ class Navigator(App):
         opts: list[tuple[str, str]] = []
         if a.question and sub < 0:
             opts = [(str(i), o) for i, o in enumerate(a.question.options[:6], 1)]
-        head = f"{a.display}  ·  {a.cli}  ·  {a.status}  ·  {a.project.label}"
+        word = {"blocked": "waiting on you", "reply": "needs a reply", "done": "finished",
+                "idle": "parked"}.get(a.status, a.status)
+        head = f"{a.display}  ·  {a.cli}  ·  {word}  ·  {a.project.label}"
         if a.context:
             head += f"  ·  context {a.context.pct}% of {a.context.window // 1000}k"
         out.append(head + "\n", style="bold cyan")
@@ -939,7 +971,7 @@ class Navigator(App):
                 out.append(f"   {i}. {o}\n", style="red")
             if q.more:
                 out.append(f"   (+{q.more} more)\n", style="dim")
-            out.append("Answer it in its pane: Enter jumps there.\n\n", style="dim")
+            out.append("Click an answer below, or Enter to jump to its pane.\n\n", style="dim")
         if sub >= 0 and sub < len(a.subagents):
             sa = a.subagents[sub]
             out.append(f"↳ sub-agent {sa.name} ({sa.kind}, {sa.model})\n{sa.description}\n{sa.activity}\n")
@@ -996,6 +1028,7 @@ class Navigator(App):
             return
         a, _ = self.agent_selected()
         if a is None:
+            self.notify("Select an agent first: the highlighted row is a project heading.", timeout=4)
             return
         if not a.in_herdr:
             self.notify(f"'{a.display}' runs in another terminal window, so herdr can't type into it. "
@@ -1291,7 +1324,10 @@ class Navigator(App):
     @on(ClickTwiceTable.BoxClicked)
     def _box(self, ev: ClickTwiceTable.BoxClicked) -> None:
         if ev.table.id == "agent-table":
-            self.toggle_mark(ev.row_key)
+            if ev.row_key.startswith("grp:"):
+                self.fold_agents(ev.row_key, None)
+            else:
+                self.toggle_mark(ev.row_key)
             return
         self.selected_key = ev.row_key
         self.action_toggle_sidebar()
@@ -1299,8 +1335,8 @@ class Navigator(App):
     @on(TopBar.Clicked)
     def _top_clicked(self) -> None:
         """The top bar leads to what it reports: waiting agents first, else every agent."""
-        waiting = self.world and any(a.status == "blocked" for a in self.world.agents)
-        self.agent_filter = "blocked" if waiting else ""
+        waiting = self.world and any(a.status in NEEDS_YOU for a in self.world.agents)
+        self.agent_filter = "needs" if waiting else ""
         self.action_tab("agents")
         if self.world:
             self.fill_agents()
@@ -1314,7 +1350,37 @@ class Navigator(App):
 
     @on(ClickTwiceTable.Fold)
     def _fold(self, ev: ClickTwiceTable.Fold) -> None:
-        self.fold_project(ev.row_key, ev.open_)
+        if ev.table.id == "agent-table":
+            self.fold_agents(ev.row_key, ev.open_)
+        else:
+            self.fold_project(ev.row_key, ev.open_)
+
+    def fold_agents(self, key: str, open_: bool | None) -> None:
+        """Fold or unfold a project's group in Agents (← → on any of its rows). A folded group
+        still shows the agents that need you."""
+        from . import startup
+        if self.agent_sort == "recent":
+            return
+        if key.startswith("grp:"):
+            root = key[4:]
+        else:
+            a, _ = self.agent_rows.get(key, (None, -1))
+            if not a:
+                return
+            root = a.project.root
+        folded = dict(startup.ui_state().get("agents_folded", {}))
+        is_open = not folded.get(root, False)
+        want = (not is_open) if open_ is None else open_
+        if want == is_open:
+            return
+        folded[root] = not want
+        startup.set_ui("agents_folded", folded)
+        self.fill_agents()
+        t = self.query_one("#agent-table", DataTable)
+        try:
+            t.move_cursor(row=t.get_row_index("grp:" + root))
+        except Exception:
+            pass
 
     def fold_project(self, key: str, open_: bool | None) -> None:
         from . import startup
@@ -1437,6 +1503,8 @@ class Navigator(App):
     # ---- agents ---------------------------------------------------------------------------
     def fill_agents(self) -> None:
         t = self.query_one("#agent-table", DataTable)
+        keep = t.coordinate_to_cell_key(t.cursor_coordinate).row_key.value if t.row_count else None
+        scroll = t.scroll_y
         t.clear()
         self.agent_rows = {}
         rows = []
@@ -1452,17 +1520,41 @@ class Navigator(App):
             rows.append(a)
         info = getattr(self, "_pane_info", {})
         visited = {e["pane_id"]: e["at"] for e in history.recent(set(info))}
-        if self.agent_sort == "recent":
+        grouped = self.agent_sort != "recent"
+        if not grouped:
             rows.sort(key=lambda a: -max(visited.get(a.pane_id, 0), visited.get(a.mirror_pane, 0)))
-        else:  # who needs you first, the longest waiting first
-            rows.sort(key=lambda a: (model.STATE_ORDER.get(a.status, 9), a.waiting_since or 9e18,
-                                     a.project.name.lower(), a.project.worktree))
+        else:  # nested under their project; who needs you first, the longest waiting first
+            urgency = lambda a: (model.STATE_ORDER.get(a.status, 9), a.waiting_since or 9e18)  # noqa: E731
+            first: dict[str, tuple] = {}
+            for a in rows:
+                first[a.project.root] = min(first.get(a.project.root, (99, 9e18)), urgency(a))
+            rows.sort(key=lambda a: (first[a.project.root], a.project.name.lower(), urgency(a),
+                                     a.project.worktree, a.display.lower()))
+        from . import startup
+        folded = startup.ui_state().get("agents_folded", {}) if grouped else {}
+        group = None
         for a in rows:
+            if grouped and a.project.root != group:
+                group = a.project.root
+                mine = [x for x in rows if x.project.root == group]
+                shut = folded.get(group, False)
+                head = Text(a.project.name[:30], style="bold")
+                hidden = sum(1 for x in mine if x.status not in NEEDS_YOU) if shut else 0
+                t.add_row(Text("▸" if shut else "▾", style="bold"), "", "", head, "", "",
+                          Text(summarize(model.Counter(x.status for x in mine)), style="dim"),
+                          Text(f"{hidden} more folded: → or click ▸ to show" if hidden else "", style="dim"),
+                          key="grp:" + group)
+            if grouped and folded.get(group, False) and a.status not in NEEDS_YOU:
+                continue
             here = self.current_project and a.project.root == self.current_project.root
-            who = Text(a.display[:30], style="bold")
+            who = Text(("  " if grouped else "") + a.display[:30], style="bold")
             if not a.in_herdr:
                 who.append("  ↗", style="magenta")
-            proj = Text(a.project.label[:26], style="cyan" if here else "")
+            if grouped:  # the project is the group above; say only which checkout
+                proj = Text(("⎇ " + a.project.worktree)[:26] if a.project.worktree else "main",
+                            style="#c678dd" if a.project.worktree else "dim")
+            else:
+                proj = Text(a.project.label[:26], style="cyan" if here else "")
             raw_doing = a.activity or a.title or ""
             doing = Text("❓ " + clip(a.question.text, 52), style="bold red") if a.question else clip(raw_doing, 56)
             box = (Text("☑", style="bold green") if a.pane_id in self.marked else Text("☐", style="dim")) \
@@ -1491,11 +1583,11 @@ class Navigator(App):
                 t.add_row("", Text("▫", style="dim"), "", Text(label[:30]), Text(age(at), style="dim"), "",
                           (proj.label if proj else "")[:26], Text("shell / other pane", style="dim"), key=f"pane:{pid}")
         cols = t.ordered_columns
-        if len(cols) > 4:
-            want = "Visited" if self.agent_sort == "recent" else "Waits"
-            if str(cols[4].label) != want:
-                cols[4].label = Text(want)
-                t.refresh()
+        if len(cols) > 6:
+            for i, want in ((4, "Visited" if not grouped else "Waits"), (6, "Where" if grouped else "Project")):
+                if str(cols[i].label) != want:
+                    cols[i].label = Text(want)
+                    t.refresh()
         sort_btn = self.query_one("#agent-sort", Button)
         sort_btn.label = "⇅ Recent first" if self.agent_sort == "recent" else "⇅ Needs you first"
         counts = model.Counter(a.status for a in self.world.agents)
@@ -1514,6 +1606,15 @@ class Navigator(App):
                        ("Nothing needs you right now." if self.agent_filter == "needs" else
                         f"No agent is {what} right now. Press All to see every agent.") if what else
                        "No agents running. Start one: Projects (1) › + New agent, or resume one in Sessions (3).")
+        keys = [t.coordinate_to_cell_key((i, 0)).row_key.value for i in range(t.row_count)]
+        if keep in keys:
+            t.move_cursor(row=keys.index(keep), scroll=False)
+            t.scroll_to(y=scroll, animate=False)
+        elif keys:  # a project header has nothing to act on: start on who needs you, else the first agent
+            agent_rows = [i for i, k in enumerate(keys) if self.agent_rows.get(k, (None, -1))[1] == -1
+                          and self.agent_rows.get(k, (None, -1))[0]]
+            needy = [i for i in agent_rows if self.agent_rows[keys[i]][0].status in NEEDS_YOU]
+            t.move_cursor(row=(needy or agent_rows or [0])[0])
         live = {a.pane_id for a in self.world.agents if a.in_herdr}
         self.marked &= live
         send = self.query_one("#send-msg", Button)
@@ -1640,9 +1741,18 @@ class Navigator(App):
         self.call_from_thread(self.apply_world, world)
 
     def action_back(self) -> None:
-        if isinstance(self.focused, Input) and self.focused.value:
-            self.focused.value = ""
-            return
+        f = self.focused
+        if isinstance(f, Input):
+            if any(isinstance(w, SettingsPane) for w in f.ancestors):
+                # a saved setting: Esc cancels the edit (blur would save it), it never empties it
+                orig = getattr(f, "_nav_orig", None)
+                if orig is not None:
+                    f.value = orig
+                self.set_focus(None)
+                return
+            if f.value:  # search, filter and message boxes: Esc clears them first
+                f.value = ""
+                return
         self.exit()
 
     def action_search(self) -> None:
@@ -1764,6 +1874,9 @@ class Navigator(App):
             if k.startswith("pane:"):
                 self.finish(lambda: panes.focus(k[5:]))
                 return
+            if k.startswith("grp:"):
+                self.fold_agents(k, None)
+                return
             a, _ = self.agent_rows.get(k, (None, -1))
             if not a:
                 return
@@ -1807,7 +1920,13 @@ class Navigator(App):
         elif bid == "send-msg":
             self.send_to_agent(self.query_one("#agent-msg", Input).value)
             self.query_one("#agent-msg", Input).value = ""
+        elif bid == "key-ctrl_c" and getattr(self, "stop_armed", 0) < time.monotonic() - 5:
+            self.stop_armed = time.monotonic()
+            n = len(self.marked) or 1
+            self.notify(f"Stop {'the selected agent' if n == 1 else f'{n} ticked agents'}? It interrupts what "
+                        "it is doing. Click ^C Stop again within 5 s to confirm.", severity="warning", timeout=5)
         elif bid.startswith("key-"):
+            self.stop_armed = 0
             self.send_to_agent(key=bid[4:].replace("_", "+"))
         elif bid == "act-compact":
             self.send_to_agent("/compact")

@@ -291,3 +291,20 @@ def test_preview_keeps_a_rule_inside_the_answer():
     from navigator.app import conversation_lines
     raw = "\n".join(["Part one", "─" * 40, "Part two", "", "─" * 40 + " X ─", "❯ ", "─" * 40, "status"])
     assert conversation_lines(raw) == ["Part one", "Part two"]
+
+
+def test_alerts_cover_agents_that_need_a_reply(tmp_path):
+    import json as _json
+    cfg = tmp_path / "cfg" / "navigator.toml"
+    cfg.write_text(cfg.read_text() + '\n[alerts]\nntfy_topic = "t"\nblocked_minutes = 10\n', encoding="utf-8")
+    settings.load.cache_clear()
+    (settings.state_dir() / "replies.json").write_text(_json.dumps({
+        "w1:p2": {"name": "STORAGE", "workspace_id": "w1", "why": "needs a reply"},
+        "w1:p3": {"name": "GONE", "workspace_id": "w1", "why": "needs a reply"}}), encoding="utf-8")
+    snap = {"workspaces": [{"workspace_id": "w1", "label": "AlgoTrader"}],
+            "agents": [{"pane_id": "w1:p2", "workspace_id": "w1", "agent_status": "idle"},
+                       {"pane_id": "w1:p3", "workspace_id": "w1", "agent_status": "working"}]}
+    t0 = time.time()
+    assert alerts.check_waiting(snap, now=t0, sender=lambda *a: None) == []
+    # only the one still idle counts: the other was answered and works again
+    assert alerts.check_waiting(snap, now=t0 + 601, sender=lambda *a: None) == ["STORAGE needs a reply"]

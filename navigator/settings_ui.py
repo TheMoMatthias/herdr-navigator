@@ -482,6 +482,10 @@ class SettingsPane(Horizontal):
         elif wid == "pr-handoff":
             self.save_handoff()
 
+    def on_descendant_focus(self, ev) -> None:
+        if isinstance(ev.widget, Input):
+            ev.widget._nav_orig = ev.widget.value  # what Esc puts back
+
     @on(Input.Blurred)
     def _blurred(self, ev: Input.Blurred) -> None:
         self._autosave(ev.input.id or "")

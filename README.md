@@ -4,7 +4,8 @@ A [herdr](https://herdr.dev) plugin that gives you one clickable, keyboard-drive
 everything your coding agents are doing:
 
 * **Which project am I in?** Workspaces are named after their git repo. Worktrees fold into
-  their repo and show up as indented children in the sidebar.
+  their repo and show up as indented children in the sidebar, and every session inside a
+  Space gets its own indented row under it (`├ ⏳ STORAGE`), tabs included.
 * **What is running where?** Every Claude Code and Codex agent is listed per project and
   worktree, including sessions running in *other* terminal windows and their live
   **sub-agents**, each with what it is doing right now (`⚙ Bash: run tests`, `💬 …`).
@@ -78,7 +79,7 @@ herdr plugin uninstall momatthias.navigator
 
 Inside the Navigator:
 
-- **Seven tabs, the same shape each:** a one-row toolbar on top (the main action is blue),
+- **Six tabs, the same shape each:** a one-row toolbar on top (the main action is blue),
   the list below, and the keys that work right now in the footer. Keys `1`–`6` switch tabs:
   Projects · Agents · Sessions · Layout · Usage · ⚙ Settings. Buttons with `▾` open a
   small menu. Every button has a tooltip. **Right-click a row** (or press `.`) for everything
@@ -186,6 +187,9 @@ presses ⏎ / Esc / ^C, in every ticked agent at once.
 - **Answer without leaving.** `⚑ Next waiting` (`g`) selects the next agent that needs you and
   puts you in the message box, its last words in the preview. When it shows numbered choices
   (a permission prompt or a question), **Answer: [1 Yes] [2 …] [3 No]** buttons press that number.
+- **Nested by project.** Agents are grouped under their project (`▾ AlgoTrader ⏳1 ○6`), the
+  `Where` column says which checkout. `←`/`→`, a click on `▾` or Enter on the header folds a
+  group; a folded group still shows the agents that need you.
 - **Recent first.** `⇅` sorts Agents by your last visit instead, other panes included (`F7`).
 
 - **Context gauge.** Agents has a `Ctx` column that shows how full each session's context is
@@ -211,7 +215,7 @@ presses ⏎ / Esc / ^C, in every ticked agent at once.
   **Discord / Slack / Teams / Mattermost** (an incoming-webhook URL) and **WhatsApp** (through
   the free, unofficial CallMeBot relay). Send test checks every channel. Messages carry only a
   session's name, its project and how long it waited.
-- **Usage tab** (`6`). Tokens per project and session for today and the last 7 days, and how much
+- **Usage tab** (`5`). Tokens per project and session for today and the last 7 days, and how much
   of that was output, read incrementally from the Claude and Codex transcripts.
 
 Questions an agent is waiting on (Claude `AskUserQuestion`, Codex `request_user_input`) show up
@@ -266,7 +270,7 @@ is ever rebuilt.
 updates with one click. It only fast-forwards: local changes or local commits stop it, so
 nothing of yours is overwritten. Reopen the Navigator afterwards.
 
-The common settings are in the Navigator itself (⚙ Settings, key `7`). Everything else is in
+The common settings are in the Navigator itself (⚙ Settings, key `6` or `F9`). Everything else is in
 `navigator.toml` in the plugin's config directory (`herdr plugin config-dir momatthias.navigator`;
 ⚙ Settings › General › *Open settings file* opens it). In it you can:
 

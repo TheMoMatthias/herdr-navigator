@@ -2,14 +2,16 @@
 
 * auto-named workspaces are renamed to their project (never a name you typed yourself);
 * linked-worktree workspaces are named after the session(s) working in them;
-* every workspace reports `$agents` (e.g. "⚠1 ◐2") and `$outside` (names of sessions running in
-  other windows that have no mirror pane) for the sidebar Space rows;
+* every workspace reports `$agents` (e.g. "⚠1 ◐2") and `$s1`..`$s8`: one line per session working
+  in it (tabs included, sessions in other windows marked ↗), which the sidebar shows indented under
+  the Space, so a session in a second tab is never hidden behind its workspace's name;
 * every agent pane reports `$session` (its name as the CLI shows it), `$project`
   (project ⎇ worktree) and `$subagents` for the sidebar Agent rows.
 Only changed values are sent, so frequent status events stay cheap. Idempotent.
 """
 from __future__ import annotations
 
+import itertools
 import json
 import os
 from pathlib import Path
@@ -22,6 +24,7 @@ from .model import summarize
 SOURCE = f"plugin:{settings.PLUGIN_ID}"
 
 
+_SEQ = (str(n) for n in itertools.count(int(time.time() * 1000) * 1000))
 RESEND_SECONDS = 60  # hooks run concurrently; a periodic full resend heals any lost report
 
 
@@ -52,10 +55,28 @@ def _report(kind: str, target: str, name: str, value: str, old: dict, sent: dict
         return
     args = ["--token", f"{name}={value}"] if value else ["--clear-token", name]
     try:
-        herdr.run(kind, "report-metadata", target, "--source", SOURCE, *args)
+        herdr.run(kind, "report-metadata", target, "--source", SOURCE, *args, "--seq", next(_SEQ))
         sent[k] = value  # only confirmed reports are remembered, so a failure is retried
     except (herdr.HerdrError, OSError):
         pass
+
+
+SESSION_ROWS = 8
+
+
+def session_lines(label: str, agents: list) -> list[str]:
+    """The indented lines a Space shows under itself: one per session, urgent first. A worktree
+    Space already named after its only session shows none (it would just repeat the name)."""
+    agents = sorted(agents, key=lambda a: (model.STATE_ORDER.get(a.status, 9), a.display.lower()))
+    if len(agents) == 1 and agents[0].display.strip().lower() == label.strip().lower():
+        return []
+    lines = []
+    for a in agents:
+        icon = "↗" if not a.in_herdr else model.STATE_ICON.get(a.status, "?")
+        lines.append(f"{icon} {a.display[:30]}")
+    if len(lines) > SESSION_ROWS:
+        lines = lines[:SESSION_ROWS - 1] + [f"+{len(lines) - SESSION_ROWS + 1} more"]
+    return [("└ " if i == len(lines) - 1 else "├ ") + ln for i, ln in enumerate(lines)]
 
 
 def _named(ws: str | None = None, label: str | None = None) -> dict:
@@ -83,7 +104,9 @@ def sync(force: bool = False) -> None:
     old = {} if force else _load_sent()
     force = force or not old
     sent: dict[str, str] = {}
-    seq = str(int(time.time() * 1000))
+    seq = ""
+    global _SEQ
+    _SEQ = (str(n) for n in itertools.count(int(started * 1000) * 1000))  # rises across runs and reports
 
     for w in world.workspaces:
         if not w.project:
@@ -102,8 +125,10 @@ def sync(force: bool = False) -> None:
             a.project.worktree == p.worktree if p.worktree else a.project.worktree not in open_wts - {""})]
         outside = [a for a in mine if not a.in_herdr and not a.mirror_pane]
         _report("workspace", w.id, "agents", summarize(inside), old, sent, seq)
-        _report("workspace", w.id, "outside",
-                ("↗ " + ", ".join(a.display for a in outside))[:40] if outside else "", old, sent, seq)
+        _report("workspace", w.id, "outside", "", old, sent, seq)  # now part of the session rows
+        lines = session_lines(w.label, [a for a in world.agents if a.workspace_id == w.id] + outside)
+        for i in range(SESSION_ROWS):
+            _report("workspace", w.id, f"s{i + 1}", lines[i] if i < len(lines) else "", old, sent, seq)
         # a worktree workspace is named after the session(s) working in it, as your CLI shows them
         if w.linked_worktree and cfg.auto_name:
             names = sorted({a.display for a in mine if a.display})
@@ -112,6 +137,16 @@ def sync(force: bool = False) -> None:
             if want != w.label and (w.label == os.path.basename(w.cwd.rstrip("\\/")) or w.label == ours):
                 herdr.run("workspace", "rename", w.id, want, check=False)
                 _named(w.id, want)
+
+    try:  # who waits on a reply (or a question in another window): read by alerts.check_waiting
+        (settings.state_dir() / "replies.json").write_text(json.dumps({
+            (a.pane_id or f"out:{a.cli}:{a.session_id}"): {
+                "name": a.display, "workspace_id": a.workspace_id,
+                "why": "needs a reply" if a.status == "reply" else "waits for you"}
+            for a in world.agents if a.status == "reply" or (not a.in_herdr and a.status == "blocked")}),
+            encoding="utf-8")
+    except OSError:
+        pass
 
     for a in world.agents:
         if a.in_herdr:  # mirror panes report their own tokens
