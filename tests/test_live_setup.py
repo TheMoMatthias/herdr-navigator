@@ -321,3 +321,20 @@ def test_manifest_has_worktree_events_and_new_here_action():
     ons = {e["on"] for e in doc["events"]}
     assert {"worktree.created", "worktree.removed", "worktree.opened"} <= ons
     assert any(a["id"] == "new-here" for a in doc["actions"])
+
+
+def test_agent_panel_tree_groups_by_project_most_urgent_first():
+    from navigator import model, sync
+    a_root, b_root = projects.Project("/a", "Alpha"), projects.Project("/b", "Beta")
+    wt = projects.Project("/b", "Beta", "lead-3", "/b", "/b/.wt/lead-3")
+
+    def ag(name, status, p, pane):
+        return model.Agent("claude", status, p, name=name, pane_id=pane)
+    agents = [ag("A1", "idle", a_root, "p1"), ag("B1", "idle", b_root, "p2"), ag("B2", "reply", wt, "p3"),
+              ag("OUT", "blocked", a_root, "")]       # not in herdr: not in its panel
+    rows = [(a.display, order, head, line, lane) for a, order, head, line, lane in sync.agent_tree(agents)]
+    assert [r[0] for r in rows] == ["B2", "B1", "A1"]   # Beta first: it holds the agent that needs you
+    assert rows[0][2].startswith("▾ Beta") and rows[1][2] == "" and rows[2][2].startswith("▾ Alpha")
+    assert rows[0][3] == "├ ⏳ B2" and rows[1][3] == "└ ○ B1" and rows[2][3] == "└ ○ A1"
+    assert rows[0][4] == "│   ⎇ lead-3" and rows[1][4] == ""
+    assert [r[1] for r in rows] == ["0000", "0001", "0002"]

@@ -158,6 +158,8 @@ class Mirror(App):
                       "--message", activity[:120] or name, check=False)
         herdr.run("pane", "report-metadata", self.pane, "--source", SOURCE,
                   "--token", f"session={name}", "--token", f"project={proj}",
+                  # herdr's Agents panel tree: mirrors sort after the project groups, named
+                  "--token", f"line=↗ {name[:34]}", "--token", f"lane=    {proj}",
                   *(["--token", f"subagents=↳{subs}"] if subs else ["--clear-token", "subagents"]),
                   "--token", "where=↗ other window" if state != "ended" else "where=ended", check=False)
 

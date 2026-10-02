@@ -49,16 +49,29 @@ def _save_sent(sent: dict, started: float, forced: bool) -> None:
 
 
 def _report(kind: str, target: str, name: str, value: str, old: dict, sent: dict, seq: str) -> None:
+    """Queue one token; _flush sends every changed token of a target in a single call."""
     k = f"{kind}:{target}:{name}"
     if old.get(k) == value:
         sent[k] = value
         return
-    args = ["--token", f"{name}={value}"] if value else ["--clear-token", name]
-    try:
-        herdr.run(kind, "report-metadata", target, "--source", SOURCE, *args, "--seq", next(_SEQ))
-        sent[k] = value  # only confirmed reports are remembered, so a failure is retried
-    except (herdr.HerdrError, OSError):
-        pass
+    _PENDING.setdefault((kind, target), []).append((k, name, value))
+
+
+_PENDING: dict[tuple[str, str], list[tuple[str, str, str]]] = {}
+
+
+def _flush(sent: dict) -> None:
+    for (kind, target), items in list(_PENDING.items()):
+        args = []
+        for _, name, value in items:
+            args += ["--token", f"{name}={value}"] if value else ["--clear-token", name]
+        try:
+            herdr.run(kind, "report-metadata", target, "--source", SOURCE, *args, "--seq", next(_SEQ))
+            for k, _, value in items:
+                sent[k] = value  # only confirmed reports are remembered, so a failure is retried
+        except (herdr.HerdrError, OSError):
+            pass
+    _PENDING.clear()
 
 
 SESSION_ROWS = 8
@@ -77,6 +90,37 @@ def session_lines(label: str, agents: list) -> list[str]:
     if len(lines) > SESSION_ROWS:
         lines = lines[:SESSION_ROWS - 1] + [f"+{len(lines) - SESSION_ROWS + 1} more"]
     return [("└ " if i == len(lines) - 1 else "├ ") + ln for i, ln in enumerate(lines)]
+
+
+def agent_tree(agents: list) -> list[tuple]:
+    """herdr's Agents panel as a tree: (agent, order, heading, line, lane) per agent in herdr.
+    Projects come in the order of their most urgent agent, agents most urgent first; the first
+    agent of a project carries the project heading row, the others only their branch."""
+    agents = [a for a in agents if a.in_herdr]
+    urg = lambda a: (model.STATE_ORDER.get(a.status, 9), a.waiting_since or 9e18)  # noqa: E731
+    first: dict[str, tuple] = {}
+    for a in agents:
+        first[a.project.root] = min(first.get(a.project.root, (99, 9e18)), urg(a))
+    agents.sort(key=lambda a: (first[a.project.root], a.project.name.lower(), urg(a),
+                               a.project.worktree, a.display.lower()))
+    out = []
+    for i, a in enumerate(agents):
+        group = [x for x in agents if x.project.root == a.project.root]
+        last = a is group[-1]
+        head = ""
+        if a is group[0]:
+            head = f"▾ {a.project.name[:30]}  {summarize(Counter(x.status for x in group))}"
+        icon = model.STATE_ICON.get(a.status, "?")
+        line = f"{'└' if last else '├'} {icon} {a.display[:34]}"
+        lane = f"{' ' if last else '│'}   ⎇ {a.project.worktree}" if a.project.worktree else ""
+        out.append((a, f"{i:04d}", head, line, lane))
+    return out
+
+
+def _set_view(world) -> None:
+    """Make herdr's Agents panel follow the tree order (until the herdr server restarts)."""
+    herdr.request("agent.view.set", {"source": SOURCE, "label": "by project",
+                                     "sort": [{"field": {"token": "order"}, "order": "asc"}]})
 
 
 def _named(ws: str | None = None, label: str | None = None) -> dict:
@@ -168,12 +212,28 @@ def sync(force: bool = False) -> None:
     except OSError:
         pass
 
+    # herdr's Agents panel, nested by project: heading row, ├/└ branches, the worktree below
+    for a, order, head, line, lane in agent_tree(world.agents):
+        _report("pane", a.pane_id, "order", order, old, sent, seq)
+        _report("pane", a.pane_id, "grp", head, old, sent, seq)
+        _report("pane", a.pane_id, "line", line, old, sent, seq)
+        _report("pane", a.pane_id, "lane", lane, old, sent, seq)
+    if old.get("view") != "by project":
+        try:
+            _set_view(world)
+            sent["view"] = "by project"
+        except Exception as e:
+            print(f"navigator: agent view not set: {e}")
+    else:
+        sent["view"] = "by project"
+
     for a in world.agents:
         if a.in_herdr:  # mirror panes report their own tokens
             subs = f"↳{len(a.subagents)}" if a.subagents else ""
             _report("pane", a.pane_id, "project", a.project.label, old, sent, seq)
             _report("pane", a.pane_id, "session", a.display, old, sent, seq)
             _report("pane", a.pane_id, "subagents", subs, old, sent, seq)
+    _flush(sent)
     _save_sent(sent, started, force)
 
 

@@ -5,7 +5,10 @@ everything your coding agents are doing:
 
 * **Which project am I in?** Workspaces are named after their git repo. Worktrees fold into
   their repo and show up as indented children in the sidebar, and every session inside a
-  Space gets its own indented row under it (`├ ⏳ STORAGE`), tabs included.
+  Space gets its own indented row under it (`├ ⏳ STORAGE`), tabs included. herdr's Agents panel is
+  nested the same way: a heading per project (`▾ AlgoTrader ⏳1 ○5`), its agents below as
+  `├ ⏳ STORAGE · needs reply`, a worktree agent's `⎇ lane` under its name, the project with
+  whoever needs you first.
 * **What is running where?** Every Claude Code and Codex agent is listed per project and
   worktree, including sessions running in *other* terminal windows and their live
   **sub-agents**, each with what it is doing right now (`⚙ Bash: run tests`, `💬 …`).

@@ -86,9 +86,14 @@ SPACE_ROWS = [
     ["branch", "git_status"],
     *[[{"token": f"$s{i}", "fg": "#a89984", "rules": _SESSION_RULES}] for i in range(1, 9)],
 ]
+# herdr's Agents panel as a tree by project (tokens and order from sync.agent_tree): a heading
+# row on the first agent of each project, then "├ ⏳ NAME · state", then the worktree if any
+_LINE_RULES = [{"contains": "⚠", "fg": "#fb4934", "bold": True}, {"contains": "⏳", "fg": "#fe8019", "bold": True},
+               {"contains": "✔", "fg": "#b8bb26", "bold": True}, {"contains": "◐", "fg": "#fabd2f", "bold": True}]
 AGENT_ROWS = [
-    ["state_icon", {"token": "$session", "bold": True}, "state_text", {"token": "$subagents", "fg": "#fabd2f"}],
-    [{"token": "$project", "fg": "#83a598"}, "agent", {"token": "$where", "fg": "#d3869b"}],
+    [{"token": "$grp", "fg": "#83a598", "bold": True}],
+    [{"token": "$line", "bold": True, "rules": _LINE_RULES}, "state_text", {"token": "$subagents", "fg": "#fabd2f"}],
+    [{"token": "$lane", "fg": "#c678dd"}, {"token": "$where", "fg": "#d3869b"}],
 ]
 
 
@@ -179,7 +184,7 @@ def install(doc, added: dict) -> list[str]:
     for name, rows in (("spaces", SPACE_ROWS), ("agents", AGENT_ROWS)):
         sec = sidebar.get(name)
         rows_text = str(sec.get("rows", "")) if sec is not None else ""
-        ours = "$project" in rows_text or "$agents" in rows_text
+        ours = any(t in rows_text for t in ("$project", "$agents", "$line", "$s1"))
         if sec is None or ours:
             if sec is None:
                 sec = tomlkit.table()
