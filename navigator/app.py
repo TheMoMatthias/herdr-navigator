@@ -1395,6 +1395,8 @@ class Navigator(App):
             return
         folded[root] = not want
         startup.set_ui("agents_folded", folded)
+        from . import sync
+        sync.spawn_background()  # herdr's Agents panel folds the same project
         self.fill_agents()
         t = self.query_one("#agent-table", DataTable)
         try:

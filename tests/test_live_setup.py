@@ -288,13 +288,13 @@ def test_session_lines_nest_sessions_under_their_space():
         return model.Agent("claude", status, p, name=name, pane_id=pane)
     # a second tab's session shows under the primary Space, urgent first, tree-drawn
     lines = sync.session_lines("AlgoTrader", [ag("ZED", "idle"), ag("STORAGE", "reply")])
-    assert lines == ["├ ⏳ STORAGE", "└ ○ ZED"]
+    assert lines == ["├─ ? STORAGE", "└─ ○ ZED"]
     # a worktree Space already named after its only session repeats nothing
     assert sync.session_lines("QUALITY-FIX", [ag("QUALITY-FIX", "idle")]) == []
     # sessions in other windows are marked, and long lists end in "+N more"
-    assert sync.session_lines("x", [ag("OUT", "idle", pane="")]) == ["└ ↗ OUT"]
+    assert sync.session_lines("x", [ag("OUT", "idle", pane="")]) == ["└─ ↗ OUT"]
     many = sync.session_lines("x", [ag(f"S{i}", "idle") for i in range(12)])
-    assert len(many) == sync.SESSION_ROWS and many[-1] == "└ +5 more"
+    assert len(many) == sync.SESSION_ROWS and many[-1] == "└─ +5 more"
 
 
 def test_sidebar_rows_fit_herdr_limits():
@@ -330,11 +330,17 @@ def test_agent_panel_tree_groups_by_project_most_urgent_first():
 
     def ag(name, status, p, pane):
         return model.Agent("claude", status, p, name=name, pane_id=pane)
-    agents = [ag("A1", "idle", a_root, "p1"), ag("B1", "idle", b_root, "p2"), ag("B2", "reply", wt, "p3"),
-              ag("OUT", "blocked", a_root, "")]       # not in herdr: not in its panel
-    rows = [(a.display, order, head, line, lane) for a, order, head, line, lane in sync.agent_tree(agents)]
-    assert [r[0] for r in rows] == ["B2", "B1", "A1"]   # Beta first: it holds the agent that needs you
-    assert rows[0][2].startswith("▾ Beta") and rows[1][2] == "" and rows[2][2].startswith("▾ Alpha")
-    assert rows[0][3] == "├ ⏳ B2" and rows[1][3] == "└ ○ B1" and rows[2][3] == "└ ○ A1"
-    assert rows[0][4] == "│   ⎇ lead-3" and rows[1][4] == ""
-    assert [r[1] for r in rows] == ["0000", "0001", "0002"]
+    agents = [ag("A1", "idle", a_root, "p1"), ag("A2", "working", a_root, "p4"), ag("B1", "idle", b_root, "p2"),
+              ag("B2", "reply", wt, "p3"), ag("OUT", "blocked", a_root, "")]   # not in herdr: not in its panel
+    rows = [(x[0].display,) + tuple(x[1:]) for x in sync.agent_tree(agents)]
+    assert [r[0] for r in rows] == ["B2", "B1", "A2", "A1"]   # Beta first: it holds the agent that needs you
+    assert rows[0][2].startswith("▾ Beta  ?1 ○1") and rows[1][2] == "" and rows[2][2].startswith("▾ Alpha")
+    assert rows[0][3] == "├─ ? B2" and rows[1][3] == "└─ ○ B1" and rows[3][3] == "└─ ○ A1"
+    assert rows[0][4] == "│" + sync.PAD * 4 + "▹ lead-3" and rows[1][4] == ""
+    assert [r[1] for r in rows] == ["0000", "0001", "0002", "0003"]
+    assert all(ch not in "".join(r[2] + r[3] + r[4] for r in rows) for ch in "⏳✔⚠⎇")   # no wide glyphs
+    # folded: only who needs you stays, else the first agent carries the heading
+    f = {r[0]: r for r in [(x[0].display,) + tuple(x[1:]) for x in sync.agent_tree(agents, {"/b": True, "/a": True})]}
+    assert not f["B2"][5] and f["B1"][5] and f["B2"][2].startswith("▸ Beta") and "+1 folded" in f["B2"][2]
+    assert f["B2"][3] == "└─ ? B2"
+    assert not f["A2"][5] and f["A1"][5] and f["A2"][2].startswith("▸ Alpha")

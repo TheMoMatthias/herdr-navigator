@@ -75,6 +75,13 @@ def _flush(sent: dict) -> None:
 
 
 SESSION_ROWS = 8
+SIDE_ICON = {"blocked": "!", "reply": "?", "done": "●", "working": "◐", "idle": "○", "unknown": "·"}
+PAD = "\u2800"  # braille blank: looks like a space, but herdr trims real spaces off token values
+
+
+def side_counts(agents: list) -> str:
+    c = Counter(a.status for a in agents)
+    return " ".join(f"{SIDE_ICON[s]}{c[s]}" for s in ("blocked", "reply", "done", "working", "idle") if c.get(s))
 
 
 def session_lines(label: str, agents: list) -> list[str]:
@@ -85,17 +92,19 @@ def session_lines(label: str, agents: list) -> list[str]:
         return []
     lines = []
     for a in agents:
-        icon = "↗" if not a.in_herdr else model.STATE_ICON.get(a.status, "?")
+        icon = "↗" if not a.in_herdr else SIDE_ICON.get(a.status, "·")
         lines.append(f"{icon} {a.display[:30]}")
     if len(lines) > SESSION_ROWS:
         lines = lines[:SESSION_ROWS - 1] + [f"+{len(lines) - SESSION_ROWS + 1} more"]
-    return [("└ " if i == len(lines) - 1 else "├ ") + ln for i, ln in enumerate(lines)]
+    return [("└─ " if i == len(lines) - 1 else "├─ ") + ln for i, ln in enumerate(lines)]
 
 
-def agent_tree(agents: list) -> list[tuple]:
-    """herdr's Agents panel as a tree: (agent, order, heading, line, lane) per agent in herdr.
-    Projects come in the order of their most urgent agent, agents most urgent first; the first
-    agent of a project carries the project heading row, the others only their branch."""
+def agent_tree(agents: list, folded: dict | None = None) -> list[tuple]:
+    """herdr's Agents panel as a tree: (agent, order, heading, line, lane, hidden) per agent in
+    herdr. Projects come in the order of their most urgent agent, agents most urgent first; the
+    first shown agent of a project carries the project heading row. A folded project shows only
+    the agents that need you (or its first agent, to carry the heading)."""
+    folded = folded or {}
     agents = [a for a in agents if a.in_herdr]
     urg = lambda a: (model.STATE_ORDER.get(a.status, 9), a.waiting_since or 9e18)  # noqa: E731
     first: dict[str, tuple] = {}
@@ -106,21 +115,30 @@ def agent_tree(agents: list) -> list[tuple]:
     out = []
     for i, a in enumerate(agents):
         group = [x for x in agents if x.project.root == a.project.root]
-        last = a is group[-1]
+        shut = folded.get(a.project.root, False)
+        shown = [x for x in group if x.status in model.NEEDS_YOU] if shut else group
+        shown = shown or group[:1]
+        if a not in shown:
+            out.append((a, f"{i:04d}", "", "", "", True))
+            continue
+        last = a is shown[-1]
         head = ""
-        if a is group[0]:
-            head = f"▾ {a.project.name[:30]}  {summarize(Counter(x.status for x in group))}"
-        icon = model.STATE_ICON.get(a.status, "?")
-        line = f"{'└' if last else '├'} {icon} {a.display[:34]}"
-        lane = f"{' ' if last else '│'}   ⎇ {a.project.worktree}" if a.project.worktree else ""
-        out.append((a, f"{i:04d}", head, line, lane))
+        if a is shown[0]:
+            more = len(group) - len(shown)
+            head = (f"{'▸' if shut else '▾'} {a.project.name[:30]}  {side_counts(group)}"
+                    + (f"  +{more} folded" if more else ""))
+        line = f"{'└─' if last else '├─'} {SIDE_ICON.get(a.status, '·')} {a.display[:34]}"
+        lane = f"{PAD if last else '│'}{PAD * 4}▹ {a.project.worktree}" if a.project.worktree else ""
+        out.append((a, f"{i:04d}", head, line, lane, False))
     return out
 
 
 def _set_view(world) -> None:
     """Make herdr's Agents panel follow the tree order (until the herdr server restarts)."""
-    herdr.request("agent.view.set", {"source": SOURCE, "label": "by project",
-                                     "sort": [{"field": {"token": "order"}, "order": "asc"}]})
+    herdr.request("agent.view.set", {
+        "source": SOURCE, "label": "by project",
+        "filter": {"op": "not", "filter": {"op": "eq", "field": {"token": "hide"}, "value": "1"}},
+        "sort": [{"field": {"token": "order"}, "order": "asc"}]})
 
 
 def _named(ws: str | None = None, label: str | None = None) -> dict:
@@ -213,19 +231,21 @@ def sync(force: bool = False) -> None:
         pass
 
     # herdr's Agents panel, nested by project: heading row, ├/└ branches, the worktree below
-    for a, order, head, line, lane in agent_tree(world.agents):
+    from . import startup
+    for a, order, head, line, lane, hidden in agent_tree(world.agents, startup.ui_state().get("agents_folded", {})):
+        _report("pane", a.pane_id, "hide", "1" if hidden else "", old, sent, seq)
         _report("pane", a.pane_id, "order", order, old, sent, seq)
         _report("pane", a.pane_id, "grp", head, old, sent, seq)
         _report("pane", a.pane_id, "line", line, old, sent, seq)
         _report("pane", a.pane_id, "lane", lane, old, sent, seq)
-    if old.get("view") != "by project":
+    if old.get("view") != "by project 2":
         try:
             _set_view(world)
-            sent["view"] = "by project"
+            sent["view"] = "by project 2"
         except Exception as e:
             print(f"navigator: agent view not set: {e}")
     else:
-        sent["view"] = "by project"
+        sent["view"] = "by project 2"
 
     for a in world.agents:
         if a.in_herdr:  # mirror panes report their own tokens

@@ -78,9 +78,18 @@ UI = {
 }
 
 # one row per session inside the Space ($s1..$s8 from sync.py); empty rows disappear
-_SESSION_RULES = [{"contains": "⚠", "fg": "#fb4934", "bold": True}, {"contains": "⏳", "fg": "#fe8019", "bold": True},
-                  {"contains": "✔", "fg": "#b8bb26"}, {"contains": "◐", "fg": "#fabd2f"},
-                  {"contains": "↗", "fg": "#d3869b"}, {"contains": "more", "dim": True}]
+def _icon_rules(bold: bool) -> list[dict]:
+    """Colour a tree line by the state glyph after its branch (sync.SIDE_ICON)."""
+    out = []
+    for glyph, style in (("!", {"fg": "#fb4934", "bold": True}), ("?", {"fg": "#fe8019", "bold": True}),
+                         ("●", {"fg": "#b8bb26", "bold": bold}), ("◐", {"fg": "#fabd2f", "bold": bold}),
+                         ("↗", {"fg": "#d3869b"})):
+        for branch in ("├─", "└─"):
+            out.append({"starts_with": f"{branch} {glyph} ", **style})
+    return out
+
+
+_SESSION_RULES = _icon_rules(False)
 SPACE_ROWS = [
     ["state_icon", "workspace", {"token": "$agents", "dim": True}],
     ["branch", "git_status"],
@@ -88,8 +97,7 @@ SPACE_ROWS = [
 ]
 # herdr's Agents panel as a tree by project (tokens and order from sync.agent_tree): a heading
 # row on the first agent of each project, then "├ ⏳ NAME · state", then the worktree if any
-_LINE_RULES = [{"contains": "⚠", "fg": "#fb4934", "bold": True}, {"contains": "⏳", "fg": "#fe8019", "bold": True},
-               {"contains": "✔", "fg": "#b8bb26", "bold": True}, {"contains": "◐", "fg": "#fabd2f", "bold": True}]
+_LINE_RULES = _icon_rules(True)
 AGENT_ROWS = [
     [{"token": "$grp", "fg": "#83a598", "bold": True}],
     [{"token": "$line", "bold": True, "rules": _LINE_RULES}, "state_text", {"token": "$subagents", "fg": "#fabd2f"}],

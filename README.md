@@ -7,8 +7,10 @@ everything your coding agents are doing:
   their repo and show up as indented children in the sidebar, and every session inside a
   Space gets its own indented row under it (`├ ⏳ STORAGE`), tabs included. herdr's Agents panel is
   nested the same way: a heading per project (`▾ AlgoTrader ⏳1 ○5`), its agents below as
-  `├ ⏳ STORAGE · needs reply`, a worktree agent's `⎇ lane` under its name, the project with
-  whoever needs you first.
+  `├─ ? STORAGE · needs reply`, a worktree agent's `▹ lane` under its name, the project with
+  whoever needs you first (`!` waits on you, `?` needs a reply). Fold a project there by
+  right-clicking one of its panes or its workspace › `Navigator: fold / unfold this project`;
+  folding in the Navigator's Agents tab does the same. A folded project keeps who needs you.
 * **What is running where?** Every Claude Code and Codex agent is listed per project and
   worktree, including sessions running in *other* terminal windows and their live
   **sub-agents**, each with what it is doing right now (`⚙ Bash: run tests`, `💬 …`).
