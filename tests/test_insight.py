@@ -250,3 +250,11 @@ def test_telegram_setup_explains_a_missing_start(tmp_path):
     finally:
         srv.shutdown()
         srv.server_close()
+
+
+def test_preview_drops_the_cli_input_box_and_status_line():
+    from navigator.app import conversation_lines
+    raw = "\n".join(["● Done: tests pass.", "", "  ⎿ 81 passed", "─" * 40 + " NAME ─",
+                     "❯ ", "  Model: Opus | [███░░] 36%", "  ⏵⏵ bypass permissions on"])
+    assert conversation_lines(raw) == ["● Done: tests pass.", "  ⎿ 81 passed"]
+    assert conversation_lines("just text") == ["just text"]

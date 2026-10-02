@@ -132,6 +132,52 @@ def set_tick(key: str, on: bool | None) -> None:
     save(data)
 
 
+def set_ticks(changes: dict[str, bool | None], projects_on: list[str] = ()) -> None:
+    """Many ticks in one write. None hands a session back to the auto-tick."""
+    data = load()
+    for key, on in changes.items():
+        sd = data["sessions"].setdefault(key, {})
+        if on is None:
+            sd.pop("tick", None)
+        else:
+            sd["tick"] = on
+        if not sd:
+            data["sessions"].pop(key, None)
+    for root in projects_on:
+        data["projects"].setdefault(root, {})["on"] = True
+    save(data)
+
+
+def reset_all() -> None:
+    """Every tick and every project switch back to automatic; launch options stay."""
+    data = load()
+    data["projects"] = {}
+    for key in list(data["sessions"]):
+        data["sessions"][key].pop("tick", None)
+        if not data["sessions"][key]:
+            data["sessions"].pop(key)
+    save(data)
+
+
+# ---- how the lists look (collapsed projects); per machine, not part of the restore choice ----
+
+def _ui_path() -> Path:
+    return settings.state_dir() / "navigator-ui.json"
+
+
+def ui_state() -> dict:
+    try:
+        return json.loads(_ui_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def set_ui(key: str, value) -> None:
+    data = ui_state()
+    data[key] = value
+    _ui_path().write_text(json.dumps(data, indent=1), encoding="utf-8")
+
+
 def set_project(root: str, on: bool | None = None, auto: bool | None = None) -> None:
     data = load()
     pd = data["projects"].setdefault(root, {})

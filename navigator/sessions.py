@@ -5,6 +5,7 @@ cache the result by (mtime, size), so a refresh after the first run touches chan
 """
 from __future__ import annotations
 
+import functools
 import json
 import os
 import re
@@ -17,7 +18,7 @@ from . import projects, settings
 
 HEAD_BYTES = 96 * 1024
 TAIL_BYTES = 256 * 1024
-CACHE_VERSION = 8
+CACHE_VERSION = 9  # bumped: sessions without a cwd record
 
 
 @dataclass
@@ -97,6 +98,44 @@ def _claude_root() -> Path:
     return Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude")) / "projects"
 
 
+@functools.lru_cache(maxsize=1024)
+def _decode_project_dir(name: str) -> str:
+    """Claude names a project folder after its path, every character that is not a letter or
+    digit replaced by '-'. That is lossy, so find the real folder on disk ('' if it is gone)."""
+    enc = lambda x: re.sub(r"[^A-Za-z0-9]", "-", x)
+    if os.name == "nt":
+        m = re.match(r"^([A-Za-z])--(.*)$", name)
+        if not m:
+            return ""
+        base, rest = m.group(1) + ":\\", m.group(2)
+    else:
+        if not name.startswith("-"):
+            return ""
+        base, rest = "/", name[1:]
+
+    def walk(d: str, rest: str, depth: int = 0) -> str:
+        if not rest:
+            return d
+        if depth > 24:
+            return ""
+        try:
+            kids = sorted(os.listdir(d), key=len, reverse=True)
+        except OSError:
+            return ""
+        for k in kids:
+            e = enc(k)
+            if rest != e and not rest.startswith(e + "-"):
+                continue
+            sub = os.path.join(d, k)
+            if not os.path.isdir(sub):
+                continue
+            found = walk(sub, rest[len(e) + 1:], depth + 1) if rest != e else sub
+            if found:
+                return found
+        return ""
+    return walk(base, rest)
+
+
 def _parse_claude(path: Path) -> Session | None:
     head, tail = _read_head_tail(path)
     sid = path.stem
@@ -130,6 +169,8 @@ def _parse_claude(path: Path) -> Session | None:
         # Keep the launch cwd: `claude --resume` looks sessions up by it, and later records
         # follow in-session `cd`s.
         cwd = cwd or d.get("cwd", "")
+    if not cwd:  # named but never ran a turn: only the project folder says where it belongs
+        cwd = _decode_project_dir(path.parent.name)
     if not cwd:
         return None
     st = path.stat()

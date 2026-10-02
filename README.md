@@ -68,7 +68,7 @@ herdr plugin uninstall momatthias.navigator
 | `F1` · `Ctrl+B › Space` | **Navigator.** Projects → worktrees → agents → sub-agents, plus recent sessions |
 | `F2` · `Ctrl+B › U` | **Sessions.** Search every session of every CLI, resume it, tick it for logon |
 | `F3` · `Ctrl+B › I` | **Agents.** Every agent, inside herdr or not, with its current activity |
-| `F4` · `Ctrl+B › /` | **Keys.** Your live key bindings |
+| `F4` · `Ctrl+B › /` | **Keys.** Your live key bindings (⚙ Settings › Keys) |
 | `F6` · `Ctrl+B › M` | **Layout.** One-click shapes, drag-and-drop pane map, pane buttons, saved layouts |
 | `F7` · `Ctrl+B › Shift+O` | **Recent.** Every place you were, most recent first |
 | `Ctrl+Alt+R` · `Ctrl+B › ;` | Back to the previous pane (press again to flip back) |
@@ -76,6 +76,15 @@ herdr plugin uninstall momatthias.navigator
 | `Ctrl+Alt+Shift+→` / `←` | herdr sidebar wider / narrower, applied live |
 
 Inside the Navigator:
+
+- **Seven tabs, the same shape each:** a one-row toolbar on top (the main action is blue),
+  the list below, and the keys that work right now in the footer. Keys `1`–`7` switch tabs:
+  Projects · Agents · Sessions · Layout · Recent · Usage · ⚙ Settings. Buttons with `▾` open a
+  small menu. Every button has a tooltip. **Right-click a row** (or press `.`) for everything
+  you can do with it, and **`?`** explains the tab you are on.
+- **⚙ Settings** holds everything you set up once, in sections: *Logon restore*, *Accounts*,
+  *Phone alerts*, *Prompts*, *General* and *Keys*. Changes save on their own when you leave a
+  field or tick a box (into `navigator.toml`, comments kept).
 
 - **Click a row once** to select it; **click it again** (or press Enter) to open it.
 - **Click ☐** (or press Space) to show a project in herdr's sidebar, and click ☑ to hide it.
@@ -107,9 +116,19 @@ Inside the Navigator:
 
 ### Sessions: search, resume, reopen at logon, sign in, relaunch
 
-The **Sessions** tab (`3`, or `F2` straight into its search) lists every session by project.
-Type to search, pick a CLI to filter, press **Enter** to resume a session in its project, and
-use the box to decide which sessions come back when you log on.
+The **Sessions** tab (`3`, or `F2` straight into its search) lists every session by project, as
+a tree: **▸/▾** (click it, Enter, or `←` `→`) folds a project and remembers it; projects with
+nothing ticked or running start folded. An unfolded project shows what is ticked or running plus
+its recent sessions; the *… older sessions* row shows the rest. Search finds every session. The
+`●` column marks a session that runs now (`↗` in another window, `❓` asking you something).
+Press **Enter** to resume a session in its project, and use the box to decide which sessions come
+back when you log on.
+
+- **☑ Ticks ▾** changes many at once: tick everything running now, keep only what runs now,
+  untick everything, or put everything back to automatic.
+- **↻ Relaunch ▾** picks every CLI or one of them, then shows what will restart.
+- In **Agents**, right-click an agent to tick its session for logon (or untick it), relaunch it,
+  compact it or hand off its answer.
 
 - **☑ / ☐** in front of each session is its tick. A bright box is your own choice; a dim one
   was set by the auto-tick, which keeps the newest 3 sessions of each project lane (the main
@@ -120,7 +139,8 @@ use the box to decide which sessions come back when you log on.
   it, relaunch it in place, launch options (Claude: model, effort, permission mode, Remote
   Control; any CLI: extra arguments), back to automatic, show the resume command. On a project:
   restore on/off, auto-tick on/off, open all its ticked now, untick all, back to automatic.
-- **⏻ At logon** adds a logon entry (Windows: a per-user scheduled task; macOS LaunchAgent;
+- **⏻ Logon** (also ⚙ Settings › Logon restore, with how many sessions the auto-tick picks,
+  the delay after logon and the Claude naming / Remote Control defaults) adds a logon entry (Windows: a per-user scheduled task; macOS LaunchAgent;
   Linux XDG autostart; no admin rights needed). At logon it opens herdr in a terminal. Every
   agent pane from last time comes back in its own pane, named and with its launch options, then
   every ticked session that isn't running yet opens in its project's workspace. A session in a
@@ -129,7 +149,7 @@ use the box to decide which sessions come back when you log on.
   opened first and the rest wait until its refresh has landed. Many sessions refreshing the
   token at once log each other out.
 - **▶ Open ticked** does the same thing right now.
-- **🔑 Accounts** shows who is signed in to each CLI and offers Sign in / Sign out (Claude, Codex,
+- **⚙ Settings › Accounts** shows who is signed in to each CLI and offers Sign in / Sign out (Claude, Codex,
   OpenCode and Gemini by default; add any CLI under `[login.<cli>]`). Sign-in opens in a new tab.
   When the CLI has saved the new credentials, the Navigator comes back with **↻ Relaunch**.
   **Profiles** switch accounts without signing out. 💾 saves the current login as a named profile,
@@ -148,7 +168,7 @@ back in that same pane, with its name, Remote Control and launch options. herdr 
 across restarts, and setup sets herdr's own `[session] resume_agents_on_restore = false`
 because that resume starts sessions without them. Uninstall restores herdr's default.
 
-**New session** (`⚙ New…` under `+ New` in Projects, or `N`) asks for the CLI, a name, the
+**New session** (*With name, worktree, model…* under `+ New agent ▾` in Projects, or `N`) asks for the CLI, a name, the
 folder, optionally a **new git worktree** (created by herdr, so it is grouped under the repo),
 and, for Claude, model, effort, permission mode and Remote Control. The options stick to the
 session, so later relaunches use them too.
@@ -162,22 +182,22 @@ presses ⏎ / Esc / ^C, in every ticked agent at once.
   (yellow from 70%, red from 85%), and the top bar warns when one is nearly full. `⇣` sends
   `/compact` to the ticked agents, or to the selected one. Windows come from `[context]` (by model
   name); Codex reports its own.
-- **Saved prompts.** `☰` sends a saved prompt in one click (Status, Compact, Wrap up, Commit &
-  push, Review, or your own from `[prompts]`). Type a message and pick *＋ Save the message as a
-  prompt* to keep it.
+- **Saved prompts.** `☰ Prompts ▾` sends a saved prompt in one click (Status, Compact, Wrap up,
+  Commit & push, Review, or your own). Add and delete your own in ⚙ Settings › Prompts, or type a
+  message and pick *＋ Save the message as a prompt*.
 - **Hand off.** `⇢` sends the selected agent's last answer to another agent, for example to let
-  Codex review Claude's plan (template in `[handoff]`).
-- **Finish a worktree.** In Projects, select a worktree and press `⎇ Finish`. It shows the
+  Codex review Claude's plan (the text is editable in ⚙ Settings › Prompts).
+- **Finish a worktree.** In Projects, select a worktree and press `⎇ Finish worktree`. It shows the
   branch, the commits not yet in the main branch, uncommitted files and running agents. It then
   closes the workspace and removes the checkout, but only when nothing is uncommitted or
   running. The branch is always kept.
 - **While you were away.** If the Navigator was closed for more than 10 minutes, it opens with
   what changed: agents that ask something, agents that finished (each with the first line of its
   answer), and sessions that ended. Enter jumps there.
-- **Phone alerts** (Sessions › 🔔 Alerts). You get a message when an agent has waited on you
+- **Phone alerts** (⚙ Settings › Phone alerts). You get a message when an agent has waited on you
   for `blocked_minutes`, and the result of the logon restore. Any mix of channels works:
-  **Telegram** (create a bot with @BotFather, paste its token, press Start in the bot's chat,
-  then Connect, which finds your chat by itself), **ntfy** (free app, a private topic),
+  **Telegram** (create a bot with @BotFather and paste its token: the Navigator checks it, opens
+  your bot in Telegram, waits for you to press Start and sends a confirmation into the chat), **ntfy** (free app, a private topic),
   **Discord / Slack / Teams / Mattermost** (an incoming-webhook URL) and **WhatsApp** (through
   the free, unofficial CallMeBot relay). Send test checks every channel. Messages carry only a
   session's name, its project and how long it waited.
@@ -232,8 +252,9 @@ is ever rebuilt.
 
 ## Settings
 
-The settings file is `navigator.toml` in the plugin's config directory
-(`herdr plugin config-dir momatthias.navigator`). In it you can:
+The common settings are in the Navigator itself (⚙ Settings, key `7`). Everything else is in
+`navigator.toml` in the plugin's config directory (`herdr plugin config-dir momatthias.navigator`;
+⚙ Settings › General › *Open settings file* opens it). In it you can:
 
 - pin or rename projects,
 - change how far back sessions go,

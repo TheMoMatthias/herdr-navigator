@@ -120,14 +120,14 @@ def activity(path: str) -> str:
             if isinstance(content, list):
                 for part in reversed(content):
                     if part.get("type") == "tool_use":
-                        return "⚙ " + _describe_tool(part.get("name", "tool"), part.get("input"))
+                        return "▸ " + _describe_tool(part.get("name", "tool"), part.get("input"))
                     if part.get("type") == "text" and part.get("text", "").strip():
                         return "💬 " + _short(part["text"])
         # Codex
         p = d.get("payload") if isinstance(d.get("payload"), dict) else {}
         if d.get("type") == "response_item":
             if p.get("type") in ("function_call", "custom_tool_call"):
-                return "⚙ " + _describe_tool(p.get("name", "tool"), p.get("arguments") or p.get("input"))
+                return "▸ " + _describe_tool(p.get("name", "tool"), p.get("arguments") or p.get("input"))
             if p.get("type") in ("message", "agent_message") and p.get("role") == "assistant":
                 for part in p.get("content") or []:
                     if isinstance(part, dict) and part.get("text"):

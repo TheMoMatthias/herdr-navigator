@@ -43,12 +43,12 @@ def feed(path: str, limit: int = 40) -> list[Text]:
                 if part.get("type") == "text" and part.get("text", "").strip():
                     out.append(Text("💬 " + live._short(part["text"], 400)))
                 elif part.get("type") == "tool_use":
-                    out.append(Text("⚙ " + live._describe_tool(part.get("name", "tool"), part.get("input")),
+                    out.append(Text("▸ " + live._describe_tool(part.get("name", "tool"), part.get("input")),
                                     style="dim"))
         elif t == "event_msg" and p.get("type") == "user_message":
             out.append(Text("👤 " + live._short(p.get("message", ""), 300), style="bold cyan"))
         elif t == "response_item" and p.get("type") in ("function_call", "custom_tool_call"):
-            out.append(Text("⚙ " + live._describe_tool(p.get("name", "tool"), p.get("arguments") or p.get("input")),
+            out.append(Text("▸ " + live._describe_tool(p.get("name", "tool"), p.get("arguments") or p.get("input")),
                             style="dim"))
         elif t == "response_item" and p.get("role") == "assistant":
             for part in p.get("content") or []:
@@ -63,7 +63,8 @@ class Mirror(App):
     #head { height: auto; padding: 0 1; background: $boost; }
     #subs { height: auto; padding: 0 1; }
     #feed { padding: 0 1; }
-    Horizontal { height: 3; }
+    Horizontal { height: 1; margin: 1 0; }
+    Horizontal Button { margin: 0 1 0 0; }
     Button { margin: 0 1 0 0; }
     """
     BINDINGS = [
@@ -84,9 +85,9 @@ class Mirror(App):
         yield Static(id="head")
         yield Static(id="subs")
         with Horizontal():
-            yield Button("▶ Resume here", id="resume", disabled=True)
-            yield Button("☰ Navigator", id="nav")
-            yield Button("✕ Close mirror", id="close")
+            yield Button("▶ Resume here", id="resume", disabled=True, compact=True, variant="primary")
+            yield Button("☰ Navigator", id="nav", compact=True)
+            yield Button("✕ Close mirror", id="close", compact=True)
         yield VerticalScroll(Static(id="feed"), id="feedbox")
         yield Footer()
 

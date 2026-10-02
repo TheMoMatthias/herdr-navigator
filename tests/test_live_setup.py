@@ -42,14 +42,14 @@ def test_activity_reports_last_tool_call(tmp_path):
         {"type": "assistant", "message": {"content": [
             {"type": "tool_use", "name": "Bash", "input": {"command": "pytest -q", "description": "Run tests"}}]}},
     ])
-    assert live.activity(str(f)) == "⚙ Bash: Run tests"
+    assert live.activity(str(f)) == "▸ Bash: Run tests"
 
 
 def test_activity_codex_function_call(tmp_path):
     f = tmp_path / "r.jsonl"
     jl(f, [{"type": "response_item", "payload": {"type": "function_call", "name": "shell",
                                                    "arguments": json.dumps({"command": "ls"})}}])
-    assert live.activity(str(f)) == "⚙ shell: ls"
+    assert live.activity(str(f)) == "▸ shell: ls"
 
 
 def test_registry_session_with_live_pid_and_subagent(tmp_path):
@@ -74,7 +74,7 @@ def test_registry_session_with_live_pid_and_subagent(tmp_path):
     rr = live.running(sessions.load_sessions(include_hidden=True))
     assert [(r.session_id, r.name, r.status) for r in rr] == [("S1", "LEAD", "busy")]
     [sa] = rr[0].subagents
-    assert (sa.name, sa.kind, sa.model, sa.activity) == ("scout1", "scout", "sonnet", "⚙ Read: a.py")
+    assert (sa.name, sa.kind, sa.model, sa.activity) == ("scout1", "scout", "sonnet", "▸ Read: a.py")
 
 
 def test_codex_child_thread_attaches_to_parent(tmp_path):
@@ -178,7 +178,7 @@ def test_mirror_feed_reads_claude_and_codex(tmp_path):
         {"type": "event_msg", "payload": {"type": "user_message", "message": "codex ask"}},
     ])
     lines = [t.plain for t in mirror.feed(str(f))]
-    assert lines == ["👤 please fix the ledger", "💬 On it.", "⚙ Edit: ledger.py", "👤 codex ask"]
+    assert lines == ["👤 please fix the ledger", "💬 On it.", "▸ Edit: ledger.py", "👤 codex ask"]
 
 
 def test_history_is_mru_and_deduplicated():

@@ -76,7 +76,7 @@ cursor_new = "cursor-agent"
 cursor_resume = "cursor-agent --resume {id}"
 
 [restore]
-# Startup restore: which sessions reopen when you log on (Navigator › Startup).
+# Startup restore: which sessions reopen when you log on (Navigator › Sessions, ⚙ Settings › Logon).
 # A session you tick or untick yourself keeps that choice. Everything else is ticked
 # automatically: the newest `per_lane` sessions of each project lane (the main checkout and
 # each worktree) that you worked in during the last `window_days` days.
@@ -116,7 +116,7 @@ default = 200000
 template = "Hand-off from {name} ({cli}, {project}). Their latest answer:\\n\\n{answer}\\n\\nReview it and tell me what you think: what is right, what is wrong or missing."
 
 [alerts]
-# Alerts to your phone. Easiest: Navigator › Sessions › 🔔 Alerts sets these up for you.
+# Alerts to your phone. Easiest: Navigator › ⚙ Settings › Alerts sets these up for you.
 # Telegram: create a bot with @BotFather, paste its token, press Start in the bot chat.
 telegram_bot_token = ""
 telegram_chat_id = ""
@@ -133,7 +133,7 @@ blocked_minutes = 10
 # Alert with the logon restore's result.
 on_restore = true
 
-# Sign in / sign out per CLI (Navigator › Startup › Sign in). `watch` is the file the CLI
+# Sign in / sign out per CLI (Navigator › ⚙ Settings › Accounts). `watch` is the file the CLI
 # rewrites when the sign-in succeeds; the Navigator then offers to relaunch that CLI's sessions.
 # `files` (and `json_keys`: keys inside JSON files) hold the login: account profiles save and
 # swap exactly these, so you can switch accounts without signing out.
@@ -264,3 +264,23 @@ def load() -> Settings:
         login={k: {**defaults["login"].get(k, {}), **v} for k, v in
                {**defaults["login"], **raw.get("login", {})}.items()},
     )
+
+
+def save_values(section: str, values: dict) -> None:
+    """Write keys into `[section]` (dotted for nested tables) of navigator.toml, keeping
+    everything else, comments included, as it is."""
+    import tomlkit
+    path = settings_path()
+    load()  # makes sure the file exists
+    doc = tomlkit.parse(path.read_text(encoding="utf-8")) if path.exists() else tomlkit.document()
+    tab = doc
+    for part in section.split("."):
+        nxt = tab.get(part)
+        if nxt is None:
+            nxt = tomlkit.table()
+            tab[part] = nxt
+        tab = nxt
+    for k, v in values.items():
+        tab[k] = v
+    path.write_text(tomlkit.dumps(doc), encoding="utf-8")
+    load.cache_clear()

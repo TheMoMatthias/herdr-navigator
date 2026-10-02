@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 import time
 from collections import Counter
 
@@ -119,6 +120,18 @@ def sync(force: bool = False) -> None:
             _report("pane", a.pane_id, "session", a.display, old, sent, seq)
             _report("pane", a.pane_id, "subagents", subs, old, sent, seq)
     _save_sent(sent, started, force)
+
+
+def spawn_background() -> None:
+    """Run a sync detached (from the status line, which must stay fast)."""
+    import subprocess
+    root = Path(__file__).resolve().parent.parent
+    py = root / ".venv" / ("Scripts/pythonw.exe" if os.name == "nt" else "bin/python")
+    flags = (getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+             | getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    subprocess.Popen([str(py), "-m", "navigator.sync"], cwd=str(root),
+                     env={**os.environ, "PYTHONPATH": str(root), "PYTHONUTF8": "1"}, creationflags=flags,
+                     close_fds=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def main() -> None:

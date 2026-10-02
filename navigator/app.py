@@ -26,7 +26,10 @@ from textual.widgets import Button, DataTable, Footer, Input, Static, TabbedCont
 from . import keys as keymap
 from . import arrange, attention, history, launch, layouts, model, panes, settings, sidebar, uiwidth
 from .model import STATE_ICON, Agent, World, age, summarize
+from .settings_ui import SettingsPane
 from .startup_ui import ContextMenu, Digest, FinishWorktree, NewSession, Prompt, StartupPane, UsagePane
+from . import ui
+from .ui import Btn, Field
 
 STATE_STYLE = {"blocked": "bold red", "done": "bold green", "working": "yellow", "idle": "dim", "unknown": "magenta"}
 CLI_STYLE = {
@@ -67,9 +70,54 @@ def installed_clis() -> list[str]:
             if shutil.which(exe):
                 out.append(key[:-4])
     return sorted(out, key=cli_rank)
-TABS = ["projects", "agents", "sessions", "panes", "recent", "usage", "keys"]
+TABS = ["projects", "agents", "sessions", "panes", "recent", "usage", "settings"]
 TAB_ALIAS = {"startup": "sessions", "resume": "sessions"}  # older keybindings and entrypoints
+# Entry points that open a section of ⚙ Settings (F4 is the key cheat sheet).
+SETTINGS_SECTION = {"keys": "keys", "alerts": "alerts", "accounts": "accounts", "logon": "logon",
+                    "prompts": "prompts", "general": "general"}
 WT_SEP = "|wt|"
+
+# "?" shows what the current tab is for and how to work it.
+HELP = {
+    "projects": ("Projects: where your work lives",
+                 "Every project and its worktrees, newest first. ☑ in front = shown in herdr's sidebar.\n\n"
+                 "Click a row to select it, click it again or press Enter to go there.\n"
+                 "▾/▸ (or ← →) folds a project's worktrees. Type in 🔍 to filter.\n"
+                 "+ New agent ▾ starts Claude, Codex… here; its last entry asks for a name, a new worktree, model.\n"
+                 "☰ Sessions lists this project's sessions to resume or tick for logon.\n"
+                 "⎇ Finish worktree (on a worktree row) checks it is clean, then closes and removes it.\n"
+                 "Right-click a row (or press .) for all of this in a menu."),
+    "agents": ("Agents: everything running now",
+               "Every agent, inside herdr or in another window (↗), the ones waiting on you first.\n"
+               "❓ = it asks you something; Ctx = how full its context is (⇣ Compact frees it).\n\n"
+               "Enter or a second click jumps to the agent. The preview shows its last lines.\n"
+               "Type below and Send, or use ⏎ Enter / Esc / ^C Stop to answer without switching.\n"
+               "Tick ☐ several agents to send the same message, key or prompt to all of them.\n"
+               "Right-click (or .) an agent: relaunch it, tick it to come back at logon, hand off its answer."),
+    "sessions": ("Sessions: resume anything, choose what reopens at logon",
+                 "Every past session of every CLI, by project. Search finds any of them.\n\n"
+                 "Enter on a session resumes it in its project (a running one: jumps there).\n"
+                 "☑ = reopens at logon. Click the box or press Space. Dim ☑ 'auto' = picked automatically\n"
+                 "(the newest few per lane); your own clicks are bright and stay.\n"
+                 "Project rows: ▸/▾ or ← → folds them, the box switches the whole project on or off at logon.\n"
+                 "☑ Ticks ▾: tick what runs now, untick everything, back to automatic.\n"
+                 "↻ Relaunch ▾ restarts open sessions in their panes (after signing in to another account).\n"
+                 "Right-click (or .) a session: launch options (model, effort, Remote Control), resume command."),
+    "panes": ("Layout: arrange the panes of the current tab",
+              "The map is to scale. Click a pane to select it, double-click to go there.\n"
+              "Drag a pane onto another: the middle swaps them, an edge puts it beside.\n"
+              "The shapes on top rearrange the whole tab; ＋ New tab ▾ opens a ready-made layout.\n"
+              "Save a layout under a name to restore it for this project later (Projects › ▦ Layout)."),
+    "recent": ("Recent: every place you were",
+               "Most recent first. Enter or a second click goes back there."),
+    "usage": ("Usage: tokens per project and session",
+              "Today and the last 7 days, from the Claude and Codex transcripts (cache reads included)."),
+    "settings": ("Settings: what you set up once",
+                 "Pick a section on the left. Changes save on their own when you leave a field.\n"
+                 "Logon restore: what reopens when you log on. Accounts: sign in, switch accounts.\n"
+                 "Phone alerts: Telegram, ntfy, webhook, WhatsApp. Prompts: one-click prompts.\n"
+                 "General: sidebar and lists. Keys: every key the Navigator and herdr know."),
+}
 
 
 def ctx_text(a) -> Text:
@@ -81,8 +129,54 @@ def ctx_text(a) -> Text:
     return Text(f"{c.pct:>3}%", style=style)
 
 
+def conversation_lines(raw: str) -> list[str]:
+    """The agent's own output from a pane read: everything above the CLI's input box (the last
+    horizontal rule) and without blank or rule-only lines."""
+    lines = raw.splitlines()
+    for i in range(len(lines) - 1, -1, -1):
+        if lines[i].strip().startswith("──") and lines[i].count("─") >= 20:
+            lines = lines[:i]
+            break
+    return [l for l in lines if l.strip() and not set(l.strip()) <= set("─━═-")]
+
+
+def NL_JOIN(lines: list[str]) -> str:
+    return chr(10).join(lines)
+
+
+def clip(text: str, n: int) -> str:
+    """Cut to n characters and say so."""
+    text = " ".join(text.split())
+    return text if len(text) <= n else text[: n - 1] + "…"
+
+
 def state_text(status: str) -> Text:
     return Text(f"{STATE_ICON.get(status, '?')} {status}", style=STATE_STYLE.get(status, ""))
+
+
+class TopBar(Static):
+    """Where you are and what needs you, in words. A click goes to the agents behind it."""
+
+    class Clicked(Message):
+        pass
+
+    def on_click(self) -> None:
+        self.post_message(self.Clicked())
+
+
+STATE_WORDS = (("blocked", "waiting on you", "bold red"), ("done", "done", "bold green"),
+               ("working", "working", "yellow"), ("idle", "idle", "dim"))
+
+
+def counts_text(counts) -> Text:
+    """'⚠ 1 waiting on you · ◐ 2 working · ○ 9 idle': the glyph plus the word it stands for."""
+    out = Text()
+    for state, word, style in STATE_WORDS:
+        if counts.get(state):
+            if out:
+                out.append(" · ", style="dim")
+            out.append(f"{STATE_ICON[state]} {counts[state]} {word}", style=style)
+    return out
 
 
 class ClickTwiceTable(DataTable):
@@ -90,16 +184,40 @@ class ClickTwiceTable(DataTable):
     A click in the first column posts BoxClicked instead (the sidebar checkbox)."""
 
     BINDINGS = [Binding("j", "cursor_down", "Down", show=False), Binding("k", "cursor_up", "Up", show=False),
-                Binding("space", "box", "Tick")]
+                Binding("space", "box", "Tick"), Binding("period", "menu", "Menu", key_display="."),
+                Binding("left", "fold(False)", "Fold", show=False), Binding("right", "fold(True)", "Unfold", show=False),
+                Binding("shift+f10", "menu", "Menu", show=False)]
+
+    class Menu(Message):
+        def __init__(self, table: "ClickTwiceTable", row_key: str, at) -> None:
+            super().__init__()
+            self.table, self.row_key, self.at = table, row_key, at
+
+    def action_menu(self) -> None:
+        if self.row_count:
+            r = self.region
+            at = (r.x + 6, r.y + 2 + self.cursor_row - int(self.scroll_y))
+            self.post_message(self.Menu(self, self.coordinate_to_cell_key(self.cursor_coordinate).row_key.value, at))
 
     def check_action(self, action: str, parameters: tuple) -> bool | None:
-        if action == "box":
+        if action in ("box", "menu"):
             return self.id in ("proj-table", "agent-table")
+        if action == "fold":
+            return self.id == "proj-table"
         return True
 
     def action_box(self) -> None:
         if self.row_count:
             self.post_message(self.BoxClicked(self, self.coordinate_to_cell_key(self.cursor_coordinate).row_key.value))
+
+    class Fold(Message):
+        def __init__(self, table: "ClickTwiceTable", row_key: str, open_: bool | None = None) -> None:
+            super().__init__()
+            self.table, self.row_key, self.open_ = table, row_key, open_
+
+    def action_fold(self, open_: bool) -> None:
+        if self.row_count:
+            self.post_message(self.Fold(self, self.coordinate_to_cell_key(self.cursor_coordinate).row_key.value, open_))
 
     class BoxClicked(Message):
         def __init__(self, table: "ClickTwiceTable", row_key: str) -> None:
@@ -122,7 +240,20 @@ class ClickTwiceTable(DataTable):
 
     async def _on_click(self, event: events.Click) -> None:
         meta = event.style.meta if event.style else {}
-        if meta.get("column") == 0 and meta.get("row", -1) >= 0 and self.id in ("proj-table", "agent-table"):
+        if event.button == 3 and meta.get("row", -1) >= 0 and self.id in ("proj-table", "agent-table"):
+            self.move_cursor(row=meta["row"])
+            rk = self.coordinate_to_cell_key(self.cursor_coordinate).row_key.value
+            self.post_message(self.Menu(self, rk, (event.screen_x, event.screen_y)))
+            event.stop()
+            return
+        if meta.get("column") == 0 and meta.get("row", -1) >= 0 and self.id == "proj-table":
+            self.move_cursor(row=meta["row"])
+            rk = self.coordinate_to_cell_key(self.cursor_coordinate).row_key.value
+            self.post_message(self.Fold(self, rk))
+            event.stop()
+            return
+        box_col = 1 if self.id == "proj-table" else 0
+        if meta.get("column") == box_col and meta.get("row", -1) >= 0 and self.id in ("proj-table", "agent-table"):
             row = meta["row"]
             self.move_cursor(row=row)
             rk = self.coordinate_to_cell_key(self.cursor_coordinate).row_key.value
@@ -130,6 +261,14 @@ class ClickTwiceTable(DataTable):
             event.stop()
             return
         await super()._on_click(event)
+
+
+class ProjTable(ClickTwiceTable):
+    BINDINGS = [Binding("space", "box", "Sidebar on/off")]
+
+
+class AgentTable(ClickTwiceTable):
+    BINDINGS = [Binding("space", "box", "Select for Send")]
 
 
 class LayoutMap(Widget):
@@ -216,7 +355,7 @@ class LayoutMap(Widget):
         style = [[""] * W for _ in range(H)]
         for b, x0, y0, x1, y1 in boxes:
             sel = b.pane_id == self.selected
-            fill = "bold reverse cyan" if sel else ""
+            fill = ""
             if self._drop and b.pane_id == self._drop[0]:
                 fill = "bold reverse yellow"
             elif self._drag and b.pane_id == self._drag:
@@ -233,8 +372,10 @@ class LayoutMap(Widget):
                     elif edge_x:
                         ch = "│"
                     grid[y][x] = ch
-                    if sel:
+                    if fill:
                         style[y][x] = fill
+                    elif sel and (edge_x or edge_y):
+                        style[y][x] = "bold cyan"
                     elif edge_x or edge_y:
                         style[y][x] = "bold green" if b.focused else "dim"
             inner = max(1, x1 - x0 - 2)
@@ -250,7 +391,7 @@ class LayoutMap(Widget):
                 xs = x0 + 1 + max(0, (inner - len(line)) // 2)
                 for j, ch in enumerate(line):
                     grid[yy][xs + j] = ch
-                    style[yy][xs + j] = fill or ("bold" if i == 0 else "dim")
+                    style[yy][xs + j] = fill or (("bold cyan" if sel else "bold") if i == 0 else "dim")
         out = Text()
         for y in range(H):
             for x in range(W):
@@ -276,38 +417,41 @@ class Navigator(App):
     ENABLE_COMMAND_PALETTE = False
     TITLE = "herdr navigator"
 
-    CSS = """
-    Screen { background: $surface; }
+    CSS = ui.CSS + """
+    Screen { background: $surface; overflow: hidden; }
+    Tabs Tab { color: $text 75%; }
+    Tabs Tab.-active { color: $text; text-style: bold; }
     #topbar { height: 1; padding: 0 1; background: $boost; }
-    #hint { height: 1; padding: 0 1; color: $text-muted; }
-    #proj-detail { width: 44%; min-width: 36; padding: 0 1; border-left: tall $primary 40%; }
-    .btnrow { height: 3; }
-    .btnrow Button { margin: 0 1 0 0; min-width: 6; }
-    #agent-bar { height: 3; }
+    #tabs { height: 1fr; }
+    TabPane { padding: 0; }
     DataTable { height: 1fr; }
-    #keys-body { padding: 0 1; }
-    #shape-bar { height: 3; }
-    #shape-bar Button { margin: 0 1 0 0; min-width: 12; }
-    #preset-row, #new-row { height: 3; display: none; }
-    #new-row.show { display: block; }
-    #new-row Button { margin: 0 1 0 0; min-width: 6; }
-    #preset-row.show { display: block; }
-    #pane-map { width: 1fr; height: 1fr; min-height: 10; }
-    #pane-tools { width: 36; padding: 0 1; }
-    .rowlabel { width: 5; margin-top: 1; color: $text-muted; }
-    #pane-tools Horizontal { height: 3; }
-    #pane-tools Button { width: 1fr; min-width: 4; margin: 0; }
-    #pane-selected { height: 2; }
-    #pane-rename { display: none; }
+    #proj-detail { width: 42%; min-width: 34; padding: 0 1; border-left: tall $primary 40%; }
+    #proj-info { height: auto; text-wrap: nowrap; text-overflow: ellipsis; margin: 0 0 1 0; }
+    #proj-items { height: 1fr; }
+    #agent-bar .grow { width: 1fr; }
+    .key-lbl { width: auto; color: $text-muted; padding: 0 1 0 0; }
+    .empty-note { height: auto; padding: 1 2; color: $text-muted; display: none; }
+    .empty-note.show { display: block; }
+    #proj-filter { width: 1fr; min-width: 12; margin: 0 0 0 1; }
+    #agent-detail { height: 15; border-top: tall $primary 40%; padding: 0 0 0 0; }
+    #agent-preview { height: 1fr; padding: 0 1; }
+    #agent-send { margin: 0; }
+    #agent-keys { margin: 0; }
+    #agent-msg { width: 1fr; margin: 0 1 0 0; }
+    #pane-map { width: 1fr; height: 1fr; min-height: 8; }
+    #pane-tools { width: 26; padding: 0 1; }
+    #pane-tools Button { width: 100%; margin: 0 0 0 0; }
+    #pane-tools .bar { padding: 0; margin: 0; }
+    #pane-tools .bar Button { width: 1fr; min-width: 3; margin: 0 0 0 1; }
+    #pane-tools .bar Static { width: 5; color: $text-muted; }
+    #pane-tools .gap { height: 1; }
+    #pane-selected { height: 3; }
+    #pane-rename { display: none; margin: 1 0 0 0; }
     #pane-rename.show { display: block; }
-    #saved-row { height: 3; }
-    #layout-name { width: 1fr; }
+    #saved-row { margin: 1 0 0 0; padding: 0; }
+    #layout-name { width: 1fr; margin: 0 1 0 0; }
     #saved-table { height: 5; }
     #saved-table.empty { display: none; }
-    #agent-detail { height: 14; border-top: tall $primary 40%; }
-    #agent-preview { height: 1fr; padding: 0 1; }
-    #agent-send { height: 3; }
-    #agent-msg { width: 1fr; }
     """
 
     BINDINGS = [
@@ -317,13 +461,14 @@ class Navigator(App):
         Binding("4", "tab('panes')", "Layout", show=False),
         Binding("5", "tab('recent')", "Recent", show=False),
         Binding("6", "tab('usage')", "Usage", show=False),
-        Binding("7", "tab('keys')", "Keys", show=False),
-        Binding("enter", "open", "Open", priority=False),
+        Binding("7", "tab('settings')", "Settings", show=False),
+        Binding("enter", "open", "Go", priority=False, key_display="⏎"),
         Binding("space", "toggle_sidebar", "Sidebar"),
         Binding("r", "resume_project", "Sessions"),
-        Binding("slash", "search", "Search"),
+        Binding("slash", "search", "Search", key_display="/"),
         Binding("m", "message", "Message"),
         Binding("g", "attention", "Next ⚑"),
+        Binding("question_mark", "help", "Help", key_display="?"),
         Binding("escape", "back", "Close"),
         # everything below works but stays out of the footer (buttons cover it)
         Binding("c", "new('claude')", "New Claude", show=False),
@@ -368,6 +513,9 @@ class Navigator(App):
     def __init__(self, start_tab: str = "projects") -> None:
         super().__init__()
         self.search_first = start_tab == "resume"  # F2: straight into the session search
+        self.settings_section = SETTINGS_SECTION.get(start_tab, "logon")
+        if start_tab in SETTINGS_SECTION:
+            start_tab = "settings"
         start_tab = TAB_ALIAS.get(start_tab, start_tab)
         self.start_tab = start_tab if start_tab in TABS else "projects"
         self.world: World | None = None
@@ -385,103 +533,103 @@ class Navigator(App):
 
     # ---- layout ---------------------------------------------------------------------------
     def compose(self) -> ComposeResult:
-        yield Static("", id="topbar")
+        yield TopBar("", id="topbar")
         with TabbedContent(initial=self.start_tab, id="tabs"):
-            with TabPane("Projects", id="projects"):
+            with TabPane("1 Projects", id="projects"):
+                with Horizontal(classes="bar"):
+                    yield Btn("▶ Open", id="btn-go", variant="primary", tooltip="Go to this project (Enter)")
+                    yield Btn("+ New agent ▾", id="btn-new", tooltip="Start an agent here: pick a CLI, or set it up")
+                    yield Btn("☰ Sessions", id="btn-resume", tooltip="Its sessions: resume, tick for logon (r)")
+                    yield Btn("☑ Sidebar", id="btn-sidebar", tooltip="Show or hide it in herdr's sidebar (Space)")
+                    yield Btn("▦ Restore layout", id="btn-layout", tooltip="Restore its newest saved layout (l)")
+                    yield Btn("⎇ Finish worktree", id="btn-wt-finish",
+                              tooltip="Put this worktree away: check it, close it, remove the checkout")
+                    yield Field(placeholder="🔍 filter  ( / )", id="proj-filter")
                 with Horizontal():
-                    yield ClickTwiceTable(id="proj-table")
+                    with Vertical():
+                        yield Static("", id="proj-empty", classes="empty-note")
+                        yield ProjTable(id="proj-table")
                     with Vertical(id="proj-detail"):
-                        with Horizontal(classes="btnrow"):
-                            yield Button("Open", id="btn-go", variant="primary", tooltip="Go to this project (Enter)")
-                            yield Button("☑ Sidebar", id="btn-sidebar",
-                                         tooltip="Show or hide this project in herdr's sidebar (Space)")
-                            yield Button("Sessions", id="btn-resume", tooltip="Its sessions: resume, tick for logon (r)")
-                            yield Button("+ New", id="btn-new", tooltip="Start a new agent here: pick a CLI")
-                            yield Button("▦ Layout", id="btn-layout", tooltip="Restore the newest saved layout (l)")
-                            yield Button("⎇ Finish", id="btn-wt-finish",
-                                         tooltip="Put this worktree away: check it, close it, remove the checkout")
-                        with Horizontal(id="new-row"):
-                            for cli in installed_clis():
-                                key = CLI_NEW_KEY.get(cli)
-                                yield Button(Text(cli, style=CLI_STYLE.get(cli, "")), id=f"new-{cli}",
-                                             tooltip=f"New {cli} agent here" + (f" ({key})" if key else ""))
-                            yield Button("⚙ New…", id="new-dialog",
-                                         tooltip="Name, folder, new worktree, model and options (N)")
-                        yield VerticalScroll(Static(id="proj-info"))
-            with TabPane("Agents", id="agents"):
-                with Horizontal(id="agent-bar", classes="btnrow"):
+                        yield Static(id="proj-info")
+                        yield ClickTwiceTable(id="proj-items", show_header=False)
+            with TabPane("2 Agents", id="agents"):
+                with Horizontal(id="agent-bar", classes="bar"):
                     for label, f in (("All", ""), ("⚠ Blocked", "blocked"), ("✔ Done", "done"),
                                      ("◐ Working", "working"), ("○ Idle", "idle"), ("↗ Elsewhere", "outside")):
-                        yield Button(label, id=f"flt-{f or 'all'}")
-                yield ClickTwiceTable(id="agent-table")
+                        yield Btn(label, id=f"flt-{f or 'all'}")
+                    yield Static("", classes="grow")
+                    yield Btn("⚑ Next waiting", id="btn-attention", tooltip="Jump to the next agent that needs you (g)")
+                yield Static("", id="agent-empty", classes="empty-note")
+                yield AgentTable(id="agent-table")
                 with Vertical(id="agent-detail"):
                     yield VerticalScroll(Static(id="agent-preview"))
-                    with Horizontal(id="agent-send", classes="btnrow"):
-                        yield Input(placeholder="Message…", id="agent-msg")
-                        yield Button("Send", id="send-msg", variant="primary",
-                                     tooltip="Send to the selected agent, or to every ☑ marked one")
-                        yield Button("✕", id="mark-clear", tooltip="Clear the marks")
-                        yield Button("⏎ Enter", id="key-enter", tooltip="Press Enter in the agent (accept)")
-                        yield Button("Esc", id="key-esc", tooltip="Press Esc in the agent (cancel)")
-                        yield Button("^C Stop", id="key-ctrl_c", tooltip="Interrupt the agent")
-                        yield Button("⇣ Compact", id="act-compact", tooltip="/compact: free up its context (ticked ones, or the selected)")
-                        yield Button("☰ Prompts", id="act-prompts", tooltip="Saved prompts: send one in a click")
-                        yield Button("⇢ Hand off", id="act-handoff", tooltip="Hand off: send its last answer to another agent")
-                        yield Button("⚑ Next", id="btn-attention", tooltip="Jump to the next agent that needs you (g)")
-            with TabPane("Sessions", id="sessions"):
+                    with Horizontal(id="agent-send", classes="bar"):
+                        yield Field(placeholder="✉ Message to the selected agent, or to every ☑ ticked one  (m)",
+                                    id="agent-msg")
+                        yield Btn("Send", id="send-msg", variant="primary",
+                                  tooltip="Send to the selected agent, or to every ☑ ticked one")
+                        yield Btn("✕ Untick all", id="mark-clear", tooltip="Clear the ticks")
+                    with Horizontal(id="agent-keys", classes="bar"):
+                        yield Static("In the agent:", classes="key-lbl")
+                        yield Btn("⏎ Enter", id="key-enter", tooltip="Press Enter in the agent (accept)")
+                        yield Btn("Esc", id="key-esc", tooltip="Press Esc in the agent (cancel)")
+                        yield Btn("^C Stop", id="key-ctrl_c", variant="error", tooltip="Interrupt the agent")
+                        yield Btn("⇣ Compact", id="act-compact", tooltip="/compact: free up its context")
+                        yield Btn("☰ Prompts ▾", id="act-prompts", tooltip="Saved prompts: send one in a click")
+                        yield Btn("⇢ Hand off ▾", id="act-handoff", tooltip="Send its last answer to another agent")
+            with TabPane("3 Sessions", id="sessions"):
                 yield StartupPane(id="startup-pane")
-            with TabPane("Layout", id="panes"):
-                with Horizontal(id="shape-bar"):
+            with TabPane("4 Layout", id="panes"):
+                with Horizontal(id="shape-bar", classes="bar"):
+                    yield Static("Arrange this tab:", classes="key-lbl")
                     for kind, label in arrange.SHAPES.items():
-                        yield Button(label, id=f"shape-{kind}", tooltip=f"Arrange this tab's panes: {label[2:].lower()}")
-                    yield Button("＋ New tab", id="presets-toggle", tooltip="Open a new tab with a ready-made layout")
-                with Horizontal(id="preset-row"):
-                    for i, name in enumerate(panes.PRESETS):
-                        yield Button(name, id=f"preset-{i}")
+                        yield Btn(label, id=f"shape-{kind}", tooltip=f"Arrange this tab's panes: {label[2:].lower()}")
+                    yield Btn("＋ New tab ▾", id="presets-toggle", tooltip="Open a new tab with a ready-made layout")
                 with Horizontal():
                     with Vertical():
                         yield LayoutMap(id="pane-map")
-                        yield Input(placeholder="Pane name (empty clears)", id="pane-rename")
-                        with Horizontal(id="saved-row"):
-                            yield Input(placeholder="Save this tab as layout…", id="layout-name")
-                            yield Button("💾", id="layout-save", tooltip="Save this tab's layout for the project")
-                            yield Button("▦", id="layout-restore", tooltip="Restore the selected saved layout")
-                            yield Button("🗑", id="layout-delete", tooltip="Delete the selected saved layout")
+                        yield Field(placeholder="New pane name, Enter saves (empty clears)", id="pane-rename")
+                        with Horizontal(id="saved-row", classes="bar"):
+                            yield Field(placeholder="Save this tab's layout as…", id="layout-name")
+                            yield Btn("💾 Save", id="layout-save", tooltip="Save this tab's layout for the project")
+                            yield Btn("▦ Restore", id="layout-restore", tooltip="Restore the saved layout selected below")
+                            yield Btn("🗑 Delete", id="layout-delete", tooltip="Delete the selected saved layout")
                         yield ClickTwiceTable(id="saved-table")
-                    with Vertical(id="pane-tools"):
+                    with VerticalScroll(id="pane-tools"):
                         yield Static("", id="pane-selected")
-                        with Horizontal():
-                            yield Static("Pane", classes="rowlabel")
-                            yield Button("⇥", id="pop-focus", variant="primary", tooltip="Go to pane (Enter / double-click)")
-                            yield Button("◫", id="pop-split-right", tooltip="Split right (v)")
-                            yield Button("⊟", id="pop-split-down", tooltip="Split down (s)")
-                            yield Button("⛶", id="pop-zoom", tooltip="Zoom (z)")
-                        with Horizontal():
-                            yield Static("Swap", classes="rowlabel")
+                        yield Btn("⇥ Go to pane      ⏎", id="pop-focus", variant="primary")
+                        yield Static("", classes="gap")
+                        yield Btn("◫ Split right     v", id="pop-split-right")
+                        yield Btn("⊟ Split down      s", id="pop-split-down")
+                        yield Btn("⛶ Zoom            z", id="pop-zoom")
+                        yield Btn("= Even out        =", id="pop-equalize")
+                        yield Static("", classes="gap")
+                        with Horizontal(classes="bar"):
+                            yield Static("Swap")
                             for d, a in (("left", "←"), ("up", "↑"), ("down", "↓"), ("right", "→")):
-                                yield Button(a, id=f"pop-swap-{d}", tooltip=f"Swap with the pane {d} (Shift+arrow)")
-                        with Horizontal():
-                            yield Static("Size", classes="rowlabel")
+                                yield Btn(a, id=f"pop-swap-{d}", tooltip=f"Swap with the pane {d} (Shift+arrow)")
+                        with Horizontal(classes="bar"):
+                            yield Static("Size")
                             for d, a in (("left", "◂"), ("up", "▴"), ("down", "▾"), ("right", "▸")):
-                                yield Button(a, id=f"pop-resize-{d}", tooltip=f"Resize {d} (Ctrl+arrow)")
-                        with Horizontal():
-                            yield Static("More", classes="rowlabel")
-                            yield Button("=", id="pop-equalize", tooltip="Even out all splits (=)")
-                            yield Button("↦", id="pop-newtab", tooltip="Move pane to a new tab (t)")
-                            yield Button("✎", id="pop-rename", tooltip="Rename pane (n)")
-                            yield Button("✕", id="pop-close", variant="error", tooltip="Close pane (Del, twice)")
-            with TabPane("Recent", id="recent"):
+                                yield Btn(a, id=f"pop-resize-{d}", tooltip=f"Resize {d} (Ctrl+arrow)")
+                        yield Static("", classes="gap")
+                        yield Static("⇧+arrows swap · Ctrl+arrows size", classes="hint")
+                        yield Btn("↦ To new tab      t", id="pop-newtab")
+                        yield Btn("✎ Rename          n", id="pop-rename")
+                        yield Btn("✕ Close pane    Del", id="pop-close", variant="error")
+            with TabPane("5 Recent", id="recent"):
+                yield Static("", id="recent-empty", classes="empty-note")
                 yield ClickTwiceTable(id="recent-table")
-            with TabPane("Usage", id="usage"):
+            with TabPane("6 Usage", id="usage"):
                 yield UsagePane(id="usage-pane")
-            with TabPane("Keys", id="keys"):
-                yield VerticalScroll(Static(id="keys-body"))
-        yield Footer()
+            with TabPane("7 ⚙ Settings", id="settings"):
+                yield SettingsPane(self.settings_section, id="settings-pane")
+        yield Footer(compact=True)
 
     def on_mount(self) -> None:
-        self.query_one("#proj-table", DataTable).add_columns("", "Project", "Agents", "Last")
-        self.query_one("#agent-table", DataTable).add_columns("", "", "CLI", "Agent", "Ctx", "Project", "Doing")
-        self.query_one("#recent-table", DataTable).add_columns("When", "Project", "Pane", "")
+        self.query_one("#proj-table", DataTable).add_columns("", "Side", "Project", "Agents", "Last")
+        self.query_one("#agent-table", DataTable).add_columns("Send", "", "CLI", "Agent", "Ctx", "Project", "Doing")
+        self.query_one("#recent-table", DataTable).add_columns("Visited", "Project", "Pane", "")
         self.query_one("#saved-table", DataTable).add_columns("Saved layout", "Panes", "Saved")
         self.render_keys()
         self.load_world()
@@ -502,14 +650,17 @@ class Navigator(App):
         outside = sum(1 for a in world.agents if not a.in_herdr)
         subs = sum(len(a.subagents) for a in world.agents)
         where = self.current_project.label if self.current_project else "—"
-        bar = Text.assemble(("▣ ", "cyan"), (where, "bold cyan"), "    ", summarize(total) or "no agents")
+        bar = Text.assemble(("▣ ", "cyan"), (where, "bold cyan"), ("   │   ", "dim"))
+        bar.append_text(counts_text(total) or Text("no agents running", style="dim"))
         if outside:
-            bar.append(f"    ↗{outside} elsewhere", style="magenta")
+            bar.append(f" · ↗ {outside} in other windows", style="magenta")
         if subs:
-            bar.append(f"    ↳{subs} sub-agents", style="yellow")
-        full = sum(1 for a in world.agents if a.context and a.context.pct >= 85)
+            bar.append(f" · ↳ {subs} sub-agents", style="yellow")
+        full = [a for a in world.agents if a.context and a.context.pct >= 85]
         if full:
-            bar.append(f"    ⚠ {full} context nearly full", style="bold red")
+            bar.append("   │   ", style="dim")
+            bar.append(f"▲ context almost full: {', '.join(a.display[:18] for a in full[:2])}"
+                       + (f" +{len(full) - 2}" if len(full) > 2 else ""), style="bold red")
         if world.error:
             bar.append(f"    herdr unreachable", style="red")
         self.query_one("#topbar", Static).update(bar)
@@ -736,7 +887,12 @@ class Navigator(App):
             label = (("↗ " if pid in mirrors else "") + a.display) if a else (
                 p.get("label") or os.path.basename((p.get("cwd") or "").rstrip("\\/")) or pid)
             status = Text(model.STATE_ICON.get(a.status, ""), style=STATE_STYLE.get(a.status, "")) if a else ""
-            t.add_row(age(e["at"]), (proj.label if proj else "?")[:30], label[:60], status, key=pid)
+            name = Text(label[:56])
+            if p.get("focused"):
+                name.append("  ◀ here", style="cyan")
+            t.add_row(age(e["at"]), (proj.label if proj else "?")[:30], name, status, key=pid)
+        self.set_empty("#recent-empty", "#recent-table",
+                       "No places yet: everything you visit in herdr shows up here, newest first.")
 
     @on(DataTable.RowSelected, "#recent-table")
     def _recent_sel(self, ev: DataTable.RowSelected) -> None:
@@ -780,11 +936,10 @@ class Navigator(App):
         elif a.in_herdr:
             try:
                 raw = model.herdr.run("agent", "read", a.pane_id, "--source", "recent-unwrapped",
-                                      "--lines", "14").get("raw", "")
+                                      "--lines", "40").get("raw", "")
             except Exception as e:
                 raw = f"(could not read: {e})"
-            lines = [l for l in raw.splitlines() if l.strip() and not set(l.strip()) <= set("─━═-")]
-            out.append("\n".join(lines[-12:]))
+            out.append(NL_JOIN(conversation_lines(raw)[-12:]))
         else:
             from . import mirror
             s = next((s for s in self.world.sessions if s.id == a.session_id), None)
@@ -828,8 +983,26 @@ class Navigator(App):
         return prompts.all_()
 
     def _menu_at(self, widget) -> tuple[int, int]:
+        """Above a button at the bottom of the screen."""
         r = widget.region
-        return (r.x, max(0, r.y - 9))
+        return (r.x, max(0, r.y - 12))
+
+    def _menu_below(self, widget) -> tuple[int, int]:
+        r = widget.region
+        return (r.x, r.y + 1)
+
+    def new_menu(self, widget) -> None:
+        """+ New agent ▾: one line per installed CLI, then the full dialog."""
+        v, wt = self.selected()
+        where = (v.project.name + (f" ⎇ {wt.label}" if wt else "")) if v else "here"
+        items = [("-head", f"New agent in {where[:30]}")]
+        for cli in installed_clis():
+            key = CLI_NEW_KEY.get(cli)
+            items.append((f"cli:{cli}", f"  {cli:<10}" + (f"  {key}" if key else "")))
+        items.append(("dialog", "  … More options: name, worktree, model   N"))
+        self.push_screen(ContextMenu(items, self._menu_below(widget)),
+                         lambda c: c and c[0] != "-" and (self.action_new_dialog() if c == "dialog"
+                                                          else self.action_new(c[4:])))
 
     def prompts_menu(self, widget) -> None:
         items = [(f"p:{name}", f"{name}") for name in self._prompts()]
@@ -934,39 +1107,58 @@ class Navigator(App):
         t.clear()
         target_row, row = 0, 0
         in_sidebar_header = False
+        from . import startup
+        folded = startup.ui_state().get("projects_folded", {})
+        flt = self.query_one("#proj-filter", Input).value.strip().lower()
+        self.proj_open = {}
         for v in self.world.projects:
+            # worktrees with something running or open; the detail panel lists all of them
+            show = [w for w in v.worktrees.values() if w.agents or w.workspace]
+            show.sort(key=lambda w: (not w.agents, -max((s.mtime for s in w.sessions), default=0)))
+            if flt and flt not in v.project.name.lower() and not any(
+                    flt in w.label.lower() or any(flt in a.display.lower() for a in w.agents) for w in show):
+                continue
             here = self.current_project and v.project.root == self.current_project.root
             box = Text("☑", style="bold green") if v.in_sidebar else Text("☐", style="dim")
-            name = Text(v.project.name, style="bold cyan" if here else ("bold" if v.in_sidebar else ""))
+            is_open = bool(flt) or not folded.get(v.project.root, False)
+            self.proj_open[v.project.root] = is_open
+            chevron = Text(("▾" if is_open else "▸") if show else "", style="bold cyan")
+            name = Text(v.project.name[:30], style="bold cyan" if here else ("bold" if v.in_sidebar else ""))
             if here:
                 name.append("  ◀ here", style="cyan")
+            if show and not is_open:
+                name.append(f"  ⎇{len(show)}", style="dim")
 
-            t.add_row(box, name, summarize(v.counts()) or "",
+            t.add_row(chevron, box, name, summarize(v.counts()) or "",
                       age(v.last_activity) if v.last_activity else "", key=v.project.root)
             if v.project.root == self.selected_key:
                 target_row = row
             row += 1
-            # worktrees with something running or open; the detail panel lists all of them
-            show = [w for w in v.worktrees.values() if w.agents or w.workspace]
-            show.sort(key=lambda w: (not w.agents, -max((s.mtime for s in w.sessions), default=0)))
-            for wt in show[:12]:
+            for wt in (show[:12] if is_open else []):
                 k = f"{v.project.root}{WT_SEP}{wt.label}"
                 names = sorted({a.display for a in wt.agents})
                 label = Text(f"  ⎇ {', '.join(names) or wt.label}"[:40], style="bold" if wt.agents else "dim")
                 last = max((s.mtime for s in wt.sessions), default=0)
-                t.add_row("", label, summarize(model.Counter(a.status for a in wt.agents)) or "",
+                t.add_row("", "", label, summarize(model.Counter(a.status for a in wt.agents)) or "",
                           age(last) if last else "", key=k)
                 if k == self.selected_key:
                     target_row = row
                 row += 1
         if t.row_count:
             t.move_cursor(row=target_row)
+        self.set_empty("#proj-empty", "#proj-table",
+                       f"No project matches “{flt}”." if flt else "No projects yet: start an agent in any folder.")
         self.show_project_detail()
 
     def show_project_detail(self) -> None:
+        """The selected project: where it is, then its agents (jump) and sessions (resume) as rows."""
         v, wt = self.selected()
         self.query_one("#btn-wt-finish", Button).display = bool(wt and wt.exists)
         info = self.query_one("#proj-info", Static)
+        items = self.query_one("#proj-items", DataTable)
+        items.clear()
+        if not items.columns:
+            items.add_columns("", "", "")
         if not v:
             info.update("")
             return
@@ -975,39 +1167,64 @@ class Navigator(App):
         out = Text()
         out.append(v.project.name, style="bold cyan")
         if wt:
-            out.append(f" ⎇ {wt.label}", style="bold magenta")
-        out.append(f"\n{(wt.path if wt else v.project.path) or v.project.root}\n\n", style="dim")
-        if agents:
-            for a in sorted(agents, key=lambda a: model.STATE_ORDER.get(a.status, 9)):
-                out.append_text(state_text(a.status))
-                out.append(f"  {a.display}", style="bold")
-                if not a.in_herdr:
-                    out.append("  ↗", style="magenta")
-                if a.activity:
-                    out.append(f"\n     {a.activity[:60]}", style="dim")
-                for sa in a.subagents:
-                    out.append(f"\n     ↳ {sa.name}", style="yellow")
-                    if sa.activity:
-                        out.append(f"  {sa.activity[:44]}", style="dim")
-                out.append("\n")
-            out.append("\n")
+            out.append(f" ⎇ {wt.label}", style="bold #c678dd")
+        out.append(f"\n{(wt.path if wt else v.project.path) or v.project.root}", style="dim")
+        extra = []
         if not wt and v.worktrees:
             quiet = [w for w in v.worktrees.values() if not w.agents]
             if quiet:
-                out.append(f"⎇ {len(quiet)} idle worktrees\n\n", style="dim")
+                extra.append(f"⎇ {len(quiet)} idle worktrees")
         saved_layouts = layouts.saved(v.project)
         if saved_layouts and not wt:
-            out.append("▦ " + ", ".join(saved_layouts) + "\n\n", style="dim")
-        for s_ in sessions[:6]:
-            live = self.world.live_sessions.get(s_.id)
-            out.append(f"{age(s_.mtime):>4}  ", style="dim")
-            out.append(cli_tag(s_.cli))
-            out.append(" ")
-            out.append(s_.title[:48], style=CLI_STYLE.get(s_.cli, ""))
-            if live:
-                out.append("  ●" if live.in_herdr else "  ↗", style="green" if live.in_herdr else "magenta")
-            out.append("\n")
+            extra.append("▦ layouts: " + ", ".join(saved_layouts))
+        if extra:
+            out.append("\n" + "   ".join(extra), style="dim")
+        out.append("\nClick a row twice (or Enter): go to the agent / resume the session", style="dim italic")
         info.update(out)
+
+        def head(key: str, text: str) -> None:
+            items.add_row("", Text(text, style="bold"), "", key=key)
+
+        if agents:
+            head("h:agents", "Running")
+            for a in sorted(agents, key=lambda a: model.STATE_ORDER.get(a.status, 9)):
+                name = Text(a.display[:32], style="bold")
+                if not a.in_herdr:
+                    name.append("  ↗", style="magenta")
+                items.add_row(Text(STATE_ICON.get(a.status, "?"), style=STATE_STYLE.get(a.status, "")), name,
+                              Text((a.activity or "")[:24], style="dim"), key=f"a:{a.key}")
+                for i, sa in enumerate(a.subagents):
+                    items.add_row("", Text(f"  ↳ {sa.name}"[:32], style="yellow"),
+                                  Text((sa.activity or "")[:30], style="dim"), key=f"x:{a.key}:{i}")
+        live_ids = {a.session_id for a in agents}
+        rest = [s_ for s_ in sessions if s_.id not in live_ids][:10]
+        if rest:
+            head("h:sessions", "Recent sessions")
+            for s_ in rest:
+                items.add_row(Text(age(s_.mtime).strip(), style="dim"),
+                              Text.assemble(cli_tag(s_.cli), " ", (s_.title[:30], "")),
+                              "", key=f"s:{s_.cli}:{s_.id}")
+        if not agents and not rest:
+            head("h:none", "Nothing yet: + New agent starts one here")
+
+    @on(DataTable.RowSelected, "#proj-items")
+    def _proj_item(self, ev: DataTable.RowSelected) -> None:
+        if ev.data_table.fresh_highlight() or not self.world:
+            return
+        key = ev.row_key.value or ""
+        if key.startswith("a:"):
+            a = next((a for a in self.world.agents if a.key == key[2:]), None)
+            if a and a.in_herdr:
+                self.finish(lambda: (model.herdr.focus_agent(a.pane_id), f"→ {a.pane_id}")[1])
+            elif a and a.mirror_pane:
+                self.finish(lambda: panes.focus(a.mirror_pane))
+            elif a:
+                self.notify(f"'{a.display}' runs in another window: switch to it there.", timeout=6)
+        elif key.startswith("s:"):
+            cli, _, sid = key[2:].partition(":")
+            s_ = next((x for x in self.world.sessions if x.cli == cli and x.id == sid), None)
+            if s_:
+                self.finish(lambda: launch.resume(self.world, s_))
 
     @on(DataTable.RowHighlighted, "#proj-table")
     def _proj_hl(self, ev: DataTable.RowHighlighted) -> None:
@@ -1027,6 +1244,133 @@ class Navigator(App):
             return
         self.selected_key = ev.row_key
         self.action_toggle_sidebar()
+
+    @on(TopBar.Clicked)
+    def _top_clicked(self) -> None:
+        """The top bar leads to what it reports: waiting agents first, else every agent."""
+        waiting = self.world and any(a.status == "blocked" for a in self.world.agents)
+        self.agent_filter = "blocked" if waiting else ""
+        self.action_tab("agents")
+        if self.world:
+            self.fill_agents()
+
+    def set_empty(self, note_id: str, table_id: str, text: str) -> None:
+        """An empty list says why, and what to do instead."""
+        note = self.query_one(note_id, Static)
+        empty = self.query_one(table_id, DataTable).row_count == 0
+        note.update(text if empty else "")
+        note.set_class(empty, "show")
+
+    @on(ClickTwiceTable.Fold)
+    def _fold(self, ev: ClickTwiceTable.Fold) -> None:
+        self.fold_project(ev.row_key, ev.open_)
+
+    def fold_project(self, key: str, open_: bool | None) -> None:
+        from . import startup
+        root = key.partition(WT_SEP)[0]
+        is_open = getattr(self, "proj_open", {}).get(root, True)
+        want = (not is_open) if open_ is None else open_
+        if want == is_open:
+            return
+        folded = dict(startup.ui_state().get("projects_folded", {}))
+        folded[root] = not want
+        startup.set_ui("projects_folded", folded)
+        self.selected_key = root
+        self.fill_projects()
+
+    @on(Input.Changed, "#proj-filter")
+    def _proj_filter(self) -> None:
+        self.fill_projects()
+
+    @on(Input.Submitted, "#proj-filter")
+    def _proj_filter_done(self) -> None:
+        self.query_one("#proj-table", DataTable).focus()
+
+    @on(ClickTwiceTable.Menu)
+    def _row_menu(self, ev: ClickTwiceTable.Menu) -> None:
+        if ev.table.id == "proj-table":
+            self.selected_key = ev.row_key
+            self.show_project_detail()
+            self.push_screen(ContextMenu(self.project_menu_items(), ev.at), self.on_project_menu)
+        elif ev.table.id == "agent-table":
+            a, sub = self.agent_rows.get(ev.row_key, (None, -1))
+            if a and sub < 0:
+                self.push_screen(ContextMenu(self.agent_menu_items(a), ev.at), lambda c: self.on_agent_menu(a, c))
+
+    def project_menu_items(self) -> list[tuple[str, str]]:
+        v, wt = self.selected()
+        if not v:
+            return []
+        items = [("open", "▶ Open it"), ("new", "+ New agent here…"), ("sessions", "☰ Its sessions")]
+        if not wt:
+            items.append(("sidebar", "☐ Hide from herdr's sidebar" if v.in_sidebar else "☑ Show in herdr's sidebar"))
+            items.append(("layout", "▦ Restore its saved layout"))
+            if any(w.agents or w.workspace for w in v.worktrees.values()):
+                open_ = getattr(self, "proj_open", {}).get(v.project.root, True)
+                items.append(("fold", "▸ Fold its worktrees" if open_ else "▾ Unfold its worktrees"))
+        elif wt.exists:
+            items.append(("finish", "⎇ Finish this worktree…"))
+        return items
+
+    def on_project_menu(self, choice: str | None) -> None:
+        if not choice:
+            return
+        {"open": self.action_open, "new": self.action_new_dialog, "sessions": self.action_resume_project,
+         "sidebar": self.action_toggle_sidebar, "layout": self.action_restore_layout,
+         "finish": self.finish_worktree, "fold": lambda: self.fold_project(self.selected_key or "", None)}[choice]()
+
+    def agent_menu_items(self, a) -> list[tuple[str, str]]:
+        from . import startup
+        items = [("goto", "→ Go to it")]
+        if a.in_herdr:
+            items += [("msg", "✉ Message it…"), ("enter", "⏎ Press Enter (accept)"), ("esc", "Esc (cancel)"),
+                      ("stop", "^C Stop it"), ("compact", "⇣ Compact its context"), ("handoff", "⇢ Hand off its answer…"),
+                      ("relaunch", "↻ Relaunch it (restart in place)"),
+                      ("mark", "☐ Untick for Send" if a.pane_id in self.marked else "☑ Tick for Send to many")]
+        if a.session_id and self.world:
+            key = f"{a.cli}:{a.session_id}"
+            row = next((r for g in startup.plan(self.world.sessions) for r in g.rows if startup.skey(r.session) == key),
+                       None)
+            if row is not None:
+                items.append(("logon", "☐ Don't reopen at logon" if row.ticked else "☑ Reopen at logon"))
+        return items
+
+    def on_agent_menu(self, a, choice: str | None) -> None:
+        from . import startup
+        if not choice:
+            return
+        if choice == "goto":
+            self.action_open()
+        elif choice == "msg":
+            self.action_message()
+        elif choice in ("enter", "esc", "stop"):
+            self.run_send(a.pane_id, a.display, "", {"enter": "enter", "esc": "esc", "stop": "ctrl+c"}[choice])
+        elif choice == "compact":
+            self.run_send(a.pane_id, a.display, "/compact", "")
+        elif choice == "handoff":
+            self.handoff_menu(self.query_one("#act-handoff", Button))
+        elif choice == "relaunch":
+            self.run_relaunch(a.pane_id, a.cli, a.session_id, a.display)
+        elif choice == "mark":
+            self.toggle_mark(a.key)
+        elif choice == "logon":
+            key = f"{a.cli}:{a.session_id}"
+            row = next((r for g in startup.plan(self.world.sessions) for r in g.rows
+                        if startup.skey(r.session) == key), None)
+            startup.set_ticks({key: not (row and row.ticked)}, [a.project.root] if not (row and row.ticked) else [])
+            self.notify("Reopens at logon." if not (row and row.ticked) else "Won't reopen at logon.", timeout=2)
+            self.query_one(StartupPane).refresh_rows()
+
+    @work(thread=True, group="relaunch")
+    def run_relaunch(self, pane: str, cli: str, sid: str, name: str) -> None:
+        from . import restore
+        msg = restore.relaunch_in_place(pane, cli, sid, name)
+        self.call_from_thread(self.notify, msg, severity="warning" if msg.startswith("✗") else "information")
+
+    def action_help(self) -> None:
+        from .startup_ui import HelpScreen
+        title, body = HELP.get(self.active_tab(), ("", ""))
+        self.push_screen(HelpScreen(title, body))
 
     def toggle_mark(self, key: str) -> None:
         """Mark agents to message several at once (only agents in herdr can be typed into)."""
@@ -1055,11 +1399,12 @@ class Navigator(App):
         rows.sort(key=lambda a: (model.STATE_ORDER.get(a.status, 9), a.project.name.lower(), a.project.worktree))
         for a in rows:
             here = self.current_project and a.project.root == self.current_project.root
-            who = Text(a.display[:34], style="bold")
+            who = Text(a.display[:30], style="bold")
             if not a.in_herdr:
                 who.append("  ↗", style="magenta")
-            proj = Text(a.project.label[:30], style="cyan" if here else "")
-            doing = Text("❓ " + a.question.text[:66], style="bold red") if a.question else (a.activity or a.title)[:70]
+            proj = Text(a.project.label[:26], style="cyan" if here else "")
+            raw_doing = a.activity or a.title or ""
+            doing = Text("❓ " + clip(a.question.text, 52), style="bold red") if a.question else clip(raw_doing, 56)
             box = (Text("☑", style="bold green") if a.pane_id in self.marked else Text("☐", style="dim")) \
                 if a.in_herdr else ""
             t.add_row(box, Text(STATE_ICON.get(a.status, "?"), style=STATE_STYLE.get(a.status, "")), cli_tag(a.cli),
@@ -1070,8 +1415,21 @@ class Navigator(App):
                 t.add_row("", Text("↳", style="yellow"), "", Text(f"  {sa.name}", style="yellow"), "",
                           Text(sa.kind or "", style="dim"), (sa.activity or sa.description)[:70], key=k)
                 self.agent_rows[k] = (a, i)
+        counts = model.Counter(a.status for a in self.world.agents)
+        counts["outside"] = sum(1 for a in self.world.agents if not a.in_herdr)
+        counts["all"] = len(self.world.agents)
+        names = {"all": "All", "blocked": "⚠ Blocked", "done": "✔ Done", "working": "◐ Working", "idle": "○ Idle",
+                 "outside": "↗ Elsewhere"}
         for b in self.query("#agent-bar Button"):
+            if b.id and b.id.startswith("flt-"):
+                f = b.id[4:]
+                b.label = f"{names[f]} {counts.get(f, 0)}"
             b.variant = "primary" if b.id == f"flt-{self.agent_filter or 'all'}" else "default"
+        what = {"blocked": "waiting on you", "done": "done", "working": "working", "idle": "idle",
+                "outside": "running in other windows"}.get(self.agent_filter, "")
+        self.set_empty("#agent-empty", "#agent-table",
+                       f"No agent is {what} right now. Press All to see every agent." if what else
+                       "No agents running. Start one: Projects (1) › + New agent, or resume one in Sessions (3).")
         live = {a.pane_id for a in self.world.agents if a.in_herdr}
         self.marked &= live
         send = self.query_one("#send-msg", Button)
@@ -1113,6 +1471,8 @@ class Navigator(App):
         row("Sessions: Enter / click ☐", "resume it / tick it for logon (bright = yours, dim = auto)")
         row("Sessions: right-click", "open, relaunch, launch options, back to automatic")
         row("Agents tab: click ☐", "tick agents: Send, ⏎, ⇣ compact and ☰ prompts go to all of them")
+        row("Buttons with ▾", "open a small menu (new agent, prompts, hand off, new tab)")
+        row("⚙ Settings", "logon restore, accounts, phone alerts, prompts: they save on their own")
         self.query_one("#keys-body", Static).update(out)
 
     # ---- actions --------------------------------------------------------------------------
@@ -1133,6 +1493,12 @@ class Navigator(App):
             self.query_one("#pane-map", LayoutMap).focus()
             self.load_panes()
             return
+        if tab == "settings":
+            pane = self.query_one(SettingsPane)
+            pane.query_one("#set-nav").focus()
+            if pane.section == "accounts":
+                pane.load_accounts()
+            return
         tid = {"projects": "#proj-table", "agents": "#agent-table", "recent": "#recent-table",
                "sessions": "#start-table"}.get(tab)
         if tid:
@@ -1151,7 +1517,7 @@ class Navigator(App):
         tab = self.active_tab() if self.is_mounted else self.start_tab
         typing = isinstance(self.focused, Input)
         if typing and action in ("new", "new_dialog", "resume_project", "search", "filter", "tab", "quit",
-                                 "toggle_sidebar"):
+                                 "toggle_sidebar", "help"):
             return False
         if action in ("new", "new_dialog", "resume_project", "toggle_sidebar"):
             return tab == "projects"
@@ -1197,6 +1563,9 @@ class Navigator(App):
         self.exit()
 
     def action_search(self) -> None:
+        if self.active_tab() == "projects":
+            self.query_one("#proj-filter", Input).focus()
+            return
         self.action_tab("sessions")
         self.query_one("#st-search", Input).focus()
 
@@ -1344,7 +1713,7 @@ class Navigator(App):
         bid = ev.button.id or ""
         actions = {
             "btn-go": self.action_open, "btn-resume": self.action_resume_project,
-            "btn-new": lambda: self.query_one("#new-row").toggle_class("show"),
+            "btn-new": lambda: self.new_menu(ev.button),
             "btn-sidebar": self.action_toggle_sidebar,
         }
         if bid in actions:
@@ -1388,15 +1757,9 @@ class Navigator(App):
         elif bid.startswith("shape-"):
             self.run_shape(bid[6:])
         elif bid == "presets-toggle":
-            self.query_one("#preset-row").toggle_class("show")
-        elif bid.startswith("preset-"):
-            self.action_pane_op("preset", list(panes.PRESETS)[int(bid[7:])])
-        elif bid == "new-dialog":
-            self.query_one("#new-row").remove_class("show")
-            self.action_new_dialog()
-        elif bid.startswith("new-"):
-            self.query_one("#new-row").remove_class("show")
-            self.action_new(bid[4:])
+            items = [(f"preset:{name}", name) for name in panes.PRESETS]
+            self.push_screen(ContextMenu(items, self._menu_below(ev.button)),
+                             lambda c: c and self.action_pane_op("preset", c[7:]))
         elif bid.startswith("flt-"):
             f = bid[4:]
             self.action_filter("" if f == "all" else f)

@@ -493,7 +493,7 @@ def boot(delay: float | None = None) -> str:
         notify("Startup restore", "Everything you ticked is already open.")
         return "nothing to open"
     summary = open_now(rows)
-    held = " Claude needs a sign-in: Navigator › Startup › Sign in." if "held 0" not in summary else ""
+    held = " Claude needs a sign-in: Navigator › ⚙ Settings › Accounts." if "held 0" not in summary else ""
     notify("Startup restore", summary + held)
     try:
         from . import alerts

@@ -1,6 +1,6 @@
 """Phone alerts: an agent waiting on you too long, and the logon restore's result.
 
-Channels (any number at once, all off until configured in `[alerts]` or Navigator › 🔔 Alerts):
+Channels (any number at once, all off until configured in `[alerts]` or Navigator › ⚙ Settings › Alerts):
   Telegram   your own bot (@BotFather) -> telegram_bot_token + telegram_chat_id
   ntfy       ntfy_topic (+ ntfy_server), the free ntfy app, no account
   webhook    webhook_url: Discord, Slack, Mattermost, Teams, Google Chat or anything taking JSON
@@ -15,6 +15,7 @@ import secrets
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -120,6 +121,30 @@ def send_background(title: str, body: str, tags: str = "robot") -> None:
 
 # ---- setup helpers ------------------------------------------------------------------------------
 
+TOKEN_RE = r"^\d{5,}:[A-Za-z0-9_-]{30,}$"
+
+
+def looks_like_telegram_token(token: str) -> bool:
+    import re
+    return bool(re.match(TOKEN_RE, token.strip()))
+
+
+def telegram_bot_info(token: str) -> tuple[str, str]:
+    """(bot username, "") when the token works, else ("", why)."""
+    url = f"{_telegram_api()}/bot{token.strip()}/getMe"
+    try:
+        with urllib.request.urlopen(url, timeout=TIMEOUT) as r:
+            data = json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        return "", "Telegram rejected this token: copy it again from @BotFather" if e.code in (401, 404) \
+            else f"Telegram answered {e.code}"
+    except OSError as e:
+        return "", f"Telegram is not reachable ({str(e)[:60]})"
+    if not data.get("ok"):
+        return "", "Telegram rejected this token"
+    return str((data.get("result") or {}).get("username") or ""), ""
+
+
 def telegram_find_chat(token: str) -> tuple[str, str]:
     """After you sent your bot any message: (chat id, who) from its latest update, or ("", why)."""
     url = f"{_telegram_api()}/bot{token.strip()}/getUpdates"
@@ -144,18 +169,7 @@ def random_topic() -> str:
 
 def save(values: dict) -> None:
     """Write keys into [alerts] of navigator.toml, keeping everything else as it is."""
-    import tomlkit
-    path = settings.settings_path()
-    settings.load()  # makes sure the file exists
-    doc = tomlkit.parse(path.read_text(encoding="utf-8")) if path.exists() else tomlkit.document()
-    tab = doc.get("alerts")
-    if tab is None:
-        tab = tomlkit.table()
-        doc["alerts"] = tab
-    for k, v in values.items():
-        tab[k] = v
-    path.write_text(tomlkit.dumps(doc), encoding="utf-8")
-    settings.load.cache_clear()
+    settings.save_values("alerts", values)
 
 
 # ---- the waiting-agent check (runs with the status line) ------------------------------------------
@@ -201,4 +215,4 @@ if __name__ == "__main__":
         send(sys.argv[2], sys.argv[3], sys.argv[4] if len(sys.argv) > 4 else "robot")
     elif len(sys.argv) > 1 and sys.argv[1] == "test":
         res = send("herdr navigator", "Test alert: alerts reach you here.", "white_check_mark")
-        print(res or "no channel set up: Navigator › Sessions › 🔔 Alerts, or [alerts] in navigator.toml")
+        print(res or "no channel set up: Navigator › ⚙ Settings › Alerts, or [alerts] in navigator.toml")

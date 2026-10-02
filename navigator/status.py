@@ -25,7 +25,7 @@ def _plain(counts: Counter) -> str:
 def line() -> str:
     """Most urgent first, then where you are, then the keys; every item says what it is and
     which key acts on it."""
-    menu = "F1 Menu · F2 Sessions · F6 Layout · F7 Recent · Ctrl+Alt+R Back"
+    menu = "F1 Navigator · F2 Sessions · F3 Agents · F6 Layout · Ctrl+Alt+R Back"
     try:
         snap = herdr.snapshot()
     except Exception:
@@ -54,11 +54,32 @@ def line() -> str:
     in_herdr = {(a.get("agent_session") or {}).get("value") for a in agents}
     outside = [r for r in live._claude_registry(time.time()) if r.session_id not in in_herdr]
     _maybe_reconcile(outside)
+    _maybe_resync_names(snap)
     if outside:
         n = len(outside)
         parts.append(f"{n} session{'s' * (n != 1)} outside herdr (F3)")
     parts.append(menu)
     return "  │  ".join(parts)
+
+
+def _maybe_resync_names(snap) -> None:
+    """A session renamed inside the CLI (/rename) changes its terminal title at once, but the
+    labels the Navigator reports to herdr only follow on the next agent event: resync now."""
+    from . import settings, sync
+    stale = sorted((p["pane_id"], p["terminal_title_stripped"]) for p in snap.get("panes", [])
+                   if p.get("agent") == "claude" and p.get("terminal_title_stripped")
+                   and (p.get("tokens") or {}).get("session") not in (None, p["terminal_title_stripped"]))
+    if not stale:
+        return
+    f = settings.state_dir() / "rename-sig.json"
+    sig = json.dumps(stale)  # once per new title, so a lasting difference never loops
+    try:
+        if f.read_text(encoding="utf-8") == sig:
+            return
+    except OSError:
+        pass
+    f.write_text(sig, encoding="utf-8")
+    sync.spawn_background()
 
 
 def _maybe_reconcile(outside) -> None:

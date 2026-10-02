@@ -20,11 +20,12 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.screen import ModalScreen
-from textual.widgets import Button, DataTable, Input, OptionList, Select, Static, Switch
+from textual.widgets import Button, Checkbox, DataTable, Input, OptionList, Select, Static
 from textual.widgets.option_list import Option
 
-from . import accounts, autostart, launch, model, profiles, restore, settings, startup
+from . import autostart, launch, model, restore, settings, startup
 from .model import age
+from .ui import Btn, Choice, Field, Tick
 
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 _DETACHED = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
@@ -48,7 +49,7 @@ class ContextMenu(ModalScreen):
 
     DEFAULT_CSS = """
     ContextMenu { align: left top; background: $background 30%; }
-    ContextMenu OptionList { width: auto; min-width: 26; max-width: 44; height: auto; max-height: 16;
+    ContextMenu OptionList { width: auto; min-width: 26; max-width: 50; height: auto; max-height: 20;
                              border: round $primary; background: $panel; }
     """
     BINDINGS = [("escape", "dismiss(None)", "Close")]
@@ -59,13 +60,14 @@ class ContextMenu(ModalScreen):
         self.at = at
 
     def compose(self) -> ComposeResult:
-        yield OptionList(*[Option(label, id=i) for i, label in self.items])
+        yield OptionList(*[Option(Text(label, style="bold dim") if i.startswith("-") else label, id=i,
+                                  disabled=i.startswith("-")) for i, label in self.items])
 
     def on_mount(self) -> None:
         ol = self.query_one(OptionList)
         x, y = self.at
         w, h = self.app.size
-        ol.styles.offset = (max(0, min(x, w - 46)), max(0, min(y, h - len(self.items) - 3)))
+        ol.styles.offset = (max(0, min(x, w - 52)), max(0, min(y, h - min(20, len(self.items) + 2) - 1)))
         ol.focus()
 
     @on(OptionList.OptionSelected)
@@ -77,12 +79,52 @@ class ContextMenu(ModalScreen):
             self.dismiss(None)
 
 
+LEGEND = Text.assemble(
+    ("Symbols  ", "bold"),
+    ("⚠", "bold red"), " waiting on you   ", ("✔", "bold green"), " done   ", ("◐", "yellow"), " working   ",
+    ("○", "dim"), " idle   ", ("❓", "bold red"), " asks a question   ", ("↗", "magenta"), " other window   ",
+    ("●", "green"), " running here\n         ",
+    ("⎇", "#c678dd"), " worktree   ", ("↳", "yellow"), " sub-agent   ", ("▲", "bold red"), " context almost full   ",
+    ("▸", ""), " tool it runs   ", ("☑", "green"), " on   ", ("☐", "dim"), " off   ",
+    ("▾ ▸", "cyan"), " fold   ", ("▾", ""), " opens a menu")
+
+
+class HelpScreen(ModalScreen):
+    """What the current tab is for and how to work it."""
+
+    DEFAULT_CSS = """
+    HelpScreen { align: center middle; background: $background 50%; }
+    #hp { width: 104; max-width: 96%; height: auto; max-height: 90%; border: round $primary;
+          background: $panel; padding: 1 2; }
+    #hp-title { text-style: bold; color: $accent; margin: 0 0 1 0; }
+    #hp-foot { color: $text-muted; margin: 1 0 0 0; }
+    #hp-legend { margin: 1 0 0 0; padding: 1 0 0 0; border-top: solid $primary 40%; }
+    """
+    BINDINGS = [("escape", "dismiss(None)", "Close"), ("question_mark", "dismiss(None)", "Close")]
+
+    def __init__(self, title: str, body: str) -> None:
+        super().__init__()
+        self.title_, self.body = title, body
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="hp"):
+            yield Static(self.title_, id="hp-title")
+            yield Static(self.body)
+            yield Static(LEGEND, id="hp-legend")
+            yield Static("Keys 1–7 switch tabs · the footer shows the keys that work right now · "
+                         "⚙ Settings › Keys lists every key · Esc closes", id="hp-foot")
+
+    def on_click(self) -> None:
+        self.dismiss(None)
+
+
 class Prompt(ModalScreen):
     """One line of text. Returns it, or None."""
 
     DEFAULT_CSS = """
     Prompt { align: center middle; background: $background 50%; }
-    #pr { width: 60; height: auto; border: round $primary; background: $panel; padding: 1 2; }
+    #pr { width: 60; max-width: 96%; height: auto; border: round $primary; background: $panel; padding: 1 2; }
+    #pr Static { margin: 0 0 1 0; }
     """
     BINDINGS = [("escape", "dismiss(None)", "Cancel")]
 
@@ -93,7 +135,7 @@ class Prompt(ModalScreen):
     def compose(self) -> ComposeResult:
         with Vertical(id="pr"):
             yield Static(Text(self.title_, style="bold"))
-            yield Input(placeholder=self.placeholder, id="pr-in")
+            yield Field(placeholder=self.placeholder, id="pr-in")
 
     def on_mount(self) -> None:
         self.query_one(Input).focus()
@@ -108,12 +150,9 @@ class LaunchOptions(ModalScreen):
 
     DEFAULT_CSS = """
     LaunchOptions { align: center middle; background: $background 50%; }
-    #lo { width: 64; height: auto; border: round $primary; background: $panel; padding: 1 2; }
-    #lo Horizontal { height: 3; }
-    #lo .lbl { width: 18; margin-top: 1; color: $text-muted; }
-    #lo Input, #lo Select { width: 1fr; }
-    #lo-buttons { margin-top: 1; }
-    #lo-buttons Button { margin-right: 1; }
+    #lo { width: 70; max-width: 96%; height: auto; max-height: 96%; border: round $primary; background: $panel;
+          padding: 1 2; }
+    #lo > Static { margin: 0 0 1 0; }
     """
     BINDINGS = [("escape", "dismiss(None)", "Cancel")]
 
@@ -124,30 +163,29 @@ class LaunchOptions(ModalScreen):
     def compose(self) -> ComposeResult:
         p = self.prefs
         with Vertical(id="lo"):
-            yield Static(Text.assemble(("Launch options  ", "bold"), (self.title_[:40], "cyan")))
+            yield Static(Text.assemble(("Launch options  ", "bold"), (self.title_[:44], "cyan")))
             if self.cli == "claude":
                 rc_default = bool(settings.load().restore.get("claude_remote_control", False))
-                with Horizontal():
+                with Horizontal(classes="form-row"):
                     yield Static("Model", classes="lbl")
-                    yield Input(p.get("model", ""), placeholder="default (e.g. opus, sonnet)", id="lo-model")
-                with Horizontal():
+                    yield Field(p.get("model", ""), placeholder="default (e.g. opus, sonnet)", id="lo-model")
+                with Horizontal(classes="form-row"):
                     yield Static("Effort", classes="lbl")
-                    yield Select([(e, e) for e in startup.EFFORTS[1:]], value=p.get("effort") or Select.NULL,
+                    yield Choice([(e, e) for e in startup.EFFORTS[1:]], value=p.get("effort") or Select.NULL,
                                  prompt="default", id="lo-effort")
-                with Horizontal():
+                with Horizontal(classes="form-row"):
                     yield Static("Permission mode", classes="lbl")
-                    yield Select([(m, m) for m in startup.PERMISSION_MODES[1:]],
+                    yield Choice([(m, m) for m in startup.PERMISSION_MODES[1:]],
                                  value=p.get("permission_mode") or Select.NULL, prompt="default", id="lo-perm")
-                with Horizontal():
-                    yield Static("Remote Control", classes="lbl")
-                    yield Switch(value=bool(p.get("remote_control", rc_default)), id="lo-rc")
-            with Horizontal():
+                yield Tick("Remote Control (use it from your phone)", bool(p.get("remote_control", rc_default)),
+                           id="lo-rc")
+            with Horizontal(classes="form-row"):
                 yield Static("Extra arguments", classes="lbl")
-                yield Input(p.get("args", ""), placeholder="appended to the resume command", id="lo-args")
-            with Horizontal(id="lo-buttons"):
-                yield Button("Save", variant="primary", id="lo-save")
-                yield Button("Reset", id="lo-reset", tooltip="Back to the defaults")
-                yield Button("Cancel", id="lo-cancel")
+                yield Field(p.get("args", ""), placeholder="appended to the resume command", id="lo-args")
+            with Horizontal(classes="bar"):
+                yield Btn("Save", variant="primary", id="lo-save")
+                yield Btn("Reset", id="lo-reset", tooltip="Back to the defaults")
+                yield Btn("Cancel", id="lo-cancel")
 
     @on(Button.Pressed)
     def _btn(self, ev: Button.Pressed) -> None:
@@ -163,14 +201,21 @@ class LaunchOptions(ModalScreen):
                 out.update(model=self.query_one("#lo-model", Input).value.strip(),
                            effort="" if eff is Select.NULL else eff,
                            permission_mode="" if perm is Select.NULL else perm,
-                           remote_control=self.query_one("#lo-rc", Switch).value)
+                           remote_control=self.query_one("#lo-rc", Checkbox).value)
             self.dismiss(out)
 
 
 # ---- the table --------------------------------------------------------------------------------
 
 class StartTable(DataTable):
-    """Click the box column to tick, a row twice (or Enter) to open, right-click for the menu."""
+    """A tree: project rows fold (▸/▾, ← →, Enter), the box column ticks (click or Space), a
+    session row twice (or Enter) opens it, right-click (or .) shows everything else."""
+
+    class Fold(Message):
+        def __init__(self, key: str, open_: bool | None) -> None:
+            super().__init__()
+            self.key = key
+            self.open_ = open_  # None toggles
 
     class Box(Message):
         def __init__(self, key: str) -> None:
@@ -189,9 +234,15 @@ class StartTable(DataTable):
             self.key = key
 
     BINDINGS = [("j", "cursor_down"), ("k", "cursor_up"),
-                Binding("space", "box", "Tick"), Binding("enter", "select_cursor", "Open"),
-                Binding("period", "menu", "Menu"),
+                Binding("space", "box", "Logon on/off"), Binding("enter", "select_cursor", "Resume / fold", key_display="⏎"),
+                Binding("left", "fold(False)", "Fold", show=False), Binding("right", "fold(True)", "Unfold", show=False),
+                Binding("period", "menu", "Menu", key_display="."),
                 Binding("shift+f10", "menu", "Menu", show=False)]
+
+    def action_fold(self, open_: bool) -> None:
+        k = self.key_at_cursor()
+        if k:
+            self.post_message(self.Fold(k, open_))
 
     def action_box(self) -> None:
         if self.key_at_cursor():
@@ -222,7 +273,9 @@ class StartTable(DataTable):
         event.stop()
         if event.button == 3:
             self.post_message(self.Menu(key, (event.screen_x, event.screen_y)))
-        elif meta.get("column") == 0:
+        elif meta.get("column") == 0 and key[:2] in ("P|", "M|"):
+            self.post_message(self.Fold(key, None))
+        elif meta.get("column") == 1:
             self.post_message(self.Box(key))
         else:
             t, k = self._last
@@ -233,19 +286,14 @@ class StartTable(DataTable):
 
 class StartupPane(Vertical):
     DEFAULT_CSS = """
-    StartupPane .btnrow { height: 3; }
-    StartupPane .btnrow Button { margin: 0 1 0 0; min-width: 6; }
-    #start-sum { height: 1; padding: 0 1; color: $text-muted; }
-    #acct-box, #relaunch-box { height: auto; display: none; border: round $primary 50%; padding: 0 1; }
-    #acct-box.show, #relaunch-box.show { display: block; }
-    #acct-box Horizontal, #relaunch-box Horizontal { height: 3; }
-    .acct-name { width: 10; margin-top: 1; }
-    .acct-who { width: 1fr; margin-top: 1; color: $text-muted; }
-    .acct-prof { width: 24; }
-    #relaunch-text { height: auto; margin: 1 0 0 0; }
+    #start-sum { width: 1fr; color: $text-muted; padding: 0 0 0 1; }
+    #relaunch-box { height: auto; display: none; border: round $warning 60%; padding: 0 1; margin: 0 1 1 1; }
+    #relaunch-box.show { display: block; }
+    #relaunch-box .bar { margin: 1 0 0 0; padding: 0; }
+    #relaunch-text { height: auto; }
     #start-table { height: 1fr; }
-    #st-search { width: 1fr; min-width: 20; }
-    #st-cli { width: 22; }
+    #st-search { width: 1fr; min-width: 16; }
+    #st-cli { width: 16; margin: 0 1; }
     """
 
     def __init__(self, **kw) -> None:
@@ -253,49 +301,45 @@ class StartupPane(Vertical):
         self.world: model.World | None = None
         self.groups: list[startup.ProjectRows] = []
         self.rows_by_key: dict[str, startup.Row] = {}
-        self.show_all = False
+        self.full: set[str] = set()          # projects showing every session, not just the recent ones
+        self.open_now: dict[str, bool] = {}  # which project rows are unfolded in the current view
         self.relaunch_cli: str | None = None
 
     def compose(self) -> ComposeResult:
-        with Horizontal(classes="btnrow"):
-            yield Input(placeholder="Search sessions…  ( / )", id="st-search")
-            yield Select([], prompt="every CLI", id="st-cli")
-            yield Button("All", id="st-all", tooltip="Every session, not only ticked and recent ones")
-            yield Button("⏻ Logon: off", id="st-autostart",
-                         tooltip="Reopen the ticked sessions in herdr every time you log on")
-            yield Button("▶ Open ticked", id="st-open", variant="primary",
-                         tooltip="Open every ticked session that is not running yet, now")
-            yield Button("↻ Relaunch", id="st-relaunch", tooltip="Restart open sessions in place (after a sign-in)")
-            yield Button("🔑 Accounts", id="st-accounts", tooltip="Sign in, sign out, switch account per CLI")
-            yield Button("🔔 Alerts", id="st-alerts", tooltip="Alerts to your phone: Telegram, ntfy, WhatsApp, Discord…")
-        with Vertical(id="acct-box"):
-            for cli in accounts.clis():
-                with Horizontal():
-                    yield Static(Text(cli, style="bold"), classes="acct-name")
-                    yield Static("…", id=f"acct-who-{cli}", classes="acct-who")
-                    if profiles.supported(cli):
-                        yield Select([], prompt="profile", id=f"acct-prof-{cli}", classes="acct-prof")
-                        yield Button("⇄", id=f"acct-switch-{cli}",
-                                     tooltip="Switch to the chosen profile, then relaunch its sessions")
-                        yield Button("💾", id=f"acct-save-{cli}",
-                                     tooltip="Save the current login as a profile, to switch back to it later")
-                    yield Button("Sign in", id=f"acct-in-{cli}", variant="primary",
-                                 tooltip="Opens the CLI's sign-in in a new tab; relaunch is offered when done")
-                    yield Button("Sign out", id=f"acct-out-{cli}")
+        with Horizontal(classes="bar"):
+            yield Field(placeholder="🔍 Search every session: title, prompt, project, branch  ( / )", id="st-search")
+            yield Choice([], prompt="every CLI", id="st-cli")
+            yield Btn("⊟ Fold all", id="st-fold", tooltip="Fold or unfold every project (← → fold one)")
+        with Horizontal(classes="bar"):
+            yield Btn("▶ Open ticked", id="st-open", variant="primary",
+                      tooltip="Open every ticked session that is not running yet, now")
+            yield Btn("☑ Logon list ▾", id="st-ticks", tooltip="Choose many at once what reopens at logon")
+            yield Btn("↻ Relaunch ▾", id="st-relaunch", tooltip="Restart open sessions in place (after a sign-in)")
+            yield Btn("⏻ Logon: off", id="st-autostart",
+                      tooltip="Reopen the ticked sessions every time you log on (⚙ Settings › Logon for more)")
+            yield Static("", id="start-sum")
         with Vertical(id="relaunch-box"):
             yield Static("", id="relaunch-text")
-            with Horizontal():
-                yield Button("↻ Relaunch", id="rl-go", variant="primary")
-                yield Button("Include busy", id="rl-busy", tooltip="Also restart sessions that are working right now")
-                yield Button("Cancel", id="rl-cancel")
-        yield Static("", id="start-sum")
+            with Horizontal(classes="bar"):
+                yield Btn("↻ Relaunch", id="rl-go", variant="primary")
+                yield Btn("Include busy ones", id="rl-busy", tooltip="Also restart sessions that are working right now")
+                yield Btn("Cancel", id="rl-cancel")
         yield StartTable(id="start-table")
 
     def on_mount(self) -> None:
-        self.query_one(StartTable).add_columns("", "CLI", "Session", "Lane", "Last", "Now")
+        self.query_one(StartTable).add_columns("", "Logon", "", "CLI", "Session", "Lane", "Last")
         self.sync_autostart()
 
     # ---- filling ------------------------------------------------------------------------------
+    def _is_open(self, g, running: int, filtering: bool) -> bool:
+        if filtering:
+            return True
+        folded = startup.ui_state().get("sessions_folded", {})
+        root = g.project.root
+        if root in folded:
+            return not folded[root]
+        return bool(g.ticked or running)  # by default only projects with something to show unfold
+
     def show(self, world: model.World) -> None:
         from .app import cli_tag  # shared look with the other tabs
         self.world = world
@@ -304,68 +348,173 @@ class StartupPane(Vertical):
         keep = t.key_at_cursor()
         t.clear()
         self.rows_by_key = {}
+        self.open_now = {}
         cutoff = time.time() - RECENT_DAYS * 86400
-        n_ticked = n_open = 0
         q = self.query_one("#st-search", Input).value.strip().lower().split()
         cli_sel = self.query_one("#st-cli", Select)
         cli = "" if cli_sel.value is Select.NULL else str(cli_sel.value)
         self.sync_cli_filter(world)
+        live = world.live_sessions
 
         def hit(r) -> bool:
             s = r.session
             hay = " ".join((s.title, s.last_prompt, s.project.label, s.branch, s.cli)).lower()
             return (not cli or s.cli == cli) and all(tok in hay for tok in q)
         filtering = bool(q or cli)
+        n_ticked = sum(len(g.ticked) for g in self.groups)
+        n_mine = sum(1 for g in self.groups for r in g.ticked if r.pinned)
+        n_open = sum(1 for g in self.groups for r in g.ticked if r.session.id in live)
         for g in self.groups:
-            ticked = len(g.ticked)
-            if filtering:
-                found = [r for r in g.rows if hit(r)]
-                if not found:
-                    continue
-            recent = [r for r in g.rows if r.ticked or r.session.mtime >= cutoff]
-            if not (recent or self.show_all or filtering):
+            root = g.project.root
+            found = [r for r in g.rows if hit(r)] if filtering else g.rows
+            if not found:
                 continue
-            box = Text("☑" if g.on else "☐", style="bold" if g.pinned else "dim")
-            label = Text(g.project.name, style="bold cyan" if g.on else "dim")
-            label.append(f"   {ticked} of {len(g.rows)}" if g.on else "   not restored", style="dim")
+            running = [r for r in g.rows if r.session.id in live]
+            is_open = self._is_open(g, len(running), filtering)
+            self.open_now[root] = is_open
+            chevron = Text("▾" if is_open else "▸", style="bold cyan")
+            box = Text("☑" if g.on else "☐", style=("bold" if g.pinned else "dim") + (" green" if g.on else ""))
+            label = Text(g.project.name[:24], style="bold cyan" if g.on else "bold")
+            stats = []
+            if g.on:
+                stats.append(f"{len(g.ticked)} ticked")
+            else:
+                stats.append("off at logon")
+            if running:
+                stats.append(f"{len(running)} running")
+            stats.append(f"{len(g.rows)} in all")
+            label.append("   " + " · ".join(stats), style="dim")
             if not g.auto:
-                label.append("  · auto-tick off", style="dim")
-            t.add_row(box, "", label, "", "", "", key=f"P|{g.project.root}")
-            if not g.on and not (self.show_all or filtering):
+                label.append(" · auto-tick off", style="dim")
+            t.add_row(chevron, box, "", "", label, "", "", key=f"P|{root}")
+            if not is_open:
                 continue
-            rows = found if filtering else g.rows if self.show_all else (
-                [r for r in g.rows if r.ticked]
-                + [r for r in g.rows if not r.ticked and r.session.mtime >= cutoff][:UNTICKED_PER_PROJECT])
+            if filtering or root in self.full:
+                rows = list(found)
+            else:
+                must = [r for r in g.rows if r.ticked or r.session.id in live]
+                rows = must + [r for r in g.rows if r not in must and r.session.mtime >= cutoff][:UNTICKED_PER_PROJECT]
             rows.sort(key=lambda r: -r.session.mtime)
             for r in rows:
                 s = r.session
                 k = f"S|{startup.skey(s)}"
                 self.rows_by_key[k] = r
-                live = world.live_sessions.get(s.id)
+                a = live.get(s.id)
                 ticked_here = r.ticked and g.on
-                n_ticked += ticked_here
                 now = ""
-                if live:
-                    n_open += ticked_here
-                    now = Text("● open", style="green") if live.in_herdr else Text("↗ elsewhere", style="magenta")
-                    if live.question:
-                        now = Text("❓ asks", style="bold red")
-                box = Text("☑" if r.ticked else "☐", style=("bold" if r.pinned else "dim") + (" green" if ticked_here else ""))
-                title = Text("  " + s.title[:70])
+                if a:  # running: here (●), in another window (↗), or asking you something (❓)
+                    now = Text("●", style="bold green") if a.in_herdr else Text("↗", style="bold magenta")
+                    if a.question:
+                        now = Text("❓", style="bold red")
+                tick = Text("☑" if r.ticked else "☐",
+                            style=("bold" if r.pinned else "dim") + (" green" if ticked_here else ""))
+                title = Text(s.title[:40])
+                if r.ticked and not r.pinned:
+                    title.append("  auto", style="dim italic")
                 if r.prefs:
-                    title.append("  ⚙", style="dim")
-                lane = Text(f"⎇ {s.project.worktree}"[:18], style="yellow") if s.project.worktree else Text("main", style="dim")
-                t.add_row(box, cli_tag(s.cli), title, lane, age(s.mtime), now, key=k)
+                    title.append("  ✎ options", style="dim")
+                lane = Text(f"⎇ {s.project.worktree}"[:15], style="#c678dd") if s.project.worktree else ""
+                t.add_row("", tick, now, cli_tag(s.cli), title, lane, age(s.mtime), key=k)
+            hidden = len(found) - len(rows)
+            if hidden > 0:
+                more = f"… {hidden} older session{'s' * (hidden != 1)}: Enter shows all"
+                t.add_row("", "", "", "", Text(more, style="dim italic"), "", "", key=f"M|{root}")
         if keep:
             try:
                 t.move_cursor(row=t.get_row_index(keep))
             except Exception:
                 pass
         cap = int(settings.load().restore.get("max_sessions", 30))
-        sumtext = Text.assemble(("At logon: ", "dim"), (f"{n_ticked} ticked", "bold"), f" · {n_open} open · ",
-                                (f"{max(0, min(n_ticked, cap) - n_open)} to open", "bold green"))
-        sumtext.append("      Enter resume · ☐ tick for logon · right-click more", style="dim")
+        sumtext = Text.assemble(("At logon ", "dim"), (f"{min(n_ticked, cap)} reopen", "bold green"),
+                                (f" ({n_mine} yours, {n_ticked - n_mine} auto)", "dim"),
+                                (f" · {n_open} of them run now", "dim"))
+        if n_ticked > cap:
+            sumtext.append(f" · capped at {cap}", style="bold yellow")
         self.query_one("#start-sum", Static).update(sumtext)
+        fold = self.query_one("#st-fold", Button)
+        fold.label = "⊞ Unfold all" if not any(self.open_now.values()) else "⊟ Fold all"
+
+    def fold(self, key: str, open_: bool | None) -> None:
+        """Fold or unfold a project (from its row or any of its session rows)."""
+        if key.startswith("M|"):
+            self.full.add(key[2:])
+            self.refresh_rows()
+            return
+        root = key[2:] if key.startswith("P|") else None
+        if root is None and key in self.rows_by_key:
+            root = self.rows_by_key[key].session.project.root
+        if root is None:
+            return
+        is_open = self.open_now.get(root, False)
+        want = (not is_open) if open_ is None else open_
+        if want == is_open:
+            if key.startswith("S|") and not want:  # ← on a session: up to its project
+                self._cursor_to(f"P|{root}")
+            return
+        folded = dict(startup.ui_state().get("sessions_folded", {}))
+        folded[root] = not want
+        startup.set_ui("sessions_folded", folded)
+        if not want:
+            self.full.discard(root)
+        self.refresh_rows()
+        self._cursor_to(f"P|{root}")
+
+    def fold_all(self) -> None:
+        want_open = not any(self.open_now.values())
+        startup.set_ui("sessions_folded", {g.project.root: not want_open for g in self.groups})
+        self.full.clear()
+        self.refresh_rows()
+
+    def _cursor_to(self, key: str) -> None:
+        t = self.query_one(StartTable)
+        try:
+            t.move_cursor(row=t.get_row_index(key))
+        except Exception:
+            pass
+
+    # ---- bulk ticks -----------------------------------------------------------------------------
+    def ticks_menu(self, widget) -> None:
+        running = [r for g in self.groups for r in g.rows if self.world and r.session.id in self.world.live_sessions]
+        items = [("-head", "What reopens at logon"),
+                 ("t-running", f"☑ Add the {len(running)} running now"),
+                 ("t-only-running", f"☑ Exactly the {len(running)} running now, nothing else"),
+                 ("t-none", "☐ Nothing (untick everything)"),
+                 ("t-auto", "↺ Back to automatic (newest per lane)"),
+                 ("t-rules", "… Automatic rules (Settings)")]
+        r = widget.region
+        self.app.push_screen(ContextMenu(items, (r.x, r.y + 1)), lambda c: c and c[0] != "-" and self.on_ticks(c))
+
+    def on_ticks(self, choice: str | None) -> None:
+        if not choice or not self.world:
+            return
+        live = self.world.live_sessions
+        rows = [r for g in self.groups for r in g.rows]
+        if choice == "t-rules":
+            from .settings_ui import SettingsPane
+            self.app.action_tab("settings")
+            self.app.query_one(SettingsPane).show_section("logon")
+            return
+        if choice == "t-auto":
+            startup.reset_all()
+        elif choice == "t-running":
+            run = [r for r in rows if r.session.id in live]
+            startup.set_ticks({startup.skey(r.session): True for r in run},
+                              sorted({r.session.project.root for r in run}))
+        elif choice == "t-only-running":
+            run_roots = sorted({r.session.project.root for r in rows if r.session.id in live})
+            startup.set_ticks({startup.skey(r.session): r.session.id in live for r in rows}, run_roots)
+        elif choice == "t-none":
+            startup.set_ticks({startup.skey(r.session): False for r in rows})
+        self.refresh_rows()
+
+    def relaunch_menu(self, widget) -> None:
+        if not self.world:
+            return
+        clis = sorted({a.cli for a in self.world.agents if a.in_herdr})
+        items = [("", "↻ Every CLI")] + [(c, f"↻ Only {c}") for c in clis]
+        items = [(f"r:{c}", label) for c, label in items]
+        r = widget.region
+        self.app.push_screen(ContextMenu(items, (r.x, r.y + 1)), lambda c: c and self.open_relaunch(c[2:]))
 
     def sync_cli_filter(self, world) -> None:
         clis = sorted({s.cli for s in world.sessions})
@@ -380,14 +529,12 @@ class StartupPane(Vertical):
 
     def jump_to_project(self, root: str) -> None:
         self.query_one("#st-search", Input).value = ""
+        folded = dict(startup.ui_state().get("sessions_folded", {}))
+        folded[root] = False
+        startup.set_ui("sessions_folded", folded)
         self.refresh_rows()
-        t = self.query_one(StartTable)
-        try:
-            t.move_cursor(row=t.get_row_index(f"P|{root}"))
-            t.scroll_to_row = None
-        except Exception:
-            pass
-        t.focus()
+        self._cursor_to(f"P|{root}")
+        self.query_one(StartTable).focus()
 
     @on(Input.Changed, "#st-search")
     def _search(self) -> None:
@@ -404,44 +551,15 @@ class StartupPane(Vertical):
     def sync_autostart(self) -> None:
         on_ = autostart.installed()
         b = self.query_one("#st-autostart", Button)
-        b.label = "⏻ Logon: on" if on_ else "⏻ Logon: off"
-        b.variant = "success" if on_ else "default"
-
-    @work(thread=True, group="accounts")
-    def load_accounts(self) -> None:
-        for cli in accounts.clis():
-            who = accounts.status(cli)
-            self.app.call_from_thread(self.show_account, cli, who)
-
-    def show_account(self, cli: str, who: str) -> None:
-        self.who = {**getattr(self, "who", {}), cli: who}
-        act = profiles.active(cli)
-        self.query_one(f"#acct-who-{cli}", Static).update(Text.assemble(who, (f"  ·  profile {act}" if act else "", "cyan")))
-        if profiles.supported(cli):
-            sel = self.query_one(f"#acct-prof-{cli}", Select)
-            opts = [(f"{n}  {profiles.label(cli, n)}"[:40], n) for n in profiles.names(cli)]
-            sel.set_options(opts)
-            if act in profiles.names(cli):
-                sel.value = act
-
-    def save_profile(self, cli: str) -> None:
-        def done(name):
-            if name:
-                msg = profiles.save_as(cli, name, getattr(self, "who", {}).get(cli, ""))
-                self.app.notify(msg, severity="error" if msg.startswith("✗") else "information")
-                self.load_accounts()
-        self.app.push_screen(Prompt(f"Save the current {cli} login as profile", "e.g. work, private"), done)
-
-    def switch_profile(self, cli: str) -> None:
-        v = self.query_one(f"#acct-prof-{cli}", Select).value
-        if v is Select.NULL:
-            self.app.notify("Pick a profile first (💾 saves the current login as one).", severity="warning")
-            return
-        msg = profiles.switch(cli, str(v))
-        self.app.notify(msg, severity="error" if msg.startswith("✗") else "information", timeout=8)
-        if msg.startswith("⇄"):
-            self.load_accounts()
-            self.open_relaunch(cli)
+        b.label = "⏻ Logon restore: on" if on_ else "⏻ Logon restore: OFF"
+        b.variant = "default" if on_ else "warning"
+        try:
+            from .settings_ui import SettingsPane
+            pane = self.app.query_one(SettingsPane)
+            pane.query_one("#lg-auto").value = on_
+            pane.show_logon_status()
+        except Exception:
+            pass
 
     # ---- relaunch sheet -----------------------------------------------------------------------
     def open_relaunch(self, cli: str = "") -> None:
@@ -484,14 +602,19 @@ class StartupPane(Vertical):
             self.app.finish(lambda: launch.resume(self.world, r.session))
 
     def menu_items(self, key: str) -> list[tuple[str, str]]:
+        if key.startswith("M|"):
+            return [("m-all", "☰ Show all its sessions")]
         if key.startswith("P|"):
             g = next((g for g in self.groups if g.project.root == key[2:]), None)
             if not g:
                 return []
-            return [("p-toggle", "☐ Don't restore this project" if g.on else "☑ Restore this project"),
-                    ("p-auto", "Auto-tick off here" if g.auto else "Auto-tick on here"),
+            open_ = self.open_now.get(g.project.root, False)
+            return [("p-fold", "▸ Fold" if open_ else "▾ Unfold"),
+                    ("p-all", f"☰ Show all {len(g.rows)} sessions"),
+                    ("p-toggle", "☐ Nothing from this project at logon" if g.on else "☑ Restore this project at logon"),
                     ("p-open", f"▶ Open its {len(g.ticked)} ticked now"),
                     ("p-untick", "☐ Untick all its sessions"),
+                    ("p-auto", "Auto-tick off here" if g.auto else "Auto-tick on here"),
                     ("p-reset", "↺ Back to automatic")]
         r = self.rows_by_key.get(key)
         if not r:
@@ -505,7 +628,7 @@ class StartupPane(Vertical):
         items += [("s-tick", "☐ Untick" if r.ticked else "☑ Tick for logon")]
         if r.pinned:
             items += [("s-auto", "↺ Back to automatic")]
-        items += [("s-options", "⚙ Launch options…"), ("s-copy", "⧉ Show resume command")]
+        items += [("s-options", "✎ Launch options…"), ("s-copy", "⧉ Show resume command")]
         return items
 
     def open_menu(self, key: str, at: tuple[int, int] | None = None) -> None:
@@ -520,18 +643,28 @@ class StartupPane(Vertical):
     def on_menu(self, key: str, choice: str | None) -> None:
         if not choice:
             return
+        if choice == "m-all":
+            self.fold(key, True)
+            return
         if key.startswith("P|"):
             root = key[2:]
             g = next((g for g in self.groups if g.project.root == root), None)
             if not g:
+                return
+            if choice == "p-fold":
+                self.fold(key, None)
+                return
+            if choice == "p-all":
+                self.full.add(root)
+                self.fold(key, True)
+                self.refresh_rows()
                 return
             if choice == "p-toggle":
                 startup.set_project(root, on=not g.on)
             elif choice == "p-auto":
                 startup.set_project(root, auto=not g.auto)
             elif choice == "p-untick":
-                for r in g.rows:
-                    startup.set_tick(startup.skey(r.session), False)
+                startup.set_ticks({startup.skey(r.session): False for r in g.rows})
             elif choice == "p-reset":
                 data = startup.load()
                 data["projects"].pop(root, None)
@@ -585,6 +718,11 @@ class StartupPane(Vertical):
         msg = restore.relaunch_in_place(pane, cli, sid, name)
         self.app.call_from_thread(self.app.notify, msg, severity="warning" if msg.startswith("✗") else "information")
 
+    def open_ticked(self) -> None:
+        if self.world:
+            self.open_rows_bg([r for r in startup.selected(self.world.sessions)
+                               if r.session.id not in self.world.live_sessions])
+
     def open_rows_bg(self, rows: list[startup.Row]) -> None:
         if not rows:
             self.app.notify("Nothing to open: everything ticked is running.")
@@ -594,7 +732,12 @@ class StartupPane(Vertical):
 
     @on(StartTable.Box)
     def _box(self, ev: StartTable.Box) -> None:
-        self.toggle(ev.key)
+        if ev.key.startswith(("P|", "S|")):
+            self.toggle(ev.key)
+
+    @on(StartTable.Fold)
+    def _fold(self, ev: StartTable.Fold) -> None:
+        self.fold(ev.key, ev.open_)
 
     @on(StartTable.Menu)
     def _menu(self, ev: StartTable.Menu) -> None:
@@ -605,13 +748,15 @@ class StartupPane(Vertical):
         k = self.current()
         if k.startswith("S|"):
             self.open_session(k)
+        elif k:
+            self.fold(k, None)
 
     @on(StartTable.Open)
     def _open(self, ev: StartTable.Open) -> None:
         if ev.key.startswith("S|"):
             self.open_session(ev.key)
         else:
-            self.toggle(ev.key)
+            self.fold(ev.key, None)
 
     @on(Button.Pressed)
     def _button(self, ev: Button.Pressed) -> None:
@@ -622,32 +767,13 @@ class StartupPane(Vertical):
             self.sync_autostart()
             self.app.notify(msg, severity="error" if msg.startswith("✗") else "information")
         elif bid == "st-open":
-            if not self.world:
-                return
-            rows = [r for r in startup.selected(self.world.sessions) if r.session.id not in self.world.live_sessions]
-            self.open_rows_bg(rows)
-        elif bid == "st-alerts":
-            self.app.push_screen(AlertsDialog())
+            self.open_ticked()
         elif bid == "st-relaunch":
-            self.open_relaunch("")
-        elif bid == "st-accounts":
-            box = self.query_one("#acct-box")
-            box.toggle_class("show")
-            if box.has_class("show"):
-                self.load_accounts()
-        elif bid == "st-all":
-            self.show_all = not self.show_all
-            ev.button.variant = "primary" if self.show_all else "default"
-            self.refresh_rows()
-        elif bid.startswith("acct-switch-"):
-            self.switch_profile(bid[12:])
-        elif bid.startswith("acct-save-"):
-            self.save_profile(bid[10:])
-        elif bid.startswith("acct-in-"):
-            self.app.finish(lambda: accounts.sign_in(bid[8:]))
-        elif bid.startswith("acct-out-"):
-            cli = bid[9:]
-            self.app.finish(lambda: accounts.sign_out(cli))
+            self.relaunch_menu(ev.button)
+        elif bid == "st-ticks":
+            self.ticks_menu(ev.button)
+        elif bid == "st-fold":
+            self.fold_all()
         elif bid == "rl-go" or bid == "rl-busy":
             args = ["navigator.restore", "relaunch", self.relaunch_cli or ""]
             if bid == "rl-busy":
@@ -663,13 +789,11 @@ class NewSession(ModalScreen):
 
     DEFAULT_CSS = """
     NewSession { align: center middle; background: $background 50%; }
-    #ns { width: 72; height: auto; border: round $primary; background: $panel; padding: 1 2; }
-    #ns Horizontal { height: 3; }
-    #ns .lbl { width: 18; margin-top: 1; color: $text-muted; }
-    #ns Input, #ns Select { width: 1fr; }
+    #ns { width: 76; max-width: 96%; height: auto; max-height: 96%; border: round $primary; background: $panel;
+          padding: 1 2; }
+    #ns > Static { margin: 0 0 1 0; }
     #ns-claude { height: auto; }
-    #ns-buttons { margin-top: 1; }
-    #ns-buttons Button { margin-right: 1; }
+    #ns-wt-row Checkbox { width: 18; margin: 0; }
     """
     BINDINGS = [("escape", "dismiss(None)", "Cancel")]
 
@@ -681,39 +805,36 @@ class NewSession(ModalScreen):
         rc_default = bool(settings.load().restore.get("claude_remote_control", False))
         with Vertical(id="ns"):
             yield Static(Text.assemble(("New session  ", "bold"), (self.project_label[:40], "cyan")))
-            with Horizontal():
+            with Horizontal(classes="form-row"):
                 yield Static("CLI", classes="lbl")
-                yield Select([(c, c) for c in self.clis], value=self.clis[0], allow_blank=False, id="ns-cli")
-            with Horizontal():
+                yield Choice([(c, c) for c in self.clis], value=self.clis[0], allow_blank=False, id="ns-cli")
+            with Horizontal(classes="form-row"):
                 yield Static("Name", classes="lbl")
-                yield Input(placeholder="how it shows in herdr, Remote Control and the lists", id="ns-name")
-            with Horizontal():
+                yield Field(placeholder="optional: shown in herdr, the lists and Remote Control", id="ns-name")
+            with Horizontal(classes="form-row"):
                 yield Static("Folder", classes="lbl")
-                yield Input(self.folder, id="ns-folder")
+                yield Field(self.folder, id="ns-folder")
             if self.is_git:
-                with Horizontal():
-                    yield Static("New worktree", classes="lbl")
-                    yield Switch(value=False, id="ns-wt")
-                    yield Input(placeholder="branch name (default: the session name)", id="ns-branch")
+                with Horizontal(classes="form-row", id="ns-wt-row"):
+                    yield Tick("New worktree", False, id="ns-wt")
+                    yield Field(placeholder="branch name (default: the session name)", id="ns-branch")
             with Vertical(id="ns-claude"):
-                with Horizontal():
+                with Horizontal(classes="form-row"):
                     yield Static("Model", classes="lbl")
-                    yield Input(placeholder="default (e.g. opus, sonnet)", id="ns-model")
-                with Horizontal():
+                    yield Field(placeholder="default (e.g. opus, sonnet)", id="ns-model")
+                with Horizontal(classes="form-row"):
                     yield Static("Effort", classes="lbl")
-                    yield Select([(e, e) for e in startup.EFFORTS[1:]], prompt="default", id="ns-effort")
-                with Horizontal():
+                    yield Choice([(e, e) for e in startup.EFFORTS[1:]], prompt="default", id="ns-effort")
+                with Horizontal(classes="form-row"):
                     yield Static("Permission mode", classes="lbl")
-                    yield Select([(m, m) for m in startup.PERMISSION_MODES[1:]], prompt="default", id="ns-perm")
-                with Horizontal():
-                    yield Static("Remote Control", classes="lbl")
-                    yield Switch(value=rc_default, id="ns-rc")
-            with Horizontal():
+                    yield Choice([(m, m) for m in startup.PERMISSION_MODES[1:]], prompt="default", id="ns-perm")
+                yield Tick("Remote Control (use it from your phone)", rc_default, id="ns-rc")
+            with Horizontal(classes="form-row"):
                 yield Static("Extra arguments", classes="lbl")
-                yield Input(placeholder="appended to the command", id="ns-args")
-            with Horizontal(id="ns-buttons"):
-                yield Button("▶ Start", variant="primary", id="ns-go")
-                yield Button("Cancel", id="ns-cancel")
+                yield Field(placeholder="appended to the command", id="ns-args")
+            with Horizontal(classes="bar"):
+                yield Btn("▶ Start", variant="primary", id="ns-go")
+                yield Btn("Cancel", id="ns-cancel")
 
     def on_mount(self) -> None:
         self.query_one("#ns-name", Input).focus()
@@ -739,7 +860,7 @@ class NewSession(ModalScreen):
         cli = self.query_one("#ns-cli", Select).value
         name = self.query_one("#ns-name", Input).value.strip()
         branch = ""
-        if self.is_git and self.query_one("#ns-wt", Switch).value:
+        if self.is_git and self.query_one("#ns-wt", Checkbox).value:
             branch = self.query_one("#ns-branch", Input).value.strip() or name.lower().replace(" ", "-")
             if not branch:
                 self.app.notify("A new worktree needs a branch name (or a session name).", severity="warning")
@@ -751,7 +872,7 @@ class NewSession(ModalScreen):
             prefs.update(model=self.query_one("#ns-model", Input).value.strip(),
                          effort="" if eff is Select.NULL else eff,
                          permission_mode="" if perm is Select.NULL else perm,
-                         remote_control=self.query_one("#ns-rc", Switch).value)
+                         remote_control=self.query_one("#ns-rc", Checkbox).value)
         self.dismiss({"cli": cli, "name": name, "folder": self.query_one("#ns-folder", Input).value.strip(),
                       "branch": branch, "prefs": prefs})
 
@@ -761,9 +882,9 @@ class FinishWorktree(ModalScreen):
 
     DEFAULT_CSS = """
     FinishWorktree { align: center middle; background: $background 50%; }
-    #fw { width: 76; height: auto; border: round $primary; background: $panel; padding: 1 2; }
-    #fw-buttons { height: 3; margin-top: 1; }
-    #fw-buttons Button { margin-right: 1; }
+    #fw { width: 80; max-width: 96%; height: auto; max-height: 96%; border: round $primary; background: $panel;
+          padding: 1 2; }
+    #fw-buttons { margin: 1 0 0 0; padding: 0; }
     """
     BINDINGS = [("escape", "dismiss(None)", "Cancel")]
 
@@ -795,12 +916,12 @@ class FinishWorktree(ModalScreen):
             t.append("\nCan't remove yet: " + "; ".join(st.blockers) + "\n", style="red")
         with Vertical(id="fw"):
             yield Static(t)
-            with Horizontal(id="fw-buttons"):
-                yield Button("⎇ Remove worktree", id="fw-remove", variant="error", disabled=not st.removable,
-                             tooltip="Close its workspace and delete the checkout folder. The branch is kept.")
-                yield Button("Close workspace", id="fw-close", disabled=bool(st.agents or not st.workspaces),
-                             tooltip="Only close it in herdr; the checkout stays on disk")
-                yield Button("Cancel", id="fw-cancel")
+            with Horizontal(id="fw-buttons", classes="bar"):
+                yield Btn("⎇ Remove worktree", id="fw-remove", variant="error", disabled=not st.removable,
+                          tooltip="Close its workspace and delete the checkout folder. The branch is kept.")
+                yield Btn("Close workspace", id="fw-close", disabled=bool(st.agents or not st.workspaces),
+                          tooltip="Only close it in herdr; the checkout stays on disk")
+                yield Btn("Cancel", id="fw-cancel")
 
     @on(Button.Pressed)
     def _btn(self, ev: Button.Pressed) -> None:
@@ -859,8 +980,7 @@ class UsagePane(Vertical):
         yield DataTable(id="usage-table", cursor_type="row", zebra_stripes=True)
 
     def on_mount(self) -> None:
-        self.query_one("#usage-table", DataTable).add_columns("Project / session", "CLI", "Today", "7 days",
-                                                              "of it output", "Last")
+        self.query_one("#usage-table", DataTable).add_columns("Project / session", "CLI", "Today", "7 days", "Output", "Cache reads", "Last")
         self.loaded = False
 
     def load(self, world) -> None:
@@ -892,7 +1012,8 @@ class UsagePane(Vertical):
         t = self.query_one("#usage-table", DataTable)
         t.clear()
         grand_today, grand_week = usage.Tally(), usage.Tally()
-        order = sorted(groups.items(), key=lambda kv: -sum(x[3].total for x in kv[1]))
+        work_ = lambda t_: t_.fresh + t_.out
+        order = sorted(groups.items(), key=lambda kv: -sum(work_(x[3]) for x in kv[1]))
         for proj, rows in order:
             pt, pw = usage.Tally(), usage.Tally()
             for _, _, td, wk in rows:
@@ -900,133 +1021,18 @@ class UsagePane(Vertical):
                 pw.add(wk)
             grand_today.add(pt)
             grand_week.add(pw)
-            t.add_row(Text(proj, style="bold cyan"), "", usage.human(pt.total) if pt.total else "",
-                      Text(usage.human(pw.total), style="bold"),
-                      usage.human(pw.out), "", key=f"P|{proj}")
-            for su, s, td, wk in sorted(rows, key=lambda x: -x[3].total)[:8]:
+            t.add_row(Text(proj, style="bold cyan"), "", usage.human(work_(pt)) if work_(pt) else "",
+                      Text(usage.human(work_(pw)), style="bold"), usage.human(pw.out),
+                      Text(usage.human(pw.cached), style="dim"), "", key=f"P|{proj}")
+            for su, s, td, wk in sorted(rows, key=lambda x: -work_(x[3]))[:8]:
                 title = Text("  " + (s.title[:44] if s else su.sid[:8]))
                 if s and s.project.worktree:
-                    title.append(f"  ⎇ {s.project.worktree}"[:20], style="yellow")
-                t.add_row(title, cli_tag(su.cli), usage.human(td.total) if td.total else "",
-                          usage.human(wk.total), usage.human(wk.out), age(s.mtime) if s else "", key=f"S|{su.sid}")
+                    title.append(f"  ⎇ {s.project.worktree}"[:20], style="#c678dd")
+                t.add_row(title, cli_tag(su.cli), usage.human(work_(td)) if work_(td) else "",
+                          usage.human(work_(wk)), usage.human(wk.out), Text(usage.human(wk.cached), style="dim"),
+                          age(s.mtime) if s else "", key=f"S|{su.sid}")
         self.query_one("#usage-sum", Static).update(Text.assemble(
-            ("today ", "dim"), (usage.human(grand_today.total), "bold"), ("   ·   7 days ", "dim"),
-            (usage.human(grand_week.total), "bold"), (f"   ·   of it output {usage.human(grand_week.out)}", "dim"),
-            ("     tokens, cache reads included", "dim")))
-
-
-class AlertsDialog(ModalScreen):
-    """Set up phone alerts: Telegram, ntfy, a webhook (Discord/Slack/...), WhatsApp."""
-
-    DEFAULT_CSS = """
-    AlertsDialog { align: center middle; background: $background 50%; }
-    #al { width: 90; max-width: 96%; height: auto; max-height: 96%; border: round $primary;
-          background: $panel; padding: 1 2; overflow-y: auto; }
-    #al Horizontal { height: 3; }
-    #al .lbl { width: 16; margin-top: 1; color: $text-muted; }
-    #al .hint { color: $text-muted; margin: 0 0 0 16; }
-    #al Input { width: 1fr; }
-    #al Button { margin-left: 1; }
-    #al-status { margin: 1 0 0 0; height: auto; }
-    #al-buttons { margin-top: 1; }
-    """
-    BINDINGS = [("escape", "dismiss(None)", "Close")]
-
-    def compose(self) -> ComposeResult:
-        c = settings.load().alerts
-        g = lambda k: str(c.get(k, "") or "")
-        with Vertical(id="al"):
-            yield Static(Text("Alerts to your phone", style="bold"))
-            yield Static("", id="al-status")
-            with Horizontal():
-                yield Static("Telegram bot", classes="lbl")
-                yield Input(g("telegram_bot_token"), password=True, placeholder="token from @BotFather", id="al-tg")
-                yield Button("Connect", id="al-tg-connect", variant="primary",
-                             tooltip="After you pressed Start in your bot's chat: finds the chat, sends a test")
-            yield Static("@BotFather › /newbot › paste token › Start in your bot › Connect", classes="hint")
-            with Horizontal():
-                yield Static("ntfy topic", classes="lbl")
-                yield Input(g("ntfy_topic"), placeholder="a name only you know", id="al-ntfy")
-                yield Button("Random", id="al-ntfy-random")
-            with Horizontal():
-                yield Static("Webhook URL", classes="lbl")
-                yield Input(g("webhook_url"), password=True, placeholder="Discord / Slack / Teams / Mattermost", id="al-hook")
-            with Horizontal():
-                yield Static("WhatsApp", classes="lbl")
-                yield Input(g("whatsapp_phone"), placeholder="+49…", id="al-wa-phone")
-                yield Input(g("whatsapp_apikey"), password=True, placeholder="CallMeBot API key", id="al-wa-key")
-            with Horizontal():
-                yield Static("Waiting alert", classes="lbl")
-                yield Input(str(c.get("blocked_minutes", 10)), placeholder="minutes, 0 = off", id="al-min")
-                yield Static("  restore result", classes="lbl")
-                yield Switch(value=bool(c.get("on_restore", True)), id="al-restore")
-            with Horizontal(id="al-buttons"):
-                yield Button("Save", id="al-save", variant="primary")
-                yield Button("Send test", id="al-test")
-                yield Button("Close", id="al-close")
-
-    def on_mount(self) -> None:
-        self.show_status()
-
-    def show_status(self, extra: str = "") -> None:
-        on = alerts_mod().channels()
-        t = Text()
-        for ch, ok in on.items():
-            t.append(f"{'●' if ok else '○'} {ch}   ", style="bold green" if ok else "dim")
-        if extra:
-            t.append("\n" + extra)
-        self.query_one("#al-status", Static).update(t)
-
-    def _values(self) -> dict:
-        v = lambda i: self.query_one(i, Input).value.strip()
-        try:
-            mins = max(0, int(v("#al-min") or 0))
-        except ValueError:
-            mins = 10
-        return {"telegram_bot_token": v("#al-tg"), "ntfy_topic": v("#al-ntfy"), "webhook_url": v("#al-hook"),
-                "whatsapp_phone": v("#al-wa-phone"), "whatsapp_apikey": v("#al-wa-key"),
-                "blocked_minutes": mins, "on_restore": self.query_one("#al-restore", Switch).value}
-
-    @on(Button.Pressed)
-    def _btn(self, ev: Button.Pressed) -> None:
-        ev.stop()
-        bid = ev.button.id or ""
-        al = alerts_mod()
-        if bid == "al-close":
-            self.dismiss(None)
-        elif bid == "al-ntfy-random":
-            self.query_one("#al-ntfy", Input).value = al.random_topic()
-        elif bid == "al-save":
-            al.save(self._values())
-            self.show_status("Saved.")
-        elif bid == "al-test":
-            al.save(self._values())
-            self.run_test_send()
-        elif bid == "al-tg-connect":
-            self.connect_telegram(self.query_one("#al-tg", Input).value.strip())
-
-    @work(thread=True, group="alerts")
-    def run_test_send(self) -> None:
-        res = alerts_mod().send("herdr navigator", "Test alert: alerts reach you here.", "white_check_mark")
-        msg = "  ".join(f"{k}: {'delivered' if ok else 'FAILED'}" for k, ok in res.items()) or "no channel set up yet"
-        self.app.call_from_thread(self.show_status, msg)
-
-    @work(thread=True, group="alerts")
-    def connect_telegram(self, token: str) -> None:
-        al = alerts_mod()
-        if not token:
-            self.app.call_from_thread(self.show_status, "Paste the bot token first.")
-            return
-        chat, who = al.telegram_find_chat(token)
-        if not chat:
-            self.app.call_from_thread(self.show_status, who)
-            return
-        al.save({**self._values(), "telegram_bot_token": token, "telegram_chat_id": chat})
-        ok = al.send("herdr navigator", "Telegram connected: alerts will arrive here.").get("telegram")
-        self.app.call_from_thread(self.show_status,
-                                  f"Telegram connected to {who or chat}" + ("; test sent." if ok else "; the test FAILED."))
-
-
-def alerts_mod():
-    from . import alerts
-    return alerts
+            ("Tokens worked (new input + output)   today ", "dim"), (usage.human(work_(grand_today)), "bold"),
+            ("  ·  7 days ", "dim"), (usage.human(work_(grand_week)), "bold"),
+            (f"  ·  of it output {usage.human(grand_week.out)}", "dim"),
+            (f"   ·   cache reads {usage.human(grand_week.cached)} (cheap, shown apart)", "dim")))

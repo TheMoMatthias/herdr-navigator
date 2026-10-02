@@ -225,3 +225,27 @@ def test_record_panes_keeps_sessions_and_drops_quit_agents(tmp_path, monkeypatch
     restore.record_panes(world, snap)
     restore.record_panes(type("W", (), {"agents": []})(), {"panes": []})
     assert "w1:p2" in restore.load_panes()
+
+
+def test_decode_project_dir_finds_the_real_folder(tmp_path):
+    import re
+    from navigator.sessions import _decode_project_dir
+    real = tmp_path / "Trading Bot" / "Algo.Trader" / ".claude" / "worktrees" / "lead-4"
+    real.mkdir(parents=True)
+    (tmp_path / "Trading-Bot").mkdir()  # a decoy that encodes the same way but goes nowhere
+    name = re.sub(r"[^A-Za-z0-9]", "-", str(real))
+    assert _decode_project_dir(name) == str(real)
+    assert _decode_project_dir(name + "-gone") == ""
+
+
+def test_set_ticks_and_reset(tmp_path, monkeypatch):
+    from navigator import settings, startup
+    monkeypatch.setattr(settings, "state_dir", lambda: tmp_path)
+    startup.set_ticks({"claude:a": True, "claude:b": False}, ["/p"])
+    data = startup.load()
+    assert data["sessions"] == {"claude:a": {"tick": True}, "claude:b": {"tick": False}}
+    assert data["projects"] == {"/p": {"on": True}}
+    startup.set_prefs("claude:a", {"model": "opus"})
+    startup.reset_all()
+    data = startup.load()
+    assert data["projects"] == {} and data["sessions"] == {"claude:a": {"prefs": {"model": "opus"}}}

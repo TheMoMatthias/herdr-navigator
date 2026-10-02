@@ -26,3 +26,13 @@ def save(name: str, text: str) -> None:
     data = saved()
     data[name.strip()[:40]] = text
     path().write_text(json.dumps(data, indent=1), encoding="utf-8")
+
+
+def delete(name: str) -> bool:
+    """Remove a prompt saved from the Navigator (the ones in the settings file stay)."""
+    data = saved()
+    if name not in data:
+        return False
+    data.pop(name)
+    path().write_text(json.dumps(data, indent=1), encoding="utf-8")
+    return True
