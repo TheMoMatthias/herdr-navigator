@@ -116,10 +116,18 @@ default = 200000
 template = "Hand-off from {name} ({cli}, {project}). Their latest answer:\\n\\n{answer}\\n\\nReview it and tell me what you think: what is right, what is wrong or missing."
 
 [alerts]
-# Phone alerts through ntfy (https://ntfy.sh, free, no account): install the ntfy app and
-# subscribe to a topic name only you know, then put it here. Empty = off.
+# Alerts to your phone. Easiest: Navigator › Sessions › 🔔 Alerts sets these up for you.
+# Telegram: create a bot with @BotFather, paste its token, press Start in the bot chat.
+telegram_bot_token = ""
+telegram_chat_id = ""
+# ntfy (https://ntfy.sh, free app, no account): a topic name only you know.
 ntfy_topic = ""
 ntfy_server = "https://ntfy.sh"
+# Discord, Slack, Mattermost, Teams, Google Chat ...: an incoming-webhook URL.
+webhook_url = ""
+# WhatsApp through CallMeBot (free, unofficial): see callmebot.com for your API key.
+whatsapp_phone = ""
+whatsapp_apikey = ""
 # Alert when an agent has waited on you this many minutes (0 = never).
 blocked_minutes = 10
 # Alert with the logon restore's result.

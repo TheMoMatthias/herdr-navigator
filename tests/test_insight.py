@@ -179,3 +179,74 @@ def test_worktree_finish_refuses_dirty_and_removes_clean(tmp_path):
     assert worktrees.remove(st, str(repo)).startswith("⎇ removed")
     assert not wt.exists()
     assert "feat" in subprocess.run(["git", "-C", str(repo), "branch"], capture_output=True, text=True).stdout
+
+
+def _mock_server(responses):
+    """A local HTTP server that records requests and answers GETs from `responses`."""
+    import http.server
+    import threading
+    got = []
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def _reply(self, body=b'{"ok": true}'):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length") or 0)
+            got.append(("POST", self.path, self.rfile.read(n).decode()))
+            self._reply()
+
+        def do_GET(self):
+            got.append(("GET", self.path, ""))
+            self._reply(responses.get(self.path.split("?")[0], b'{"ok": true}'))
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, got
+
+
+def test_alert_channels_telegram_webhook_whatsapp_and_setup(tmp_path):
+    upd = json.dumps({"ok": True, "result": [{"message": {"chat": {"id": 4242, "first_name": "Mo"}}}]}).encode()
+    srv, got = _mock_server({"/botTOKEN/getUpdates": upd})
+    base = f"http://127.0.0.1:{srv.server_port}"
+    try:
+        cfg = tmp_path / "cfg" / "navigator.toml"
+        cfg.write_text(cfg.read_text() + f'\n[alerts]\ntelegram_api = "{base}"\nwhatsapp_api = "{base}/wa"\n',
+                       encoding="utf-8")
+        settings.load.cache_clear()
+        assert not alerts.enabled()
+        assert alerts.telegram_find_chat("TOKEN") == ("4242", "Mo")
+        alerts.save({"telegram_bot_token": "TOKEN", "telegram_chat_id": "4242",
+                     "webhook_url": f"{base}/hook/discord", "whatsapp_phone": "+491", "whatsapp_apikey": "K"})
+        assert "telegram_api" in cfg.read_text()                     # save keeps the other keys
+        assert alerts.channels() == {"telegram": True, "ntfy": False, "webhook": True, "whatsapp": True}
+        assert alerts.send("T", "B") == {"telegram": True, "webhook": True, "whatsapp": True}
+        posts = {path: body for m, path, body in got if m == "POST"}
+        assert json.loads(posts["/botTOKEN/sendMessage"]) == {"chat_id": "4242", "text": "T\nB",
+                                                               "disable_web_page_preview": True}
+        assert json.loads(posts["/hook/discord"]) == {"content": "**T**\nB"}
+        wa = next(path for m, path, _ in got if path.startswith("/wa"))
+        assert "phone=%2B491" in wa and "apikey=K" in wa
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_telegram_setup_explains_a_missing_start(tmp_path):
+    srv, _ = _mock_server({"/botT/getUpdates": b'{"ok": true, "result": []}'})
+    try:
+        cfg = tmp_path / "cfg" / "navigator.toml"
+        cfg.write_text(cfg.read_text() + f'\n[alerts]\ntelegram_api = "http://127.0.0.1:{srv.server_port}"\n',
+                       encoding="utf-8")
+        settings.load.cache_clear()
+        chat, why = alerts.telegram_find_chat("T")
+        assert chat == "" and "Start" in why
+    finally:
+        srv.shutdown()
+        srv.server_close()

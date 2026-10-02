@@ -3,7 +3,7 @@
 A running agent reads its credentials when it starts, so after switching account (or after a
 sign-in expired) the open sessions keep the old one until they are restarted. Sign in opens the
 CLI's login command in a herdr tab and starts a watcher: once the CLI rewrites its credentials
-file, the Navigator opens on its Startup tab with the relaunch offer.
+file, the Navigator opens on its Sessions tab with the relaunch offer.
 """
 from __future__ import annotations
 

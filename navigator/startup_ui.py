@@ -1,4 +1,4 @@
-"""The Navigator's Startup tab: what reopens at logon, sign-in per CLI, relaunching sessions.
+"""The Navigator's Sessions tab: search and resume, what reopens at logon, accounts, relaunching.
 
 Rows are grouped by project. The box in front of a row is its tick: ☑ reopens at logon, ☐ does
 not. A bright box is your own choice, a dim one the auto-tick's (newest sessions per lane).
@@ -244,6 +244,8 @@ class StartupPane(Vertical):
     .acct-prof { width: 24; }
     #relaunch-text { height: auto; margin: 1 0 0 0; }
     #start-table { height: 1fr; }
+    #st-search { width: 1fr; min-width: 20; }
+    #st-cli { width: 22; }
     """
 
     def __init__(self, **kw) -> None:
@@ -256,13 +258,16 @@ class StartupPane(Vertical):
 
     def compose(self) -> ComposeResult:
         with Horizontal(classes="btnrow"):
-            yield Button("⏻ At logon: off", id="st-autostart",
+            yield Input(placeholder="Search sessions…  ( / )", id="st-search")
+            yield Select([], prompt="every CLI", id="st-cli")
+            yield Button("All", id="st-all", tooltip="Every session, not only ticked and recent ones")
+            yield Button("⏻ Logon: off", id="st-autostart",
                          tooltip="Reopen the ticked sessions in herdr every time you log on")
             yield Button("▶ Open ticked", id="st-open", variant="primary",
                          tooltip="Open every ticked session that is not running yet, now")
             yield Button("↻ Relaunch", id="st-relaunch", tooltip="Restart open sessions in place (after a sign-in)")
-            yield Button("🔑 Accounts", id="st-accounts", tooltip="Sign in or out per CLI")
-            yield Button("All", id="st-all", tooltip="Show every session, not just recent and ticked ones")
+            yield Button("🔑 Accounts", id="st-accounts", tooltip="Sign in, sign out, switch account per CLI")
+            yield Button("🔔 Alerts", id="st-alerts", tooltip="Alerts to your phone: Telegram, ntfy, WhatsApp, Discord…")
         with Vertical(id="acct-box"):
             for cli in accounts.clis():
                 with Horizontal():
@@ -301,10 +306,24 @@ class StartupPane(Vertical):
         self.rows_by_key = {}
         cutoff = time.time() - RECENT_DAYS * 86400
         n_ticked = n_open = 0
+        q = self.query_one("#st-search", Input).value.strip().lower().split()
+        cli_sel = self.query_one("#st-cli", Select)
+        cli = "" if cli_sel.value is Select.NULL else str(cli_sel.value)
+        self.sync_cli_filter(world)
+
+        def hit(r) -> bool:
+            s = r.session
+            hay = " ".join((s.title, s.last_prompt, s.project.label, s.branch, s.cli)).lower()
+            return (not cli or s.cli == cli) and all(tok in hay for tok in q)
+        filtering = bool(q or cli)
         for g in self.groups:
             ticked = len(g.ticked)
+            if filtering:
+                found = [r for r in g.rows if hit(r)]
+                if not found:
+                    continue
             recent = [r for r in g.rows if r.ticked or r.session.mtime >= cutoff]
-            if not (recent or self.show_all):
+            if not (recent or self.show_all or filtering):
                 continue
             box = Text("☑" if g.on else "☐", style="bold" if g.pinned else "dim")
             label = Text(g.project.name, style="bold cyan" if g.on else "dim")
@@ -312,9 +331,9 @@ class StartupPane(Vertical):
             if not g.auto:
                 label.append("  · auto-tick off", style="dim")
             t.add_row(box, "", label, "", "", "", key=f"P|{g.project.root}")
-            if not g.on and not self.show_all:
+            if not g.on and not (self.show_all or filtering):
                 continue
-            rows = g.rows if self.show_all else (
+            rows = found if filtering else g.rows if self.show_all else (
                 [r for r in g.rows if r.ticked]
                 + [r for r in g.rows if not r.ticked and r.session.mtime >= cutoff][:UNTICKED_PER_PROJECT])
             rows.sort(key=lambda r: -r.session.mtime)
@@ -343,15 +362,49 @@ class StartupPane(Vertical):
             except Exception:
                 pass
         cap = int(settings.load().restore.get("max_sessions", 30))
-        sumtext = Text.assemble((f"{n_ticked} ticked", "bold"), f"  ·  {n_open} already open  ·  ",
-                                (f"{max(0, min(n_ticked, cap) - n_open)} would open", "bold green"))
-        sumtext.append("     ☑ bright = your choice · dim = auto (newest per lane)", style="dim")
+        sumtext = Text.assemble(("At logon: ", "dim"), (f"{n_ticked} ticked", "bold"), f" · {n_open} open · ",
+                                (f"{max(0, min(n_ticked, cap) - n_open)} to open", "bold green"))
+        sumtext.append("      Enter resume · ☐ tick for logon · right-click more", style="dim")
         self.query_one("#start-sum", Static).update(sumtext)
+
+    def sync_cli_filter(self, world) -> None:
+        clis = sorted({s.cli for s in world.sessions})
+        sel = self.query_one("#st-cli", Select)
+        if clis != getattr(self, "_clis", None):
+            self._clis = clis
+            keep = sel.value
+            sel.set_options([(c, c) for c in clis])
+            if keep in clis:
+                sel.value = keep
+        sel.display = len(clis) > 1
+
+    def jump_to_project(self, root: str) -> None:
+        self.query_one("#st-search", Input).value = ""
+        self.refresh_rows()
+        t = self.query_one(StartTable)
+        try:
+            t.move_cursor(row=t.get_row_index(f"P|{root}"))
+            t.scroll_to_row = None
+        except Exception:
+            pass
+        t.focus()
+
+    @on(Input.Changed, "#st-search")
+    def _search(self) -> None:
+        self.refresh_rows()
+
+    @on(Input.Submitted, "#st-search")
+    def _search_done(self) -> None:
+        self.query_one(StartTable).focus()
+
+    @on(Select.Changed, "#st-cli")
+    def _cli(self) -> None:
+        self.refresh_rows()
 
     def sync_autostart(self) -> None:
         on_ = autostart.installed()
         b = self.query_one("#st-autostart", Button)
-        b.label = "⏻ At logon: on" if on_ else "⏻ At logon: off"
+        b.label = "⏻ Logon: on" if on_ else "⏻ Logon: off"
         b.variant = "success" if on_ else "default"
 
     @work(thread=True, group="accounts")
@@ -573,6 +626,8 @@ class StartupPane(Vertical):
                 return
             rows = [r for r in startup.selected(self.world.sessions) if r.session.id not in self.world.live_sessions]
             self.open_rows_bg(rows)
+        elif bid == "st-alerts":
+            self.app.push_screen(AlertsDialog())
         elif bid == "st-relaunch":
             self.open_relaunch("")
         elif bid == "st-accounts":
@@ -858,3 +913,120 @@ class UsagePane(Vertical):
             ("today ", "dim"), (usage.human(grand_today.total), "bold"), ("   ·   7 days ", "dim"),
             (usage.human(grand_week.total), "bold"), (f"   ·   of it output {usage.human(grand_week.out)}", "dim"),
             ("     tokens, cache reads included", "dim")))
+
+
+class AlertsDialog(ModalScreen):
+    """Set up phone alerts: Telegram, ntfy, a webhook (Discord/Slack/...), WhatsApp."""
+
+    DEFAULT_CSS = """
+    AlertsDialog { align: center middle; background: $background 50%; }
+    #al { width: 90; max-width: 96%; height: auto; max-height: 96%; border: round $primary;
+          background: $panel; padding: 1 2; overflow-y: auto; }
+    #al Horizontal { height: 3; }
+    #al .lbl { width: 16; margin-top: 1; color: $text-muted; }
+    #al .hint { color: $text-muted; margin: 0 0 0 16; }
+    #al Input { width: 1fr; }
+    #al Button { margin-left: 1; }
+    #al-status { margin: 1 0 0 0; height: auto; }
+    #al-buttons { margin-top: 1; }
+    """
+    BINDINGS = [("escape", "dismiss(None)", "Close")]
+
+    def compose(self) -> ComposeResult:
+        c = settings.load().alerts
+        g = lambda k: str(c.get(k, "") or "")
+        with Vertical(id="al"):
+            yield Static(Text("Alerts to your phone", style="bold"))
+            yield Static("", id="al-status")
+            with Horizontal():
+                yield Static("Telegram bot", classes="lbl")
+                yield Input(g("telegram_bot_token"), password=True, placeholder="token from @BotFather", id="al-tg")
+                yield Button("Connect", id="al-tg-connect", variant="primary",
+                             tooltip="After you pressed Start in your bot's chat: finds the chat, sends a test")
+            yield Static("@BotFather › /newbot › paste token › Start in your bot › Connect", classes="hint")
+            with Horizontal():
+                yield Static("ntfy topic", classes="lbl")
+                yield Input(g("ntfy_topic"), placeholder="a name only you know", id="al-ntfy")
+                yield Button("Random", id="al-ntfy-random")
+            with Horizontal():
+                yield Static("Webhook URL", classes="lbl")
+                yield Input(g("webhook_url"), password=True, placeholder="Discord / Slack / Teams / Mattermost", id="al-hook")
+            with Horizontal():
+                yield Static("WhatsApp", classes="lbl")
+                yield Input(g("whatsapp_phone"), placeholder="+49…", id="al-wa-phone")
+                yield Input(g("whatsapp_apikey"), password=True, placeholder="CallMeBot API key", id="al-wa-key")
+            with Horizontal():
+                yield Static("Waiting alert", classes="lbl")
+                yield Input(str(c.get("blocked_minutes", 10)), placeholder="minutes, 0 = off", id="al-min")
+                yield Static("  restore result", classes="lbl")
+                yield Switch(value=bool(c.get("on_restore", True)), id="al-restore")
+            with Horizontal(id="al-buttons"):
+                yield Button("Save", id="al-save", variant="primary")
+                yield Button("Send test", id="al-test")
+                yield Button("Close", id="al-close")
+
+    def on_mount(self) -> None:
+        self.show_status()
+
+    def show_status(self, extra: str = "") -> None:
+        on = alerts_mod().channels()
+        t = Text()
+        for ch, ok in on.items():
+            t.append(f"{'●' if ok else '○'} {ch}   ", style="bold green" if ok else "dim")
+        if extra:
+            t.append("\n" + extra)
+        self.query_one("#al-status", Static).update(t)
+
+    def _values(self) -> dict:
+        v = lambda i: self.query_one(i, Input).value.strip()
+        try:
+            mins = max(0, int(v("#al-min") or 0))
+        except ValueError:
+            mins = 10
+        return {"telegram_bot_token": v("#al-tg"), "ntfy_topic": v("#al-ntfy"), "webhook_url": v("#al-hook"),
+                "whatsapp_phone": v("#al-wa-phone"), "whatsapp_apikey": v("#al-wa-key"),
+                "blocked_minutes": mins, "on_restore": self.query_one("#al-restore", Switch).value}
+
+    @on(Button.Pressed)
+    def _btn(self, ev: Button.Pressed) -> None:
+        ev.stop()
+        bid = ev.button.id or ""
+        al = alerts_mod()
+        if bid == "al-close":
+            self.dismiss(None)
+        elif bid == "al-ntfy-random":
+            self.query_one("#al-ntfy", Input).value = al.random_topic()
+        elif bid == "al-save":
+            al.save(self._values())
+            self.show_status("Saved.")
+        elif bid == "al-test":
+            al.save(self._values())
+            self.run_test_send()
+        elif bid == "al-tg-connect":
+            self.connect_telegram(self.query_one("#al-tg", Input).value.strip())
+
+    @work(thread=True, group="alerts")
+    def run_test_send(self) -> None:
+        res = alerts_mod().send("herdr navigator", "Test alert: alerts reach you here.", "white_check_mark")
+        msg = "  ".join(f"{k}: {'delivered' if ok else 'FAILED'}" for k, ok in res.items()) or "no channel set up yet"
+        self.app.call_from_thread(self.show_status, msg)
+
+    @work(thread=True, group="alerts")
+    def connect_telegram(self, token: str) -> None:
+        al = alerts_mod()
+        if not token:
+            self.app.call_from_thread(self.show_status, "Paste the bot token first.")
+            return
+        chat, who = al.telegram_find_chat(token)
+        if not chat:
+            self.app.call_from_thread(self.show_status, who)
+            return
+        al.save({**self._values(), "telegram_bot_token": token, "telegram_chat_id": chat})
+        ok = al.send("herdr navigator", "Telegram connected: alerts will arrive here.").get("telegram")
+        self.app.call_from_thread(self.show_status,
+                                  f"Telegram connected to {who or chat}" + ("; test sent." if ok else "; the test FAILED."))
+
+
+def alerts_mod():
+    from . import alerts
+    return alerts

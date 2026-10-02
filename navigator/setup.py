@@ -52,7 +52,7 @@ CHORDS = {
 
 POPUPS = [
     (["prefix+space", "f1"], "projects", "Navigator: projects, worktrees, agents"),
-    (["prefix+u", "f2"], "resume", "Navigator: resume a Claude/Codex session"),
+    (["prefix+u", "f2"], "resume", "Navigator: sessions (search and resume, logon ticks, accounts)"),
     (["prefix+i", "f3"], "agents", "Navigator: every agent and sub-agent"),
     (["prefix+slash", "f4"], "keys", "Navigator: key cheat sheet"),
     (["prefix+m", "f6"], "panes", "Navigator: layout (arrange, split, move panes)"),

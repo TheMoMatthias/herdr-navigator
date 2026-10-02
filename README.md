@@ -66,7 +66,7 @@ herdr plugin uninstall momatthias.navigator
 | Key | Opens |
 |---|---|
 | `F1` · `Ctrl+B › Space` | **Navigator.** Projects → worktrees → agents → sub-agents, plus recent sessions |
-| `F2` · `Ctrl+B › U` | **Resume.** Search every Claude/Codex session and open it in its project |
+| `F2` · `Ctrl+B › U` | **Sessions.** Search every session of every CLI, resume it, tick it for logon |
 | `F3` · `Ctrl+B › I` | **Agents.** Every agent, inside herdr or not, with its current activity |
 | `F4` · `Ctrl+B › /` | **Keys.** Your live key bindings |
 | `F6` · `Ctrl+B › M` | **Layout.** One-click shapes, drag-and-drop pane map, pane buttons, saved layouts |
@@ -105,9 +105,11 @@ Inside the Navigator:
   new tab, `n` renames it and `Del` closes it (press twice). `Shift+arrows` swap panes and
   `Ctrl+arrows` resize.
 
-### Startup: reopen your sessions at logon, sign in, relaunch
+### Sessions: search, resume, reopen at logon, sign in, relaunch
 
-The **Startup** tab (`3` in the Navigator) decides which sessions come back when you log on.
+The **Sessions** tab (`3`, or `F2` straight into its search) lists every session by project.
+Type to search, pick a CLI to filter, press **Enter** to resume a session in its project, and
+use the box to decide which sessions come back when you log on.
 
 - **☑ / ☐** in front of each session is its tick. A bright box is your own choice; a dim one
   was set by the auto-tick, which keeps the newest 3 sessions of each project lane (the main
@@ -172,10 +174,14 @@ presses ⏎ / Esc / ^C, in every ticked agent at once.
 - **While you were away.** If the Navigator was closed for more than 10 minutes, it opens with
   what changed: agents that ask something, agents that finished (each with the first line of its
   answer), and sessions that ended. Enter jumps there.
-- **Phone alerts.** Set `[alerts] ntfy_topic` (free [ntfy](https://ntfy.sh) app, no account) to
-  get a push when an agent has waited on you for `blocked_minutes`, and the result of the logon
-  restore. Test it with `python -m navigator.alerts test`.
-- **Usage tab** (`7`). Tokens per project and session for today and the last 7 days, and how much
+- **Phone alerts** (Sessions › 🔔 Alerts). You get a message when an agent has waited on you
+  for `blocked_minutes`, and the result of the logon restore. Any mix of channels works:
+  **Telegram** (create a bot with @BotFather, paste its token, press Start in the bot's chat,
+  then Connect, which finds your chat by itself), **ntfy** (free app, a private topic),
+  **Discord / Slack / Teams / Mattermost** (an incoming-webhook URL) and **WhatsApp** (through
+  the free, unofficial CallMeBot relay). Send test checks every channel. Messages carry only a
+  session's name, its project and how long it waited.
+- **Usage tab** (`6`). Tokens per project and session for today and the last 7 days, and how much
   of that was output, read incrementally from the Claude and Codex transcripts.
 
 Questions an agent is waiting on (Claude `AskUserQuestion`, Codex `request_user_input`) show up
@@ -183,7 +189,7 @@ in **Agents** as `❓` with the question and its options, also for sessions in o
 
 Always visible in herdr:
 
-- **Tab bar:** `⚠ other-project waiting for you (Ctrl+Alt+I) │ project: 2 working, 1 idle │ 3 sessions outside herdr (F3) │ F1 Menu · F2 Resume · F6 Layout · F7 Recent · Ctrl+Alt+R Back` (most urgent first, plain words)
+- **Tab bar:** `⚠ other-project waiting for you (Ctrl+Alt+I) │ project: 2 working, 1 idle │ 3 sessions outside herdr (F3) │ F1 Menu · F2 Sessions · F6 Layout · F7 Recent · Ctrl+Alt+R Back` (most urgent first, plain words)
 - **Sidebar, spaces:** one group per repo. The repo's own checkout comes first (its second
   line shows the branch, e.g. `main`), and the active worktrees are indented under it, named
   after the session working there. `◐2 ○1` counts agents by state (working, idle, …).

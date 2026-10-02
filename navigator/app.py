@@ -36,7 +36,7 @@ CLI_STYLE = {
 }
 
 
-# Order of the "+ New" picker and the Resume filter chips; anything else follows alphabetically.
+# Order of the "+ New" picker and the CLI filter; anything else follows alphabetically.
 CLI_ORDER = ["claude", "codex", "pi", "opencode", "kilo", "gemini", "qwen", "copilot",
              "droid", "amp", "cline", "cursor", "hermes"]
 CLI_NEW_KEY = {"claude": "c", "codex": "x", "pi": "e", "opencode": "u", "kilo": "y"}
@@ -67,7 +67,8 @@ def installed_clis() -> list[str]:
             if shutil.which(exe):
                 out.append(key[:-4])
     return sorted(out, key=cli_rank)
-TABS = ["projects", "agents", "startup", "panes", "resume", "recent", "usage", "keys"]
+TABS = ["projects", "agents", "sessions", "panes", "recent", "usage", "keys"]
+TAB_ALIAS = {"startup": "sessions", "resume": "sessions"}  # older keybindings and entrypoints
 WT_SEP = "|wt|"
 
 
@@ -282,8 +283,7 @@ class Navigator(App):
     #proj-detail { width: 44%; min-width: 36; padding: 0 1; border-left: tall $primary 40%; }
     .btnrow { height: 3; }
     .btnrow Button { margin: 0 1 0 0; min-width: 6; }
-    #resume-bar, #agent-bar { height: 3; }
-    #resume-search { width: 1fr; }
+    #agent-bar { height: 3; }
     DataTable { height: 1fr; }
     #keys-body { padding: 0 1; }
     #shape-bar { height: 3; }
@@ -291,8 +291,6 @@ class Navigator(App):
     #preset-row, #new-row { height: 3; display: none; }
     #new-row.show { display: block; }
     #new-row Button { margin: 0 1 0 0; min-width: 6; }
-    #resume-cli { height: 3; }
-    #resume-cli Button { margin: 0 1 0 0; min-width: 6; }
     #preset-row.show { display: block; }
     #pane-map { width: 1fr; height: 1fr; min-height: 10; }
     #pane-tools { width: 36; padding: 0 1; }
@@ -315,15 +313,14 @@ class Navigator(App):
     BINDINGS = [
         Binding("1", "tab('projects')", "Projects", show=False),
         Binding("2", "tab('agents')", "Agents", show=False),
-        Binding("3", "tab('startup')", "Startup", show=False),
+        Binding("3", "tab('sessions')", "Sessions", show=False),
         Binding("4", "tab('panes')", "Layout", show=False),
-        Binding("5", "tab('resume')", "Resume", show=False),
-        Binding("6", "tab('recent')", "Recent", show=False),
-        Binding("7", "tab('usage')", "Usage", show=False),
-        Binding("8", "tab('keys')", "Keys", show=False),
+        Binding("5", "tab('recent')", "Recent", show=False),
+        Binding("6", "tab('usage')", "Usage", show=False),
+        Binding("7", "tab('keys')", "Keys", show=False),
         Binding("enter", "open", "Open", priority=False),
         Binding("space", "toggle_sidebar", "Sidebar"),
-        Binding("r", "resume_project", "Resume"),
+        Binding("r", "resume_project", "Sessions"),
         Binding("slash", "search", "Search"),
         Binding("m", "message", "Message"),
         Binding("g", "attention", "Next ⚑"),
@@ -370,12 +367,12 @@ class Navigator(App):
 
     def __init__(self, start_tab: str = "projects") -> None:
         super().__init__()
+        self.search_first = start_tab == "resume"  # F2: straight into the session search
+        start_tab = TAB_ALIAS.get(start_tab, start_tab)
         self.start_tab = start_tab if start_tab in TABS else "projects"
         self.world: World | None = None
         self.current_project = None          # project of the focused workspace
-        self.only_project = True             # Resume: limit to the selected project
         self.agent_filter = ""
-        self.cli_filter = ""                 # Resume: only this CLI's sessions ("" = all)
         self.selected_key: str | None = None  # project root, or root|wt|label
         self.agent_rows: dict[str, tuple[Agent, int]] = {}
         self.pane_layout = None
@@ -398,9 +395,9 @@ class Navigator(App):
                             yield Button("Open", id="btn-go", variant="primary", tooltip="Go to this project (Enter)")
                             yield Button("☑ Sidebar", id="btn-sidebar",
                                          tooltip="Show or hide this project in herdr's sidebar (Space)")
-                            yield Button("Resume", id="btn-resume", tooltip="Resume one of its sessions (r)")
+                            yield Button("Sessions", id="btn-resume", tooltip="Its sessions: resume, tick for logon (r)")
                             yield Button("+ New", id="btn-new", tooltip="Start a new agent here: pick a CLI")
-                            yield Button("▦", id="btn-layout", tooltip="Restore the newest saved layout (l)")
+                            yield Button("▦ Layout", id="btn-layout", tooltip="Restore the newest saved layout (l)")
                             yield Button("⎇ Finish", id="btn-wt-finish",
                                          tooltip="Put this worktree away: check it, close it, remove the checkout")
                         with Horizontal(id="new-row"):
@@ -424,14 +421,14 @@ class Navigator(App):
                         yield Button("Send", id="send-msg", variant="primary",
                                      tooltip="Send to the selected agent, or to every ☑ marked one")
                         yield Button("✕", id="mark-clear", tooltip="Clear the marks")
-                        yield Button("⏎", id="key-enter", tooltip="Press Enter in the agent (accept)")
+                        yield Button("⏎ Enter", id="key-enter", tooltip="Press Enter in the agent (accept)")
                         yield Button("Esc", id="key-esc", tooltip="Press Esc in the agent (cancel)")
-                        yield Button("^C", id="key-ctrl_c", tooltip="Interrupt the agent")
-                        yield Button("⇣", id="act-compact", tooltip="/compact: free up its context (ticked ones, or the selected)")
-                        yield Button("☰", id="act-prompts", tooltip="Saved prompts: send one in a click")
-                        yield Button("⇢", id="act-handoff", tooltip="Hand off: send its last answer to another agent")
+                        yield Button("^C Stop", id="key-ctrl_c", tooltip="Interrupt the agent")
+                        yield Button("⇣ Compact", id="act-compact", tooltip="/compact: free up its context (ticked ones, or the selected)")
+                        yield Button("☰ Prompts", id="act-prompts", tooltip="Saved prompts: send one in a click")
+                        yield Button("⇢ Hand off", id="act-handoff", tooltip="Hand off: send its last answer to another agent")
                         yield Button("⚑ Next", id="btn-attention", tooltip="Jump to the next agent that needs you (g)")
-            with TabPane("Startup", id="startup"):
+            with TabPane("Sessions", id="sessions"):
                 yield StartupPane(id="startup-pane")
             with TabPane("Layout", id="panes"):
                 with Horizontal(id="shape-bar"):
@@ -473,15 +470,6 @@ class Navigator(App):
                             yield Button("↦", id="pop-newtab", tooltip="Move pane to a new tab (t)")
                             yield Button("✎", id="pop-rename", tooltip="Rename pane (n)")
                             yield Button("✕", id="pop-close", variant="error", tooltip="Close pane (Del, twice)")
-            with TabPane("Resume", id="resume"):
-                with Horizontal(id="resume-bar", classes="btnrow"):
-                    yield Input(placeholder="Search sessions…", id="resume-search")
-                    yield Button("This project", id="btn-scope", tooltip="This project ↔ all projects (p)")
-                with Horizontal(id="resume-cli"):
-                    yield Button("All", id="clif-all")
-                    for cli in sorted({c for c in CLI_STYLE if c != "cursor-agent"}, key=cli_rank):
-                        yield Button(cli, id=f"clif-{cli}")
-                yield ClickTwiceTable(id="resume-table")
             with TabPane("Recent", id="recent"):
                 yield ClickTwiceTable(id="recent-table")
             with TabPane("Usage", id="usage"):
@@ -493,7 +481,6 @@ class Navigator(App):
     def on_mount(self) -> None:
         self.query_one("#proj-table", DataTable).add_columns("", "Project", "Agents", "Last")
         self.query_one("#agent-table", DataTable).add_columns("", "", "CLI", "Agent", "Ctx", "Project", "Doing")
-        self.query_one("#resume-table", DataTable).add_columns("When", "CLI", "Project", "Session", "")
         self.query_one("#recent-table", DataTable).add_columns("When", "Project", "Pane", "")
         self.query_one("#saved-table", DataTable).add_columns("Saved layout", "Panes", "Saved")
         self.render_keys()
@@ -537,7 +524,6 @@ class Navigator(App):
             pane.open_relaunch(relaunch)
             self.digest_checked = True
         self.show_digest(world)
-        self.fill_resume()
         self.set_hint()
         self.load_panes()
         self.fill_recent()
@@ -1028,8 +1014,6 @@ class Navigator(App):
         if ev.row_key is not None and ev.row_key.value:
             self.selected_key = ev.row_key.value
             self.show_project_detail()
-            if self.only_project:
-                self.fill_resume()
 
     @on(DataTable.RowSelected, "#proj-table")
     def _proj_sel(self, ev: DataTable.RowSelected) -> None:
@@ -1099,68 +1083,6 @@ class Navigator(App):
         if not ev.data_table.fresh_highlight():
             self.action_open()
 
-    # ---- resume ---------------------------------------------------------------------------
-    def fill_resume(self) -> None:
-        if not self.world:
-            return
-        t = self.query_one("#resume-table", DataTable)
-        q = self.query_one("#resume-search", Input).value.strip().lower()
-        v, wt = self.selected()
-        t.clear()
-        in_scope = [s for s in self.world.sessions
-                    if not (self.only_project and v)
-                    or (s.project.root == v.project.root and not (wt and s.project.worktree != wt.label))]
-        self.sync_cli_chips(in_scope)
-        for s in in_scope:  # already newest first
-            if self.cli_filter and s.cli != self.cli_filter:
-                continue
-            if q and not all(tok in " ".join((s.title, s.last_prompt, s.project.label, s.branch, s.cli)).lower()
-                             for tok in q.split()):
-                continue
-            live = self.world.live_sessions.get(s.id)
-            mark = ""
-            if live:
-                mark = Text("● open", style="green") if live.in_herdr else Text("↗ elsewhere", style="magenta")
-            t.add_row(age(s.mtime), cli_tag(s.cli), s.project.label[:30],
-                      s.title[:80], mark, key=f"{s.cli}:{s.id}")
-        scope = self.query_one("#btn-scope", Button)
-        name = (v.project.name + (f" ⎇ {wt.label}" if wt else "")) if v else ""
-        scope.label = (name[:22] if (self.only_project and v) else "All projects")
-        scope.variant = "primary" if self.only_project else "default"
-
-    def sync_cli_chips(self, in_scope) -> None:
-        """'All · claude 17 · pi 44 …' above the Resume list: only CLIs that have sessions in
-        scope, and no row at all when there is just one."""
-        counts: dict[str, int] = {}
-        for s in in_scope:
-            counts[s.cli] = counts.get(s.cli, 0) + 1
-        clis = sorted(counts, key=cli_rank)
-        if self.cli_filter not in counts:
-            self.cli_filter = ""
-        bar = self.query_one("#resume-cli", Horizontal)
-        bar.display = len(clis) > 1
-        for b in bar.query(Button):
-            c = (b.id or "")[5:]
-            b.display = c == "all" or c in counts
-            if c == "all":
-                b.label = f"All {len(in_scope)}"
-            else:
-                b.label = Text(f"{c} {counts.get(c, 0)}", style=CLI_STYLE.get(c, ""))
-            b.variant = "primary" if (c == "all" and not self.cli_filter) or c == self.cli_filter else "default"
-
-    @on(Input.Changed, "#resume-search")
-    def _search(self) -> None:
-        self.fill_resume()
-
-    @on(Input.Submitted, "#resume-search")
-    def _search_done(self) -> None:
-        self.query_one("#resume-table", DataTable).focus()
-
-    @on(DataTable.RowSelected, "#resume-table")
-    def _resume_sel(self, ev: DataTable.RowSelected) -> None:
-        if not ev.data_table.fresh_highlight():
-            self.action_open()
-
     # ---- keys -----------------------------------------------------------------------------
     def render_keys(self) -> None:
         prefix, groups, custom = keymap.effective()
@@ -1169,7 +1091,7 @@ class Navigator(App):
         out.append("  ·  press it, release, then the key\n\n", style="dim")
 
         def row(keys_: str, what: str, dim: bool = False) -> None:
-            out.append(f"  {keys_:<32}", style="dim" if dim else "bold yellow")
+            out.append(f"  {keys_:<36} ", style="dim" if dim else "bold yellow")
             out.append(f"{what}\n", style="dim" if dim else "")
 
         if custom:
@@ -1188,8 +1110,8 @@ class Navigator(App):
         row("drag a split border", "resize panes")
         row("right-click pane / space", "herdr menu: split, zoom, rename, close")
         row("Layout tab: drag a pane", "middle swaps · edge places it beside")
-        row("Startup tab: click ☐", "tick for logon (bright = yours, dim = automatic)")
-        row("Startup tab: right-click", "open, relaunch, launch options, back to automatic")
+        row("Sessions: Enter / click ☐", "resume it / tick it for logon (bright = yours, dim = auto)")
+        row("Sessions: right-click", "open, relaunch, launch options, back to automatic")
         row("Agents tab: click ☐", "tick agents: Send, ⏎, ⇣ compact and ☰ prompts go to all of them")
         self.query_one("#keys-body", Static).update(out)
 
@@ -1199,6 +1121,10 @@ class Navigator(App):
 
     def focus_table(self) -> None:
         tab = self.active_tab()
+        if tab == "sessions" and self.search_first:
+            self.search_first = False  # after the screen's own auto-focus has run
+            self.set_timer(0.15, lambda: self.query_one("#st-search", Input).focus())
+            return
         if tab == "usage" and self.world:
             self.query_one(UsagePane).load(self.world)
             self.query_one("#usage-table", DataTable).focus()
@@ -1207,8 +1133,8 @@ class Navigator(App):
             self.query_one("#pane-map", LayoutMap).focus()
             self.load_panes()
             return
-        tid = {"projects": "#proj-table", "agents": "#agent-table", "resume": "#resume-table",
-               "recent": "#recent-table", "startup": "#start-table"}.get(tab)
+        tid = {"projects": "#proj-table", "agents": "#agent-table", "recent": "#recent-table",
+               "sessions": "#start-table"}.get(tab)
         if tid:
             self.query_one(tid, DataTable).focus()
 
@@ -1224,13 +1150,13 @@ class Navigator(App):
     def check_action(self, action: str, parameters: tuple) -> bool | None:
         tab = self.active_tab() if self.is_mounted else self.start_tab
         typing = isinstance(self.focused, Input)
-        if typing and action in ("new", "new_dialog", "resume_project", "toggle_project", "filter", "tab", "quit",
+        if typing and action in ("new", "new_dialog", "resume_project", "search", "filter", "tab", "quit",
                                  "toggle_sidebar"):
             return False
         if action in ("new", "new_dialog", "resume_project", "toggle_sidebar"):
             return tab == "projects"
-        if action in ("toggle_project", "search"):
-            return tab == "resume"
+        if action == "search":
+            return tab in ("projects", "sessions")
         if action == "filter":
             return tab == "agents"
         if action in ("pane_sel", "pane_op", "pane_rename", "shape"):
@@ -1241,12 +1167,10 @@ class Navigator(App):
             return tab in ("agents", "projects", "recent") and not typing
         if action == "restore_layout":
             return tab == "projects" and not typing
-        if action == "search":
-            return tab == "resume"
         if action == "sidebar_width":
             return not typing
         if action == "open":
-            return tab in ("projects", "agents", "resume", "panes", "recent")
+            return tab in ("projects", "agents", "panes", "recent")
         return True
 
     def action_tab(self, name: str) -> None:
@@ -1273,16 +1197,14 @@ class Navigator(App):
         self.exit()
 
     def action_search(self) -> None:
-        self.query_one("#resume-search", Input).focus()
-
-    def action_toggle_project(self) -> None:
-        self.only_project = not self.only_project
-        self.fill_resume()
+        self.action_tab("sessions")
+        self.query_one("#st-search", Input).focus()
 
     def action_resume_project(self) -> None:
-        self.only_project = True
-        self.action_tab("resume")
-        self.fill_resume()
+        v, _ = self.selected()
+        self.action_tab("sessions")
+        if v:
+            self.query_one(StartupPane).jump_to_project(v.project.root)
 
     def action_filter(self, state: str) -> None:
         self.agent_filter = state
@@ -1402,15 +1324,8 @@ class Navigator(App):
                 self.finish(lambda: panes.focus(a.mirror_pane))
             else:
                 self.notify(f"'{a.name}' runs in another terminal window (pid {a.pid}), so herdr can't "
-                            "jump to it. To bring it here: exit it there, then resume it from the Resume tab (5).",
+                            "jump to it. To bring it here: exit it there, then resume it from Sessions (3).",
                             title="Outside herdr", timeout=10)
-        elif tab == "resume":
-            t = self.query_one("#resume-table", DataTable)
-            if t.row_count:
-                k = t.coordinate_to_cell_key(t.cursor_coordinate).row_key.value
-                s = next((s for s in self.world.sessions if f"{s.cli}:{s.id}" == k), None)
-                if s:
-                    self.finish(lambda: launch.resume(self.world, s))
 
     def finish(self, fn) -> None:
         try:
@@ -1430,7 +1345,7 @@ class Navigator(App):
         actions = {
             "btn-go": self.action_open, "btn-resume": self.action_resume_project,
             "btn-new": lambda: self.query_one("#new-row").toggle_class("show"),
-            "btn-scope": self.action_toggle_project, "btn-sidebar": self.action_toggle_sidebar,
+            "btn-sidebar": self.action_toggle_sidebar,
         }
         if bid in actions:
             actions[bid]()
@@ -1482,10 +1397,6 @@ class Navigator(App):
         elif bid.startswith("new-"):
             self.query_one("#new-row").remove_class("show")
             self.action_new(bid[4:])
-        elif bid.startswith("clif-"):
-            c = bid[5:]
-            self.cli_filter = "" if c == "all" else c
-            self.fill_resume()
         elif bid.startswith("flt-"):
             f = bid[4:]
             self.action_filter("" if f == "all" else f)
