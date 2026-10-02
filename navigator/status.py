@@ -108,6 +108,11 @@ def main() -> None:
         pass
     print(line())
     _maybe_view()
+    try:  # this slow path only runs without a daemon: start one
+        from . import daemon
+        daemon.start()
+    except Exception:
+        pass
 
 
 def _maybe_view() -> None:

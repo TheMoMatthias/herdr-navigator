@@ -219,13 +219,35 @@ def live_state() -> tuple[list[LiveWorkspace], list[dict], dict[str, str], str]:
     return workspaces, snap.get("agents", []), tab_labels, snap.get("focused_workspace_id", "")
 
 
+SESSIONS_TTL = 0.0  # the resident daemon reuses the session index this long (0: never)
+_SESSIONS: tuple[float, list | None] = (0.0, None)
+
+
+def _sessions() -> list:
+    """Every session on disk. Reading the index costs ~0.2 s (thousands of file checks); the
+    daemon, which builds the world on every herdr event, keeps it for SESSIONS_TTL seconds and
+    drops it when a pane or agent appears (forget_sessions)."""
+    global _SESSIONS
+    at, cached = _SESSIONS
+    if SESSIONS_TTL and cached is not None and time.time() - at < SESSIONS_TTL:
+        return cached
+    fresh = load_sessions(include_hidden=True)
+    _SESSIONS = (time.time(), fresh)
+    return fresh
+
+
+def forget_sessions() -> None:
+    global _SESSIONS
+    _SESSIONS = (0.0, None)
+
+
 def build(with_sessions: bool = True) -> World:
     err = ""
     try:
         workspaces, herdr_agents, tab_labels, focused_ws = live_state()
     except (herdr.HerdrError, OSError, ValueError) as e:  # server unreachable: still show history
         workspaces, herdr_agents, tab_labels, focused_ws, err = [], [], {}, "", str(e)
-    all_sessions = load_sessions(include_hidden=True) if with_sessions else []
+    all_sessions = _sessions() if with_sessions else []
     sessions = [s for s in all_sessions if is_listed(s)]
     running = live.running(all_sessions) if with_sessions else []
     run_by_id = {r.session_id: r for r in running if r.session_id}

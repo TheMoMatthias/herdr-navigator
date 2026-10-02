@@ -281,13 +281,30 @@ own F1/F2 shortcuts (command help, prediction view).
 | Claude sessions in other terminals | `~/.claude/sessions/<pid>.json`, kept only while that process is alive (`busy`/`shell` → working, `idle`) |
 | Codex sessions in other terminals | a top-level rollout written in the last ~2 minutes |
 | Sub-agents | `…/<session>/subagents/agent-*.jsonl` + `.meta.json` (Claude); child threads (Codex), both written in the last ~2 minutes |
-| Resumable sessions | Claude `~/.claude/projects`, Codex `~/.codex/sessions`, pi `~/.pi/agent/sessions`, Qwen `~/.qwen/projects`, Gemini `~/.gemini/tmp`, Copilot `~/.copilot/session-state` (head and tail only, cached); OpenCode / Kilo `~/.local/share/{opencode,kilo}/*.db` and Hermes `~/.hermes/state.db` (read-only SQLite). Each row carries a coloured `[cli]` tag. Droid, Amp, Cline and Cursor have launch/resume templates but no session reader yet. |
+| Resumable sessions | Claude `~/.claude/projects`, Codex `~/.codex/sessions`, pi `~/.pi/agent/sessions`, Qwen `~/.qwen/projects`, Gemini `~/.gemini/tmp`, Copilot `~/.copilot/session-state` (head and tail only, cached); OpenCode / Kilo `~/.local/share/{opencode,kilo}/*.db` and Hermes `~/.hermes/state.db` (read-only SQLite). Each row carries a `[cli]` tag. Droid, Amp, Cline and Cursor have launch/resume templates but no session reader yet. |
 | Projects and worktrees | the nearest `.git` directory; a `.git` *file* points a linked worktree at its main repo |
 
 Apart from mirror tabs and the names and labels it reports to herdr, the Navigator changes
 only what you click. Nothing leaves your machine. Pane operations use herdr's CLI or its
 socket API (`pane.focus`, `layout.*`). Presets always build a *new* tab, so no running pane
 is ever rebuilt.
+
+## How it runs
+
+One small background process per herdr server, the **daemon**, keeps herdr's sidebar and tab
+bar current. It is started by the plugin's startup hook (and by any event hook or the Navigator
+when it is missing), subscribes to herdr's event stream, and syncs the sidebar in-process about
+0.6 to 0.9 s after an agent changes state. It writes the tab-bar line to a file that the tab bar
+just prints, so nothing starts Python every few seconds. Measured on Windows: 0.5% of one core
+while idle, ~0.25 s CPU per sync, 34 MB.
+
+It is built to look after itself: one instance per server (an OS lock that dies with the
+process), a heartbeat (`daemon.json`) that the event hooks check, which start a new daemon and
+do the sync themselves when it is stale, re-subscription on any stream error or lost events
+(followed by a full resync), and an exit when herdr has been gone for 5 minutes or the plugin
+was updated (the next hook starts the new code). Its log is `daemon.log` in the plugin's state
+directory. State files are written in one step and an unreadable one is kept aside, never
+overwritten.
 
 ## Settings
 

@@ -1,6 +1,6 @@
 id = "momatthias.navigator"
 name = "Navigator"
-version = "0.15.1"
+version = "0.16.0"
 min_herdr_version = "0.9.3"
 description = "Clickable navigator for herdr: projects, worktrees, every agent and sub-agent (in herdr or not), cross-CLI session resume, project-grouped sidebar, key hints"
 platforms = ["linux", "macos", "windows"]
@@ -28,42 +28,42 @@ command = ["sh", "run.sh", "restore", "startup"]
 [[events]]
 on = "workspace.created"
 platforms = ["windows"]
-command = ["cmd.exe", "/d", "/c", "run.cmd", "sync"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "hook"]
 
 [[events]]
 on = "workspace.created"
 platforms = ["linux", "macos"]
-command = ["sh", "run.sh", "sync"]
+command = ["sh", "run.sh", "hook"]
 
 [[events]]
 on = "pane.agent_detected"
 platforms = ["windows"]
-command = ["cmd.exe", "/d", "/c", "run.cmd", "sync"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "hook"]
 
 [[events]]
 on = "pane.agent_detected"
 platforms = ["linux", "macos"]
-command = ["sh", "run.sh", "sync"]
+command = ["sh", "run.sh", "hook"]
 
 [[events]]
 on = "pane.agent_status_changed"
 platforms = ["windows"]
-command = ["cmd.exe", "/d", "/c", "run.cmd", "sync"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "hook"]
 
 [[events]]
 on = "pane.agent_status_changed"
 platforms = ["linux", "macos"]
-command = ["sh", "run.sh", "sync"]
+command = ["sh", "run.sh", "hook"]
 
 [[events]]
 on = "pane.closed"
 platforms = ["windows"]
-command = ["cmd.exe", "/d", "/c", "run.cmd", "sync"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "hook"]
 
 [[events]]
 on = "pane.closed"
 platforms = ["linux", "macos"]
-command = ["sh", "run.sh", "sync"]
+command = ["sh", "run.sh", "hook"]
 
 [[actions]]
 id = "setup"
@@ -98,7 +98,7 @@ id = "sync"
 title = "Navigator: refresh sidebar labels"
 contexts = ["workspace"]
 platforms = ["windows"]
-command = ["cmd.exe", "/d", "/c", "run.cmd", "sync"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "hook"]
 
 [[actions]]
 id = "sync-unix"
@@ -222,42 +222,42 @@ command = ["sh", "run.sh", "attention", "next"]
 [[events]]
 on = "worktree.created"
 platforms = ["windows"]
-command = ["cmd.exe", "/d", "/c", "run.cmd", "sync"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "hook"]
 
 [[events]]
 on = "worktree.created"
 platforms = ["linux", "macos"]
-command = ["sh", "run.sh", "sync"]
+command = ["sh", "run.sh", "hook"]
 
 [[events]]
 on = "worktree.opened"
 platforms = ["windows"]
-command = ["cmd.exe", "/d", "/c", "run.cmd", "sync"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "hook"]
 
 [[events]]
 on = "worktree.opened"
 platforms = ["linux", "macos"]
-command = ["sh", "run.sh", "sync"]
+command = ["sh", "run.sh", "hook"]
 
 [[events]]
 on = "worktree.removed"
 platforms = ["windows"]
-command = ["cmd.exe", "/d", "/c", "run.cmd", "sync"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "hook"]
 
 [[events]]
 on = "worktree.removed"
 platforms = ["linux", "macos"]
-command = ["sh", "run.sh", "sync"]
+command = ["sh", "run.sh", "hook"]
 
 [[events]]
 on = "workspace.closed"
 platforms = ["windows"]
-command = ["cmd.exe", "/d", "/c", "run.cmd", "sync"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "hook"]
 
 [[events]]
 on = "workspace.closed"
 platforms = ["linux", "macos"]
-command = ["sh", "run.sh", "sync"]
+command = ["sh", "run.sh", "hook"]
 
 # herdr's workspace menu: start a new agent session in that workspace's project (or worktree).
 [[actions]]

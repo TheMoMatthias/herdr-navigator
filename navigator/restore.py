@@ -514,6 +514,11 @@ def main() -> None:
         notify("Sessions opened", summary)
         print(summary, *skipped, sep="\n")
     elif cmd == "startup":
+        try:  # the resident helper that keeps herdr's sidebar and tab bar current
+            from . import daemon
+            daemon.start()
+        except Exception as e:
+            print(f"navigator: daemon not started: {e}")
         on_server_start()
     elif cmd == "panes":
         print(resume_panes())

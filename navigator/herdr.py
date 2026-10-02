@@ -56,14 +56,20 @@ def request(method: str, params: dict | None = None, timeout: float = 10.0) -> d
 
         def talk() -> None:
             try:
-                for attempt in range(20):  # every pipe instance busy (ERROR_PIPE_BUSY): retry briefly
+                # herdr's pipe refuses ~1-2% of opens while other clients connect (measured:
+                # errno 22 / ERROR_PIPE_BUSY). Nothing was sent yet, so retrying is always safe.
+                for attempt in range(25):
                     try:
                         f = open(r"\\.\pipe" + "\\" + path, "r+b", buffering=0)
                         break
-                    except OSError as e:
-                        if getattr(e, "winerror", 0) != 231 or attempt == 19:
-                            raise
+                    except FileNotFoundError:
+                        if attempt >= 3:
+                            raise  # no server at all
                         time.sleep(0.05)
+                    except OSError:
+                        if attempt == 24:
+                            raise
+                        time.sleep(0.02 + 0.01 * attempt)
                 with f:
                     f.write(payload)
                     out = b""

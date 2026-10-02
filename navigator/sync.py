@@ -325,6 +325,9 @@ def sync(force: bool = False) -> None:
 
 def spawn_background() -> None:
     """Run a sync detached (from the status line, which must stay fast)."""
+    from . import daemon
+    if daemon.poke():
+        return  # the resident daemon syncs within a second
     import subprocess
     root = Path(__file__).resolve().parent.parent
     py = root / ".venv" / ("Scripts/pythonw.exe" if os.name == "nt" else "bin/python")
@@ -357,30 +360,32 @@ def _lock() -> bool:
         return True  # no state dir to lock in: just run
 
 
-def coalesced(force: bool = False) -> None:
+def coalesced(force: bool = False) -> bool:
     """A burst of herdr events (ten agents changing state at once) starts ten hooks: one syncs,
     the others only leave a note, and the one syncing runs once more after a note. No pile-up,
-    and nothing reported from a stale view of the world."""
+    and nothing reported from a stale view of the world. False when another sync held the lock
+    (it will run again for us, but not with `force`)."""
     note = settings.state_dir() / "sync.again"
     lock = settings.state_dir() / "sync.lock"
+    ran = False
     while True:
         if not _lock():
             try:
                 note.touch()
             except OSError:
                 pass
-            return
+            return ran
         try:
             for _ in range(5):
                 note.unlink(missing_ok=True)
                 sync(force=force)
-                force = False
+                ran, force = True, False
                 if not note.exists():
                     break
         finally:
             lock.unlink(missing_ok=True)
         if not note.exists():  # a hook that came in while the lock was being released
-            return
+            return ran
 
 
 def main() -> None:

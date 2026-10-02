@@ -141,6 +141,14 @@ def launcher(*args: str) -> str:
     return " ".join(["sh", f"'{ROOT / 'run.sh'}'", *args])  # sh: works without the exec bit
 
 
+def status_command() -> str:
+    """The tab bar prints the daemon's status file; without a daemon the script falls back."""
+    out = str(settings.state_dir() / "status.txt")
+    if WINDOWS:
+        return f"{_short_path(str(ROOT / 'status.cmd'))} {_short_path(str(settings.state_dir()))}\\status.txt"
+    return f"sh '{ROOT / 'status.sh'}' '{out}'"
+
+
 def _added_file() -> Path:
     return settings.state_dir() / "setup-added.json"
 
@@ -164,9 +172,11 @@ def _rows(rows) -> Array:
 def _is_ours_status(entry) -> bool:
     """Our tab-bar entry: this checkout's launcher, or any older navigator/cockpit launcher."""
     cmd = str(entry.get("command", "")) if hasattr(entry, "get") else ""
-    if cmd == launcher("status"):
+    if cmd in (launcher("status"), status_command()):
         return True
     low = cmd.lower()
+    if ("status.cmd" in low or "status.sh" in low) and "status.txt" in low:
+        return True
     return ("run.cmd" in low or "run.sh" in low) and low.endswith(" status") and (
         "navigator" in low or "cockpit" in low)
 
@@ -196,7 +206,7 @@ def install(doc, added: dict) -> list[str]:
     bar.clear()
     for e in keep:
         bar.append(e)
-    bar.append(_inline({"type": "command", "command": launcher("status"),
+    bar.append(_inline({"type": "command", "command": status_command(),
                         "interval_seconds": 3, "timeout_seconds": 4}))
     bar.multiline(True)
     added["status"] = True

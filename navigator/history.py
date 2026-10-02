@@ -66,4 +66,7 @@ def recent(live_panes: set[str]) -> list[dict]:
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "record":
+        from .hook import _alive
+        if _alive():
+            raise SystemExit(0)  # the daemon records focus changes from its event stream
         record(sys.argv[2] if len(sys.argv) > 2 else None)

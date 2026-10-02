@@ -432,3 +432,28 @@ def test_state_json_never_reads_a_broken_file_as_empty_silently(tmp_path):
     assert kept and kept[0].read_text(encoding="utf-8").startswith('{"sessions"')   # nothing lost
     assert jsonfile.read(tmp_path / "missing.json", None) is None
     assert not list(tmp_path.glob("*.tmp"))   # no temp files left behind
+
+
+def test_daemon_heartbeat_lock_and_event_routing(tmp_path, monkeypatch):
+    from navigator import daemon, hook, jsonfile
+    monkeypatch.setattr(daemon.settings, "state_dir", lambda: tmp_path)
+    monkeypatch.setenv("HERDR_PLUGIN_STATE_DIR", str(tmp_path))
+    assert not daemon.alive() and not hook._alive() and not daemon.poke()
+    jsonfile.write(tmp_path / "daemon.json", {"pid": 1, "at": time.time()})
+    assert daemon.alive() and hook._alive() and daemon.poke() and (tmp_path / "daemon.poke").exists()
+    jsonfile.write(tmp_path / "daemon.json", {"pid": 1, "at": time.time() - daemon.STALE - 1})
+    assert not daemon.alive() and not hook._alive()
+    held = daemon._lock()                      # one daemon per server: a second lock fails
+    assert held is not None and daemon._lock() is None
+    held.close()
+    again = daemon._lock()
+    assert again is not None
+    again.close()
+    d = daemon.Daemon()
+    d.want_sync = d.want_status = False
+    d.on_event("workspace_focused")            # herdr names events with underscores
+    assert d.want_status and not d.want_sync and not d.resubscribe.is_set()
+    d.on_event("pane_agent_status_changed")
+    assert d.want_sync
+    d.on_event("pane_created")                 # a new pane: subscribe to its agent state too
+    assert d.resubscribe.is_set()

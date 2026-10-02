@@ -690,6 +690,7 @@ class Navigator(App):
         self.load_world()
         self.focus_table()
         self.set_interval(5, self.auto_refresh)
+        self.ensure_daemon()
 
     def on_resize(self, ev) -> None:
         narrow = ev.size.width < 100
@@ -697,6 +698,11 @@ class Navigator(App):
             self.set_class(narrow, "-narrow")
             if self.world:
                 self.fill_agents()  # shorter filter labels
+
+    @work(thread=True, group="daemon")
+    def ensure_daemon(self) -> None:
+        from . import daemon
+        daemon.start()  # no-op when it runs
 
     def auto_refresh(self) -> None:
         """Keep Projects and Agents live while the Navigator is open (only when something changed)."""

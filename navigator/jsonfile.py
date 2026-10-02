@@ -45,7 +45,11 @@ def read(path: Path, default=None):
 
 
 def write(path: Path, data, indent: int | None = None) -> None:
-    text = json.dumps(data, indent=indent)
+    write_text(path, json.dumps(data, indent=indent))
+
+
+def write_text(path: Path, text: str) -> None:
+    """Replace a file in one step (a reader never sees half of it)."""
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
