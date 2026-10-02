@@ -1,6 +1,6 @@
 id = "momatthias.navigator"
 name = "Navigator"
-version = "0.16.0"
+version = "0.16.1"
 min_herdr_version = "0.9.3"
 description = "Clickable navigator for herdr: projects, worktrees, every agent and sub-agent (in herdr or not), cross-CLI session resume, project-grouped sidebar, key hints"
 platforms = ["linux", "macos", "windows"]
@@ -303,3 +303,18 @@ title = "Navigator: fold / unfold every project in the sidebar"
 contexts = ["pane", "workspace"]
 platforms = ["linux", "macos"]
 command = ["sh", "run.sh", "fold", "all"]
+
+# /compact with your saved instructions ([compact] in navigator.toml): right-click a pane, or prefix+shift+c
+[[actions]]
+id = "compact"
+title = "Navigator: compact this agent (with your instructions)"
+contexts = ["pane"]
+platforms = ["windows"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "compact"]
+
+[[actions]]
+id = "compact-unix"
+title = "Navigator: compact this agent (with your instructions)"
+contexts = ["pane"]
+platforms = ["linux", "macos"]
+command = ["sh", "run.sh", "compact"]

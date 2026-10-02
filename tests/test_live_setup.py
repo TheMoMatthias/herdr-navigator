@@ -457,3 +457,28 @@ def test_daemon_heartbeat_lock_and_event_routing(tmp_path, monkeypatch):
     assert d.want_sync
     d.on_event("pane_created")                 # a new pane: subscribe to its agent state too
     assert d.resubscribe.is_set()
+
+
+def test_compact_sends_saved_instructions_only_where_the_cli_takes_them(monkeypatch):
+    from navigator import compact
+    from types import SimpleNamespace
+    fake = SimpleNamespace(compact={"instructions": "Keep the state,\n  findings and   next steps."})
+    monkeypatch.setattr(compact, "settings", SimpleNamespace(load=lambda: fake))
+    assert compact.command("claude") == "/compact Keep the state, findings and next steps."   # one line
+    assert compact.command("codex") == "/compact"
+    sent, notes = [], []
+
+    def run(*args, **kw):
+        (sent if args[:2] == ("agent", "prompt") else notes).append(args)
+        return {}
+    monkeypatch.setattr(compact.herdr, "run", run)
+    monkeypatch.setattr(compact.herdr, "snapshot", lambda: {"focused_pane_id": "w1:p2", "agents": [
+        {"pane_id": "w1:p2", "agent": "claude", "terminal_title_stripped": "LEAD"}]})
+    monkeypatch.delenv("HERDR_PANE_ID", raising=False)
+    monkeypatch.setenv("HERDR_PLUGIN_CONTEXT_JSON", "{}")
+    compact.main()                                   # the key binding: the focused agent pane
+    assert sent == [("agent", "prompt", "w1:p2", "/compact Keep the state, findings and next steps.")]
+    assert "LEAD" in notes[-1][2]
+    monkeypatch.setenv("HERDR_PANE_ID", "w9:p9")     # a pane with no agent: a hint, nothing sent
+    compact.main()
+    assert len(sent) == 1 and "Nothing to compact" in notes[-1][2]

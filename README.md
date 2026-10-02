@@ -83,6 +83,13 @@ herdr plugin uninstall momatthias.navigator
 | `F7` · `Ctrl+B › Shift+O` | **Recent.** Agents (and other panes) in the order you last visited them |
 | `F9` · `Ctrl+B › ,` | **Settings.** Logon restore, accounts, phone alerts, prompts, font size, updates |
 | `F10` · `Ctrl+B › F` | Fold / unfold the focused pane's project in herdr's sidebar (`Ctrl+B › Shift+F`: all) |
+| `Ctrl+B › Shift+C` | `/compact` the focused agent **with your saved instructions** (also: right-click a pane, or ⇣ Compact in Agents) |
+
+**Compact without retyping.** Write once what a compaction must keep (⚙ Settings › Prompts ›
+*Compact instructions*, or `[compact] instructions` in navigator.toml). Every Compact then sends
+`/compact <your instructions>` to Claude Code (other CLIs get a plain `/compact`): the ⇣ Compact
+button, the agent row menu, every ☑ ticked agent at once, and `Ctrl+B › Shift+C` on the focused
+agent inside herdr.
 
 The Navigator stays open after what you click: resuming, starting a session, ticking, relaunching
 and restoring a layout all run in the background while you keep your place (the new session

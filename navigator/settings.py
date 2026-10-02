@@ -114,6 +114,11 @@ default = 200000
 "Commit & push" = "Commit your finished work with a clear message and push it."
 "Review" = "Review what you just did: anything wrong, risky or untested? Fix what you find."
 
+[compact]
+# What ⇣ Compact (and prefix+shift+c in herdr) adds after /compact for Claude Code: what the
+# summary must keep. Other CLIs get a plain /compact. Empty = a plain /compact everywhere.
+instructions = "Save the current working state: all progress, findings and insights gained, what we are working on and still need to evaluate, the tasks and objectives done and still to do next, and the rulings and workflows established."
+
 [handoff]
 # What "⇢ Hand off" sends to the other agent. {name} {cli} {project} {answer}
 template = "Hand-off from {name} ({cli}, {project}). Their latest answer:\\n\\n{answer}\\n\\nReview it and tell me what you think: what is right, what is wrong or missing."
@@ -187,6 +192,7 @@ class Settings:
     prompts: dict[str, str] = field(default_factory=dict)
     alerts: dict = field(default_factory=dict)
     handoff: str = ""
+    compact: dict = field(default_factory=dict)
     login: dict[str, dict] = field(default_factory=dict)
 
 
@@ -266,6 +272,7 @@ def load() -> Settings:
         prompts=dict(raw.get("prompts", defaults["prompts"])),
         alerts={**defaults["alerts"], **raw.get("alerts", {})},
         handoff=str(raw.get("handoff", {}).get("template", defaults["handoff"]["template"])),
+        compact={**defaults["compact"], **raw.get("compact", {})},
         login={k: {**defaults["login"].get(k, {}), **v} for k, v in
                {**defaults["login"], **raw.get("login", {})}.items()},
     )

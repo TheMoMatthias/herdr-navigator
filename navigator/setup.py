@@ -71,6 +71,7 @@ SHELLS = [
 ACTIONS = [
     (["prefix+f", "f10"], "fold", "Navigator: fold / unfold this project in the sidebar"),
     (["prefix+shift+f", "ctrl+alt+shift+f"], "fold-all", "Navigator: fold / unfold every project in the sidebar"),
+    (["prefix+shift+c", "ctrl+alt+shift+c"], "compact", "Navigator: /compact the focused agent with your instructions"),
 ]
 
 UI = {

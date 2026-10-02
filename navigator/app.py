@@ -630,7 +630,8 @@ class Navigator(App):
                         yield Btn("⏎ Enter", id="key-enter", tooltip="Press Enter in the agent (accept)")
                         yield Btn("Esc", id="key-esc", tooltip="Press Esc in the agent (cancel)")
                         yield Btn("^C Stop", id="key-ctrl_c", variant="error", tooltip="Interrupt the agent")
-                        yield Btn("⇣ Compact", id="act-compact", tooltip="/compact: free up its context")
+                        yield Btn("⇣ Compact", id="act-compact",
+                                  tooltip="/compact with your instructions (⚙ Settings › Prompts): free up its context")
                         yield Btn("☰ Prompts ▾", id="act-prompts", tooltip="Saved prompts: send one in a click")
                         yield Btn("⇢ Hand off ▾", id="act-handoff", tooltip="Send its last answer to another agent")
             with TabPane("3 Sessions", id="sessions"):
@@ -1091,6 +1092,21 @@ class Navigator(App):
             return
         self.run_send(a.pane_id, a.display, text, key)
 
+    def send_compact(self) -> None:
+        """⇣ Compact: /compact plus your instructions, per agent (each CLI gets what it accepts)."""
+        from . import compact
+        targets = [a for a in (self.world.agents if self.world else []) if a.pane_id in self.marked]
+        if not targets:
+            a, _ = self.agent_selected()
+            targets = [a] if a else []
+        if not targets:
+            self.notify("Select an agent first: the highlighted row is a project heading.", timeout=4)
+        for a in targets:
+            if a.in_herdr:
+                self.run_send(a.pane_id, a.display, compact.command(a.cli), "")
+            else:
+                self.notify(f"'{a.display}' runs in another terminal window: compact it there.", timeout=6)
+
     # ---- saved prompts and hand-off -----------------------------------------------------------
     def _prompts(self) -> dict[str, str]:
         from . import prompts
@@ -1530,7 +1546,8 @@ class Navigator(App):
         elif choice in ("enter", "esc", "stop"):
             self.run_send(a.pane_id, a.display, "", {"enter": "enter", "esc": "esc", "stop": "ctrl+c"}[choice])
         elif choice == "compact":
-            self.run_send(a.pane_id, a.display, "/compact", "")
+            from . import compact
+            self.run_send(a.pane_id, a.display, compact.command(a.cli), "")
         elif choice == "handoff":
             self.handoff_menu(self.query_one("#act-handoff", Button))
         elif choice == "relaunch":
@@ -2120,7 +2137,7 @@ class Navigator(App):
             self.stop_armed = 0
             self.send_to_agent(key=bid[4:].replace("_", "+"))
         elif bid == "act-compact":
-            self.send_to_agent("/compact")
+            self.send_compact()
         elif bid == "act-prompts":
             self.prompts_menu(ev.button)
         elif bid == "act-handoff":

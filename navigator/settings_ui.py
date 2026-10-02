@@ -424,6 +424,12 @@ class SettingsPane(Horizontal):
             yield Btn("＋ Add", id="pr-add", variant="primary")
         with Horizontal(classes="bar"):
             yield Btn("🗑 Delete selected", id="pr-del", tooltip="Prompts you added here; the file's own stay")
+        yield Static("Compact instructions", classes="section-title")
+        yield Static("⇣ Compact and prefix+shift+c in herdr send /compact plus this to Claude Code, so the summary "
+                     "keeps what matters. Other CLIs get a plain /compact. Empty = plain everywhere.", classes="hint")
+        with Horizontal(classes="form-row"):
+            yield Static("Keep", classes="lbl")
+            yield Field(str(settings.load().compact.get("instructions", "")), id="pr-compact")
         yield Static("Hand-off text", classes="section-title")
         yield Static("What ⇢ Hand off sends to the other agent. {name} {cli} {project} {answer}", classes="hint")
         with Horizontal(classes="form-row"):
@@ -492,6 +498,12 @@ class SettingsPane(Horizontal):
         self._saved("Settings")
         self.app.load_world()
 
+    def save_compact(self) -> None:
+        text = " ".join(self.query_one("#pr-compact", Input).value.split())
+        if text != str(settings.load().compact.get("instructions", "")):
+            settings.save_values("compact", {"instructions": text})
+            self._saved("Compact instructions")
+
     def save_handoff(self) -> None:
         text = self.query_one("#pr-handoff", Input).value.replace("\\n", "\n")
         if text.strip() and text != settings.load().handoff:
@@ -508,6 +520,8 @@ class SettingsPane(Horizontal):
             self.save_general()
         elif wid == "pr-handoff":
             self.save_handoff()
+        elif wid == "pr-compact":
+            self.save_compact()
 
     def on_descendant_focus(self, ev) -> None:
         if isinstance(ev.widget, Input):
