@@ -105,6 +105,39 @@ Inside the Navigator:
   new tab, `n` renames it and `Del` closes it (press twice). `Shift+arrows` swap panes and
   `Ctrl+arrows` resize.
 
+### Startup: reopen your sessions at logon, sign in, relaunch
+
+The **Startup** tab (`3` in the Navigator) decides which sessions come back when you log on.
+
+- **☑ / ☐** in front of each session is its tick. A bright box is your own choice; a dim one
+  was set by the auto-tick, which keeps the newest 3 sessions of each project lane (the main
+  checkout, and every worktree separately) that you worked in during the last 3 days. Click
+  the box (or press Space) to tick or untick. The project row's box switches the whole
+  project on or off.
+- **Right-click** a row (or press `.`) for everything else. On a session: open it now, go to
+  it, relaunch it in place, launch options (Claude: model, effort, permission mode, Remote
+  Control; any CLI: extra arguments), back to automatic, show the resume command. On a project:
+  restore on/off, auto-tick on/off, open all its ticked now, untick all, back to automatic.
+- **⏻ At logon** adds a logon entry (Windows Startup folder, macOS LaunchAgent, Linux XDG
+  autostart; no admin rights needed). At logon it opens herdr in a terminal. herdr resumes its own
+  Claude/Codex panes, then every ticked session that isn't running yet opens in its project's
+  workspace. Each launch is checked and logged to `restore.log` in the plugin's state directory,
+  and a notification gives the summary. If the Claude token has expired, one Claude session is
+  opened first and the rest wait until its refresh has landed. Many sessions refreshing the
+  token at once log each other out.
+- **▶ Open ticked** does the same thing right now.
+- **🔑 Accounts** shows who is signed in to each CLI and offers Sign in / Sign out (Claude, Codex,
+  OpenCode and Gemini by default; add any CLI under `[login.<cli>]`). Sign-in opens in a new tab.
+  When the CLI has saved the new credentials, the Navigator comes back with **↻ Relaunch**.
+- **↻ Relaunch** restarts open sessions in their own panes, so the layout stays: it stops the
+  agent process and resumes the same conversation there. Sessions that are working right now are
+  left alone unless you include them. Sessions in other terminal windows are listed, never killed.
+- Coming from the *session-restore* tool? `python -m navigator.startup import <sessions-registry.json>`
+  copies over its ticks, switched-off projects and Claude launch options.
+
+Questions an agent is waiting on (Claude `AskUserQuestion`, Codex `request_user_input`) show up
+in **Agents** as `❓` with the question and its options, also for sessions in other windows.
+
 Always visible in herdr:
 
 - **Tab bar:** `⚠ other-project waiting for you (Ctrl+Alt+I) │ project: 2 working, 1 idle │ 3 sessions outside herdr (F3) │ F1 Menu · F2 Resume · F6 Layout · F7 Recent · Ctrl+Alt+R Back` (most urgent first, plain words)
@@ -160,7 +193,8 @@ The settings file is `navigator.toml` in the plugin's config directory
 - stop worktrees from opening automatically in the sidebar,
 - turn mirror tabs off (`[sidebar] mirror_outside = false`),
 - *sidebar width* lives in herdr's own config (`[ui] sidebar_width`); the shortcuts above edit it for you,
-- change the launch commands (for example `claude --dangerously-skip-permissions --resume {id}`).
+- change the launch commands (for example `claude --dangerously-skip-permissions --resume {id}`),
+- tune the startup restore (`[restore]`: sessions per lane, window, cap, delay, Claude name / Remote Control, terminal) and the sign-in commands (`[login.<cli>]`).
 
 ## Develop
 

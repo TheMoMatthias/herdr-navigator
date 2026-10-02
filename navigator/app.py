@@ -26,6 +26,7 @@ from textual.widgets import Button, DataTable, Footer, Input, Static, TabbedCont
 from . import keys as keymap
 from . import arrange, attention, history, launch, layouts, model, panes, settings, sidebar, uiwidth
 from .model import STATE_ICON, Agent, World, age, summarize
+from .startup_ui import StartupPane
 
 STATE_STYLE = {"blocked": "bold red", "done": "bold green", "working": "yellow", "idle": "dim", "unknown": "magenta"}
 CLI_STYLE = {
@@ -66,7 +67,7 @@ def installed_clis() -> list[str]:
             if shutil.which(exe):
                 out.append(key[:-4])
     return sorted(out, key=cli_rank)
-TABS = ["projects", "agents", "panes", "resume", "recent", "keys"]
+TABS = ["projects", "agents", "startup", "panes", "resume", "recent", "keys"]
 WT_SEP = "|wt|"
 
 
@@ -295,10 +296,11 @@ class Navigator(App):
     BINDINGS = [
         Binding("1", "tab('projects')", "Projects", show=False),
         Binding("2", "tab('agents')", "Agents", show=False),
-        Binding("3", "tab('panes')", "Layout", show=False),
-        Binding("4", "tab('resume')", "Resume", show=False),
-        Binding("5", "tab('recent')", "Recent", show=False),
-        Binding("6", "tab('keys')", "Keys", show=False),
+        Binding("3", "tab('startup')", "Startup", show=False),
+        Binding("4", "tab('panes')", "Layout", show=False),
+        Binding("5", "tab('resume')", "Resume", show=False),
+        Binding("6", "tab('recent')", "Recent", show=False),
+        Binding("7", "tab('keys')", "Keys", show=False),
         Binding("enter", "open", "Open", priority=False),
         Binding("space", "toggle_sidebar", "Sidebar"),
         Binding("r", "resume_project", "Resume"),
@@ -395,6 +397,8 @@ class Navigator(App):
                         yield Button("Esc", id="key-esc", tooltip="Press Esc in the agent (cancel)")
                         yield Button("^C", id="key-ctrl_c", tooltip="Interrupt the agent")
                         yield Button("⚑ Next", id="btn-attention", tooltip="Jump to the next agent that needs you (g)")
+            with TabPane("Startup", id="startup"):
+                yield StartupPane(id="startup-pane")
             with TabPane("Layout", id="panes"):
                 with Horizontal(id="shape-bar"):
                     for kind, label in arrange.SHAPES.items():
@@ -485,6 +489,11 @@ class Navigator(App):
         self.query_one("#topbar", Static).update(bar)
         self.fill_projects()
         self.fill_agents()
+        pane = self.query_one(StartupPane)
+        pane.show(world)
+        relaunch = os.environ.pop("NAV_RELAUNCH", None)  # after a sign-in: offer the relaunch once
+        if relaunch is not None:
+            pane.open_relaunch(relaunch)
         self.fill_resume()
         self.set_hint()
         self.load_panes()
@@ -726,6 +735,14 @@ class Navigator(App):
             return
         head = f"{a.display}  ·  {a.cli}  ·  {a.status}  ·  {a.project.label}"
         out.append(head + "\n", style="bold cyan")
+        if a.question and sub < 0:
+            q = a.question
+            out.append(f"❓ {q.text}\n", style="bold red")
+            for i, o in enumerate(q.options, 1):
+                out.append(f"   {i}. {o}\n", style="red")
+            if q.more:
+                out.append(f"   (+{q.more} more)\n", style="dim")
+            out.append("Answer it in its pane: Enter jumps there.\n\n", style="dim")
         if sub >= 0 and sub < len(a.subagents):
             sa = a.subagents[sub]
             out.append(f"↳ sub-agent {sa.name} ({sa.kind}, {sa.model})\n{sa.description}\n{sa.activity}\n")
@@ -937,8 +954,9 @@ class Navigator(App):
             if not a.in_herdr:
                 who.append("  ↗", style="magenta")
             proj = Text(a.project.label[:30], style="cyan" if here else "")
+            doing = Text("❓ " + a.question.text[:66], style="bold red") if a.question else (a.activity or a.title)[:70]
             t.add_row(Text(STATE_ICON.get(a.status, "?"), style=STATE_STYLE.get(a.status, "")), cli_tag(a.cli), who, proj,
-                      (a.activity or a.title)[:70], key=a.key)
+                      doing, key=a.key)
             self.agent_rows[a.key] = (a, -1)
             for i, sa in enumerate(a.subagents):
                 k = f"{a.key}#sub{i}"
@@ -1042,6 +1060,8 @@ class Navigator(App):
         row("drag a split border", "resize panes")
         row("right-click pane / space", "herdr menu: split, zoom, rename, close")
         row("Layout tab: drag a pane", "middle swaps · edge places it beside")
+        row("Startup tab: click ☐", "tick for logon (bright = yours, dim = automatic)")
+        row("Startup tab: right-click", "open, relaunch, launch options, back to automatic")
         self.query_one("#keys-body", Static).update(out)
 
     # ---- actions --------------------------------------------------------------------------
@@ -1055,7 +1075,7 @@ class Navigator(App):
             self.load_panes()
             return
         tid = {"projects": "#proj-table", "agents": "#agent-table", "resume": "#resume-table",
-               "recent": "#recent-table"}.get(tab)
+               "recent": "#recent-table", "startup": "#start-table"}.get(tab)
         if tid:
             self.query_one(tid, DataTable).focus()
 
@@ -1201,7 +1221,7 @@ class Navigator(App):
                 self.finish(lambda: panes.focus(a.mirror_pane))
             else:
                 self.notify(f"'{a.name}' runs in another terminal window (pid {a.pid}), so herdr can't "
-                            "jump to it. To bring it here: exit it there, then resume it from tab 3.",
+                            "jump to it. To bring it here: exit it there, then resume it from the Resume tab (5).",
                             title="Outside herdr", timeout=10)
         elif tab == "resume":
             t = self.query_one("#resume-table", DataTable)
@@ -1277,7 +1297,7 @@ class Navigator(App):
 
 
 def main() -> None:
-    tab = sys.argv[1] if len(sys.argv) > 1 else "projects"
+    tab = os.environ.pop("NAV_TAB", "") or (sys.argv[1] if len(sys.argv) > 1 else "projects")
     msg = Navigator(tab).run()
     if msg:
         print(msg)

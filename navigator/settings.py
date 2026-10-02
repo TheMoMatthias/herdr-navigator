@@ -74,6 +74,53 @@ cline_new = "cline"
 cline_resume = "cline --id {id}"
 cursor_new = "cursor-agent"
 cursor_resume = "cursor-agent --resume {id}"
+
+[restore]
+# Startup restore: which sessions reopen when you log on (Navigator › Startup).
+# A session you tick or untick yourself keeps that choice. Everything else is ticked
+# automatically: the newest `per_lane` sessions of each project lane (the main checkout and
+# each worktree) that you worked in during the last `window_days` days.
+per_lane = 3
+window_days = 3
+# Projects worked in during this many days are switched on for restore by default.
+recency_days = 14
+include_worktrees = true
+# Never open more than this many sessions in one go.
+max_sessions = 30
+# Seconds between two launches, and the wait after logon before restoring.
+gap_seconds = 1.5
+logon_delay_seconds = 20
+# Claude only: name the restored session after its title (claude -n) and attach Remote Control.
+claude_name = true
+claude_remote_control = false
+# Command that opens herdr in a terminal at logon ("" = Windows Terminal / the system terminal).
+terminal = ""
+
+# Sign in / sign out per CLI (Navigator › Startup › Sign in). `watch` is the file the CLI
+# rewrites when the sign-in succeeds; the Navigator then offers to relaunch that CLI's sessions.
+[login.claude]
+login = "claude auth login"
+logout = "claude auth logout"
+status = "claude auth status"
+watch = "~/.claude/.credentials.json"
+
+[login.codex]
+login = "codex login"
+logout = "codex logout"
+status = "codex login status"
+watch = "~/.codex/auth.json"
+
+[login.opencode]
+login = "opencode auth login"
+logout = "opencode auth logout"
+status = "opencode auth list"
+watch = "~/.local/share/opencode/auth.json"
+
+[login.gemini]
+login = "gemini"
+logout = ""
+status = ""
+watch = "~/.gemini/oauth_creds.json"
 """
 
 
@@ -87,6 +134,8 @@ class Settings:
     open_active_worktrees: bool = True
     mirror_outside: bool = True
     launch: dict[str, str] = field(default_factory=dict)
+    restore: dict = field(default_factory=dict)
+    login: dict[str, dict] = field(default_factory=dict)
 
 
 PLUGIN_ID = "momatthias.navigator"
@@ -159,4 +208,7 @@ def load() -> Settings:
         open_active_worktrees=bool(raw.get("sidebar", {}).get("open_active_worktrees", True)),
         mirror_outside=bool(raw.get("sidebar", {}).get("mirror_outside", True)),
         launch=launch,
+        restore={**defaults["restore"], **raw.get("restore", {})},
+        login={k: {**defaults["login"].get(k, {}), **v} for k, v in
+               {**defaults["login"], **raw.get("login", {})}.items()},
     )

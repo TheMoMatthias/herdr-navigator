@@ -59,7 +59,9 @@ def _ensure_workspace(world: World, project: Project, cwd: str) -> tuple[str, bo
     return _ws_of(res), True
 
 
-def _open_in_tab(world: World, project: Project, cwd: str, label: str, command: str) -> str:
+def open_tab(world: World, project: Project, cwd: str, label: str, command: str) -> tuple[str, str, str]:
+    """Run `command` in a new tab of the project's workspace (or the fresh workspace's own
+    pane). Nothing is focused. Returns (workspace, pane, tab)."""
     ws_id, created = _ensure_workspace(world, project, cwd)
     if created:
         # a fresh workspace already has an idle root pane: use it instead of adding a tab
@@ -75,6 +77,11 @@ def _open_in_tab(world: World, project: Project, cwd: str, label: str, command: 
         pane = _pane_of(res)
         tab = (res.get("tab") or {}).get("tab_id", "")
     herdr.pane_run(pane, command)
+    return ws_id, pane, tab
+
+
+def _open_in_tab(world: World, project: Project, cwd: str, label: str, command: str) -> str:
+    ws_id, pane, tab = open_tab(world, project, cwd, label, command)
     herdr.focus_workspace(ws_id)
     if tab:
         herdr.focus_tab(tab)
@@ -91,7 +98,10 @@ def resume(world: World, s: Session) -> str:
                 "Resuming it twice would fork the conversation: exit it there, then resume here.")
     if not os.path.isdir(s.cwd):
         return f"✗ {s.cwd} no longer exists (worktree removed?)"
-    return _open_in_tab(world, s.project, s.cwd, s.title, s.resume_command())
+    from . import startup
+    cmd = startup.launch_command(s.cli, s.id, s.title if s.named else "",
+                                 startup.prefs_of(f"{s.cli}:{s.id}"))
+    return _open_in_tab(world, s.project, s.cwd, s.title, cmd or s.resume_command())
 
 
 def new_agent(world: World, project: Project, cli: str) -> str:

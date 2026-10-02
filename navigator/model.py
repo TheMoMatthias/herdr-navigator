@@ -8,7 +8,7 @@ import time
 from collections import Counter
 from dataclasses import dataclass, field
 
-from . import herdr, live, projects, settings
+from . import asks, herdr, live, projects, settings
 from .sessions import Session, is_listed, load_sessions
 
 STATE_ORDER = {"blocked": 0, "done": 1, "working": 2, "idle": 3, "unknown": 4}
@@ -35,6 +35,7 @@ class Agent:
     activity: str = ""
     subagents: list[live.SubAgent] = field(default_factory=list)
     mirror_pane: str = ""        # herdr pane mirroring this outside session, if any
+    question: "asks.Question | None" = None  # a question it is waiting for you to answer
 
     @property
     def in_herdr(self) -> bool:
@@ -288,6 +289,14 @@ def build(with_sessions: bool = True) -> World:
     selection = load_selection()
     for v in views.values():
         v.in_sidebar = v.live if selection is None else (v.project.root in selection)
+
+    for a in agents:  # a pending question means it waits for you, whatever else it reports
+        if a.status == "working" or not a.session_id:
+            continue
+        r, s = run_by_id.get(a.session_id), by_session.get(a.session_id)
+        a.question = asks.pending(a.cli, (r.transcript if r else "") or (s.path if s else ""))
+        if a.question:
+            a.status = "blocked"
 
     live_sessions = {a.session_id: a for a in agents if a.session_id}
     ordered = sorted(
