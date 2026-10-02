@@ -104,7 +104,7 @@ def test_setup_merge_keeps_user_settings_and_uninstalls_cleanly():
     assert doc["ui"]["status_indicators"] == "dots"            # user value kept
     assert doc["keys"]["next_tab"] == ["prefix+m", "ctrl+alt+n"]  # chord added beside it
     cmds = doc["keys"]["command"]
-    assert sum(1 for c in cmds if str(c.get("description", "")).startswith("Navigator:")) == len(setup.POPUPS) + len(setup.SHELLS)
+    assert sum(1 for c in cmds if str(c.get("description", "")).startswith("Navigator:")) == len(setup.POPUPS) + len(setup.SHELLS) + len(setup.ACTIONS)
     assert any(c["command"] == "lazygit" for c in cmds)
     bar = doc["ui"]["tab_bar_right"]
     assert [e["type"] for e in bar] == ["hostname", "command"]
@@ -345,3 +345,77 @@ def test_agent_panel_tree_groups_by_project_most_urgent_first():
     assert not f["B2"][5] and f["B1"][5] and f["B2"][2].startswith("▸ Beta") and "+1 folded" in f["B2"][2]
     assert f["B2"][3] == "└─ ? B2"
     assert not f["A2"][5] and f["A1"][5] and f["A2"][2].startswith("▸ Alpha")
+
+
+def test_rank_puts_needs_you_then_running_then_most_recent():
+    from navigator import model
+    p = projects.Project("/r", "R")
+    ag = lambda n, st, seq, pane="p": model.Agent("claude", st, p, name=n, pane_id=pane, seq=seq)  # noqa: E731
+    xs = [ag("old-idle", "idle", 3), ag("new-idle", "idle", 9), ag("run", "working", 1), ag("ask", "blocked", 2),
+          ag("out", "idle", 99, pane="")]
+    assert [a.name for a in sorted(xs, key=model.rank)] == ["ask", "run", "new-idle", "old-idle", "out"]
+
+
+def test_folded_space_keeps_only_who_needs_you():
+    from navigator import model, sync
+    p = projects.Project("/r", "R")
+    ag = lambda n, st: model.Agent("claude", st, p, name=n, pane_id="p")  # noqa: E731
+    lines = sync.session_lines("R", [ag("A", "idle"), ag("B", "reply"), ag("C", "working")], folded=True)
+    assert lines == ["├─ ? B", "└─ +2 folded"]
+
+
+def test_space_order_moves_repo_blocks_and_keeps_worktrees_under_their_repo():
+    from types import SimpleNamespace as NS
+    from navigator import model, sync
+    a, b = projects.Project("/a", "A"), projects.Project("/b", "B")
+    bw = projects.Project("/b", "B", "x", "/b", "/b/.wt/x")
+    ws = [NS(id="w1", number=1, project=a, linked_worktree=False),
+          NS(id="w2", number=2, project=b, linked_worktree=False),
+          NS(id="w3", number=3, project=bw, linked_worktree=True),
+          NS(id="w4", number=4, project=projects.Project("/b", "B", "y", "/b", "/b/.wt/y"), linked_worktree=True)]
+    agents = [model.Agent("claude", "idle", a, pane_id="w1:p", workspace_id="w1", seq=5),
+              model.Agent("claude", "idle", bw, pane_id="w3:p", workspace_id="w3", seq=1),
+              model.Agent("claude", "blocked", bw, pane_id="w4:p", workspace_id="w4", seq=2)]
+    world = NS(workspaces=ws, agents=agents)
+    # B needs you (w4), so its block leads; its own Space first, then w4 before the idle w3
+    assert sync.space_order(world) == ["w2", "w4", "w3", "w1"]
+    moved = []
+    sync.herdr.request, real = (lambda m, p, **k: moved.append((p["workspace_id"], p["insert_index"]))), \
+        sync.herdr.request
+    try:
+        assert sync._sort_spaces(world) == len(moved) and moved[0] == ("w2", 0)
+    finally:
+        sync.herdr.request = real
+
+
+def test_bursts_of_sync_hooks_coalesce(tmp_path, monkeypatch):
+    from navigator import sync
+    monkeypatch.setenv("HERDR_PLUGIN_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(sync.settings, "state_dir", lambda: tmp_path)
+    runs = []
+    monkeypatch.setattr(sync, "sync", lambda force=False: runs.append(force))
+    (tmp_path / "sync.lock").write_text("1")          # another hook is syncing right now
+    sync.coalesced()
+    assert runs == [] and (tmp_path / "sync.again").exists()
+    (tmp_path / "sync.lock").unlink()                  # it finished; the next hook syncs
+    sync.coalesced(force=True)
+    assert runs == [True] and not (tmp_path / "sync.lock").exists() and not (tmp_path / "sync.again").exists()
+    old = time.time() - sync.LOCK_STALE - 5            # a lock left by a crashed sync expires
+    (tmp_path / "sync.lock").write_text("1")
+    os.utime(tmp_path / "sync.lock", (old, old))
+    sync.coalesced()
+    assert runs == [True, False]
+
+
+def test_font_size_writes_windows_terminal_defaults_with_a_backup(tmp_path, monkeypatch):
+    from navigator import termfont
+    f = tmp_path / "settings.json"
+    f.write_text(json.dumps({"profiles": {"defaults": {}, "list": [{"name": "x", "font": {"size": 10}}, {"name": "y"}]}}))
+    monkeypatch.setattr(termfont, "settings_file", lambda: f)
+    assert termfont.get() == termfont.DEFAULT
+    assert "14" in termfont.set_size(14)
+    d = json.loads(f.read_text())
+    assert d["profiles"]["defaults"]["font"]["size"] == 14 and d["profiles"]["list"][0]["font"]["size"] == 14
+    assert "font" not in d["profiles"]["list"][1] and (tmp_path / "settings.json.navigator-backup").exists()
+    termfont.set_size(99)
+    assert termfont.get() == termfont.HIGH

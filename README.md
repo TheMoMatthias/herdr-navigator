@@ -8,9 +8,13 @@ everything your coding agents are doing:
   Space gets its own indented row under it (`├ ⏳ STORAGE`), tabs included. herdr's Agents panel is
   nested the same way: a heading per project (`▾ AlgoTrader ⏳1 ○5`), its agents below as
   `├─ ? STORAGE · needs reply`, a worktree agent's `▹ lane` under its name, the project with
-  whoever needs you first (`!` waits on you, `?` needs a reply). Fold a project there by
-  right-clicking one of its panes or its workspace › `Navigator: fold / unfold this project`;
-  folding in the Navigator's Agents tab does the same. A folded project keeps who needs you.
+  whoever needs you first (`!` waits on you, `?` needs a reply), then what is running, then the
+  most recently active. Spaces follow the same order (a repo moves with its worktree Spaces;
+  ⚙ Settings › General turns that off). Fold a project with `F10` / `Ctrl+B › F` (the focused
+  pane's project) or `Ctrl+B › Shift+F` (every project), or right-click a pane or a workspace ›
+  `Navigator: fold / unfold`. herdr has no right-click menu on Agents rows for plugins, so those
+  are the ways in; folding in the Navigator's Agents tab does the same. A folded project keeps
+  only who needs you, in the Agents panel and under its Spaces (`+5 folded`).
 * **What is running where?** Every Claude Code and Codex agent is listed per project and
   worktree, including sessions running in *other* terminal windows and their live
   **sub-agents**, each with what it is doing right now (`⚙ Bash: run tests`, `💬 …`).
@@ -77,7 +81,13 @@ herdr plugin uninstall momatthias.navigator
 | `F4` · `Ctrl+B › /` | **Keys.** Your live key bindings (⚙ Settings › Keys) |
 | `F6` · `Ctrl+B › M` | **Layout.** One-click shapes, drag-and-drop pane map, pane buttons, saved layouts |
 | `F7` · `Ctrl+B › Shift+O` | **Recent.** Agents (and other panes) in the order you last visited them |
-| `F9` · `Ctrl+B › ,` | **Settings.** Logon restore, accounts, phone alerts, prompts, updates |
+| `F9` · `Ctrl+B › ,` | **Settings.** Logon restore, accounts, phone alerts, prompts, font size, updates |
+| `F10` · `Ctrl+B › F` | Fold / unfold the focused pane's project in herdr's sidebar (`Ctrl+B › Shift+F`: all) |
+
+The Navigator stays open after what you click: resuming, starting a session, ticking, relaunching
+and restoring a layout all run in the background while you keep your place (the new session
+opens without taking you away). Only a jump (Enter on a project, an agent or a pane) closes it,
+since it would cover what you jumped to. `F1` reopens on the tab and row you were on.
 | `Ctrl+Alt+R` · `Ctrl+B › ;` | Back to the previous pane (press again to flip back) |
 | `Ctrl+Alt+I` · `F8` | Jump to the next agent that needs you |
 | `Ctrl+Alt+Shift+→` / `←` | herdr sidebar wider / narrower, applied live |
@@ -156,7 +166,8 @@ back when you log on.
   opened first and the rest wait until its refresh has landed. Many sessions refreshing the
   token at once log each other out.
 - **▶ Open ticked** does the same thing right now.
-- **⚙ Settings › Accounts** shows who is signed in to each CLI and offers Sign in / Sign out (Claude, Codex,
+- **⚙ Settings › Accounts** shows who is signed in to each CLI. To add a second account: 💾 *Save current
+  login* first (so you can switch back), then 🔑 *Sign in with another account*. Sign out too (Claude, Codex,
   OpenCode and Gemini by default; add any CLI under `[login.<cli>]`). Sign-in opens in a new tab.
   When the CLI has saved the new credentials, the Navigator comes back with **↻ Relaunch**.
   **Profiles** switch accounts without signing out. 💾 saves the current login as a named profile,
@@ -189,7 +200,7 @@ presses ⏎ / Esc / ^C, in every ticked agent at once.
   `Waits` column: `⚠` waits for an approval or a question, `⏳` finished with a message that
   asks you something (a question at its end, "should I…", "let me know…"), `✔` finished and
   not yet seen. The rest is `○ Parked`. The top bar counts them (`⏳ 2 need a reply`).
-- **Answer without leaving.** `⚑ Next waiting` (`g`) selects the next agent that needs you and
+- **Answer without leaving.** `⚑ Next` (`g`) selects the next agent that needs you and
   puts you in the message box, its last words in the preview. When it shows numbered choices
   (a permission prompt or a question), **Answer: [1 Yes] [2 …] [3 No]** buttons press that number.
 - **Nested by project.** Agents are grouped under their project (`▾ AlgoTrader ⏳1 ○6`), the
@@ -293,7 +304,9 @@ The common settings are in the Navigator itself (⚙ Settings, key `6` or `F9`).
 - set directories to hide (temp folders are hidden by default),
 - turn workspace auto-naming off,
 - stop worktrees from opening automatically in the sidebar,
-- turn mirror tabs off (`[sidebar] mirror_outside = false`),
+- turn mirror tabs off (`[sidebar] mirror_outside = false`) or keep your own Space order (`sort_spaces = false`),
+- *font size* (⚙ Settings › General, A− / A+) changes Windows Terminal's default font size for every
+  tab (a backup `settings.json.navigator-backup` is kept). Other terminals: use their zoom keys,
 - *sidebar width* lives in herdr's own config (`[ui] sidebar_width`); the shortcuts above edit it for you,
 - change the launch commands (for example `claude --dangerously-skip-permissions --resume {id}`),
 - tune the startup restore (`[restore]`: sessions per lane, window, cap, delay, Claude name / Remote Control, terminal) and the sign-in commands (`[login.<cli>]`).

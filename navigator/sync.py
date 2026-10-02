@@ -61,15 +61,19 @@ _PENDING: dict[tuple[str, str], list[tuple[str, str, str]]] = {}
 
 def _flush(sent: dict) -> None:
     for (kind, target), items in list(_PENDING.items()):
-        args = []
-        for _, name, value in items:
-            args += ["--token", f"{name}={value}"] if value else ["--clear-token", name]
-        try:
-            herdr.run(kind, "report-metadata", target, "--source", SOURCE, *args, "--seq", next(_SEQ))
-            for k, _, value in items:
-                sent[k] = value  # only confirmed reports are remembered, so a failure is retried
-        except (herdr.HerdrError, OSError):
-            pass
+        try:  # the socket: one in-process call per target (the CLI costs a process each)
+            herdr.report_metadata(kind, target, SOURCE, {name: (value or None) for _, name, value in items},
+                                  int(next(_SEQ)))
+        except (herdr.HerdrError, OSError, ValueError):
+            args = []
+            for _, name, value in items:
+                args += ["--token", f"{name}={value}"] if value else ["--clear-token", name]
+            try:
+                herdr.run(kind, "report-metadata", target, "--source", SOURCE, *args, "--seq", next(_SEQ))
+            except (herdr.HerdrError, OSError):
+                continue
+        for k, _, value in items:
+            sent[k] = value  # only confirmed reports are remembered, so a failure is retried
     _PENDING.clear()
 
 
@@ -83,16 +87,18 @@ def side_counts(agents: list) -> str:
     return " ".join(f"{SIDE_ICON[s]}{c[s]}" for s in ("blocked", "reply", "done", "working", "idle") if c.get(s))
 
 
-def session_lines(label: str, agents: list) -> list[str]:
+def session_lines(label: str, agents: list, folded: bool = False) -> list[str]:
     """The indented lines a Space shows under itself: one per session, urgent first. A worktree
-    Space already named after its only session shows none (it would just repeat the name)."""
-    agents = sorted(agents, key=lambda a: (model.STATE_ORDER.get(a.status, 9), a.display.lower()))
+    Space already named after its only session shows none (it would just repeat the name). A
+    folded project keeps only the sessions that need you, plus a "+N folded" line."""
+    agents = sorted(agents, key=lambda a: (model.rank(a), a.display.lower()))
     if len(agents) == 1 and agents[0].display.strip().lower() == label.strip().lower():
         return []
-    lines = []
-    for a in agents:
-        icon = "↗" if not a.in_herdr else SIDE_ICON.get(a.status, "·")
-        lines.append(f"{icon} {a.display[:30]}")
+    hidden = [a for a in agents if a.status not in model.NEEDS_YOU] if folded else []
+    lines = [f"{'↗' if not a.in_herdr else SIDE_ICON.get(a.status, '·')} {a.display[:30]}"
+             for a in agents if a not in hidden]
+    if hidden:
+        lines.append(f"+{len(hidden)} folded")
     if len(lines) > SESSION_ROWS:
         lines = lines[:SESSION_ROWS - 1] + [f"+{len(lines) - SESSION_ROWS + 1} more"]
     return [("└─ " if i == len(lines) - 1 else "├─ ") + ln for i, ln in enumerate(lines)]
@@ -100,17 +106,16 @@ def session_lines(label: str, agents: list) -> list[str]:
 
 def agent_tree(agents: list, folded: dict | None = None) -> list[tuple]:
     """herdr's Agents panel as a tree: (agent, order, heading, line, lane, hidden) per agent in
-    herdr. Projects come in the order of their most urgent agent, agents most urgent first; the
-    first shown agent of a project carries the project heading row. A folded project shows only
-    the agents that need you (or its first agent, to carry the heading)."""
+    herdr. Projects come in the order of their most urgent agent, agents by model.rank (needs
+    you, then running, then idle; the most recent state change first). The first shown agent of
+    a project carries the project heading row. A folded project shows only the agents that need
+    you (or its first agent, to carry the heading)."""
     folded = folded or {}
     agents = [a for a in agents if a.in_herdr]
-    urg = lambda a: (model.STATE_ORDER.get(a.status, 9), a.waiting_since or 9e18)  # noqa: E731
     first: dict[str, tuple] = {}
     for a in agents:
-        first[a.project.root] = min(first.get(a.project.root, (99, 9e18)), urg(a))
-    agents.sort(key=lambda a: (first[a.project.root], a.project.name.lower(), urg(a),
-                               a.project.worktree, a.display.lower()))
+        first[a.project.root] = min(first.get(a.project.root, (99,)), model.rank(a))
+    agents.sort(key=lambda a: (first[a.project.root], a.project.name.lower(), model.rank(a), a.display.lower()))
     out = []
     for i, a in enumerate(agents):
         group = [x for x in agents if x.project.root == a.project.root]
@@ -128,10 +133,46 @@ def agent_tree(agents: list, folded: dict | None = None) -> list[tuple]:
                     + (f"  +{more} folded" if more else ""))
         # herdr indents an entry's 2nd and later rows by two columns: the heading carrier's line is
         # its 2nd row, so every other agent's line (its 1st row) gets the same two-column pad
-        line = (PAD * 2 if not head else "") +             f"{'└─' if last else '├─'} {SIDE_ICON.get(a.status, '·')} {a.display[:34]}"
+        line = (PAD * 2 if not head else "") + f"{'└─' if last else '├─'} {SIDE_ICON.get(a.status, '·')} {a.display[:34]}"
         lane = f"{PAD if last else '│'}{PAD * 4}▹ {a.project.worktree}" if a.project.worktree else ""
         out.append((a, f"{i:04d}", head, line, lane, False))
     return out
+
+
+def space_order(world) -> list[str]:
+    """herdr's Spaces in model.rank order: a repo with its worktree Spaces moves as one block (the
+    block of its most urgent Space), the repo's own Space first, its worktrees by rank below it.
+    Equal ranks keep their current order, so nothing moves without a reason."""
+    ws = sorted(world.workspaces, key=lambda w: w.number)
+    pos = {w.id: i for i, w in enumerate(ws)}
+    none = (99,)
+    best: dict[str, tuple] = {}
+    for a in world.agents:
+        if a.workspace_id:
+            best[a.workspace_id] = min(best.get(a.workspace_id, none), model.rank(a))
+    blocks: dict[str, list] = {}
+    for w in ws:
+        blocks.setdefault(w.project.root if w.project else w.id, []).append(w)
+    key = lambda w: (best.get(w.id, none), pos[w.id])  # noqa: E731
+    out = []
+    for members in sorted(blocks.values(), key=lambda m: min(key(w) for w in m)):
+        out += [w.id for w in members if not w.linked_worktree]
+        out += [w.id for w in sorted((w for w in members if w.linked_worktree), key=key)]
+    return out
+
+
+def _sort_spaces(world) -> int:
+    """Move herdr's Spaces into space_order with as few moves as possible. Returns the moves."""
+    cur = [w.id for w in sorted(world.workspaces, key=lambda w: w.number)]
+    want = space_order(world)
+    moves = 0
+    for i, wid in enumerate(want):
+        if i < len(cur) and cur[i] != wid and wid in cur:
+            herdr.request("workspace.move", {"workspace_id": wid, "insert_index": i})
+            cur.remove(wid)
+            cur.insert(i, wid)
+            moves += 1
+    return moves
 
 
 def _set_view(world) -> None:
@@ -164,6 +205,8 @@ def sync(force: bool = False) -> None:
     except Exception as e:
         print(f"navigator: recording panes failed: {e}")
     cfg = settings.load()
+    from . import startup
+    folded = startup.ui_state().get("agents_folded", {})
     old = {} if force else _load_sent()
     force = force or not old
     sent: dict[str, str] = {}
@@ -190,7 +233,8 @@ def sync(force: bool = False) -> None:
         _report("workspace", w.id, "agents", side_counts([a for a in world.agents if a.workspace_id == w.id]),
                 old, sent, seq)
         _report("workspace", w.id, "outside", "", old, sent, seq)  # now part of the session rows
-        lines = session_lines(w.label, [a for a in world.agents if a.workspace_id == w.id] + outside)
+        lines = session_lines(w.label, [a for a in world.agents if a.workspace_id == w.id] + outside,
+                              folded.get(p.root, False))
         for i in range(SESSION_ROWS):
             _report("workspace", w.id, f"s{i + 1}", lines[i] if i < len(lines) else "", old, sent, seq)
         # a worktree workspace is named after the session(s) working in it, as your CLI shows them
@@ -213,9 +257,14 @@ def sync(force: bool = False) -> None:
         label = "needs reply" if a.status == "reply" else ""
         k = f"pane:{a.pane_id}:state-label"
         if old.get(k) != label:
-            args = ["--agent", a.cli, "--state-label", f"idle={label}"] if label else ["--clear-state-labels"]
-            herdr.run("pane", "report-metadata", a.pane_id, "--source", SOURCE, *args, "--seq", next(_SEQ),
-                      check=False)
+            params = ({"agent": a.cli, "state_labels": {"idle": label}} if label else {"clear_state_labels": True})
+            try:
+                herdr.request("pane.report_metadata", {"pane_id": a.pane_id, "source": SOURCE,
+                                                       "seq": int(next(_SEQ)), **params}, timeout=6)
+            except (herdr.HerdrError, OSError, ValueError):
+                args = ["--agent", a.cli, "--state-label", f"idle={label}"] if label else ["--clear-state-labels"]
+                herdr.run("pane", "report-metadata", a.pane_id, "--source", SOURCE, *args, "--seq", next(_SEQ),
+                          check=False)
         sent[k] = label
         if (label and before is not None and a.pane_id not in before
                 and settings.load().alerts.get("toast_reply", True)):
@@ -233,8 +282,7 @@ def sync(force: bool = False) -> None:
         pass
 
     # herdr's Agents panel, nested by project: heading row, ├/└ branches, the worktree below
-    from . import startup
-    for a, order, head, line, lane, hidden in agent_tree(world.agents, startup.ui_state().get("agents_folded", {})):
+    for a, order, head, line, lane, hidden in agent_tree(world.agents, folded):
         _report("pane", a.pane_id, "hide", "1" if hidden else "", old, sent, seq)
         _report("pane", a.pane_id, "order", order, old, sent, seq)
         _report("pane", a.pane_id, "grp", head, old, sent, seq)
@@ -257,6 +305,11 @@ def sync(force: bool = False) -> None:
             _report("pane", a.pane_id, "subagents", subs, old, sent, seq)
     _flush(sent)
     _save_sent(sent, started, force)
+    if cfg.sort_spaces:
+        try:
+            _sort_spaces(world)
+        except Exception as e:
+            print(f"navigator: spaces not sorted: {e}")
 
 
 def spawn_background() -> None:
@@ -271,11 +324,59 @@ def spawn_background() -> None:
                      close_fds=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+LOCK_STALE = 60  # seconds: a lock older than this belongs to a sync that died
+
+
+def _lock() -> bool:
+    f = settings.state_dir() / "sync.lock"
+    try:
+        fd = os.open(f, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.write(fd, str(os.getpid()).encode())
+        os.close(fd)
+        return True
+    except FileExistsError:
+        try:
+            if time.time() - f.stat().st_mtime > LOCK_STALE:
+                f.unlink()
+                return _lock()
+        except OSError:
+            pass
+        return False
+    except OSError:
+        return True  # no state dir to lock in: just run
+
+
+def coalesced(force: bool = False) -> None:
+    """A burst of herdr events (ten agents changing state at once) starts ten hooks: one syncs,
+    the others only leave a note, and the one syncing runs once more after a note. No pile-up,
+    and nothing reported from a stale view of the world."""
+    note = settings.state_dir() / "sync.again"
+    lock = settings.state_dir() / "sync.lock"
+    while True:
+        if not _lock():
+            try:
+                note.touch()
+            except OSError:
+                pass
+            return
+        try:
+            for _ in range(5):
+                note.unlink(missing_ok=True)
+                sync(force=force)
+                force = False
+                if not note.exists():
+                    break
+        finally:
+            lock.unlink(missing_ok=True)
+        if not note.exists():  # a hook that came in while the lock was being released
+            return
+
+
 def main() -> None:
     try:
         startup = os.environ.get("HERDR_PLUGIN_EVENT") == "startup"
         # after a server start herdr has no metadata: re-report everything
-        sync(force=startup)
+        coalesced(force=startup)
         if startup:
             herdr.run("notification", "show", "herdr navigator ready", "--body",
                       "Press F1 for the Navigator: projects, agents, resume. F4 lists every key.",

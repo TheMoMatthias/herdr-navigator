@@ -599,7 +599,8 @@ class StartupPane(Vertical):
     def open_session(self, key: str) -> None:
         r = self.rows_by_key.get(key)
         if r and self.world:
-            self.app.finish(lambda: launch.resume(self.world, r.session))
+            self.app.finish(lambda: launch.resume(self.world, r.session, focus=False),
+                            busy=f"▶ opening {r.session.title[:40]}…")
 
     def menu_items(self, key: str) -> list[tuple[str, str]]:
         if key.startswith("M|"):
@@ -688,7 +689,7 @@ class StartupPane(Vertical):
             self.open_session(key)
         elif choice == "s-goto":
             a = self.world.live_sessions.get(s.id)
-            self.app.finish(lambda: (model.herdr.focus_agent(a.pane_id), f"→ {a.pane_id}")[1])
+            self.app.finish(lambda: (model.herdr.focus_agent(a.pane_id), f"→ {a.pane_id}")[1], jump=True)
         elif choice == "s-relaunch":
             a = self.world.live_sessions.get(s.id)
             self.relaunch_one(a.pane_id, s.cli, s.id, a.display)
@@ -728,7 +729,9 @@ class StartupPane(Vertical):
             self.app.notify("Nothing to open: everything ticked is running.")
             return
         background("navigator.restore", "now")
-        self.app.exit(f"▶ opening {len(rows)} sessions in the background (restore.log has the details)")
+        self.app.notify(f"▶ opening {len(rows)} sessions in the background (restore.log has the details)",
+                        timeout=6)
+        self.app.set_timer(6, self.app.load_world)
 
     @on(StartTable.Box)
     def _box(self, ev: StartTable.Box) -> None:
@@ -779,7 +782,9 @@ class StartupPane(Vertical):
             if bid == "rl-busy":
                 args.append("--busy")
             background(*args)
-            self.app.exit("↻ relaunching in the background")
+            self.query_one("#relaunch-box").remove_class("show")
+            self.app.notify("↻ relaunching in the background", timeout=6)
+            self.app.set_timer(8, self.app.load_world)
         elif bid == "rl-cancel":
             self.query_one("#relaunch-box").remove_class("show")
 

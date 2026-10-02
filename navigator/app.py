@@ -95,7 +95,7 @@ HELP = {
                "(a folded one still shows who needs you). Those that need you come first, longest wait first:\n"
                "⚠ waits for an approval or answers a question · ⏳ its last message asks you something · ✔ finished.\n"
                "○ Parked = idle, nothing asked. Waits = how long it has been waiting. Ctx = context fill.\n\n"
-               "⚑ Next waiting (g) selects the next one that needs you and puts you in the message box.\n"
+               "⚑ Next (g) selects the next one that needs you and puts you in the message box.\n"
                "Answer: when it shows numbered options (a question or a permission prompt), click one.\n"
                "Enter or a second click jumps to the agent's pane. Tick ☐ several to send to all of them.\n"
                "⇅ Sort: Recent lists the places you visited last, shells included (what F7 opens).\n"
@@ -485,6 +485,13 @@ class Navigator(App):
     #layout-name { width: 1fr; margin: 0 1 0 0; }
     #saved-table { height: 5; }
     #saved-table.empty { display: none; }
+    /* small windows: give the content the room labels need, so nothing is cut off */
+    App.-narrow #set-nav { width: 15; }
+    App.-narrow #set-body { padding: 0 1; }
+    App.-narrow .form-row .lbl { width: 14; }
+    App.-narrow .key-lbl { display: none; }
+    App.-narrow #proj-detail { min-width: 28; }
+    App.-narrow #btn-layout, App.-narrow #btn-resume { display: none; }
     """
 
     BINDINGS = [
@@ -552,10 +559,20 @@ class Navigator(App):
             start_tab = "settings"
         start_tab = TAB_ALIAS.get(start_tab, start_tab)
         self.start_tab = start_tab if start_tab in TABS else "projects"
+        from . import startup
+        place = startup.ui_state().get("place") or {}
+        self._place = place if time.time() - place.get("at", 0) < 8 * 3600 else {}
+        if start_tab == "projects" and self._place.get("tab") in TABS:  # F1: back where you were
+            self.start_tab = self._place["tab"]
         self.world: World | None = None
+        # the world loads while the screen is still being built (they take about as long)
+        from concurrent.futures import ThreadPoolExecutor
+        self._pool = ThreadPoolExecutor(1, thread_name_prefix="nav-prefetch")
+        self._prefetch = self._pool.submit(model.build)
+        self._pool.shutdown(wait=False)
         self.current_project = None          # project of the focused workspace
         self.agent_filter = ""
-        self.selected_key: str | None = None  # project root, or root|wt|label
+        self.selected_key: str | None = self._place.get("project")  # project root, or root|wt|label
         self.agent_rows: dict[str, tuple[Agent, int]] = {}
         self.pane_layout = None
         self.pane_selected: str | None = None
@@ -591,8 +608,8 @@ class Navigator(App):
                     for label, f in AGENT_FILTERS:
                         yield Btn(label, id=f"flt-{f or 'all'}")
                     yield Static("", classes="grow")
-                    yield Btn("⇅ Needs you first", id="agent-sort", tooltip="Sort: who needs you, or where you were last")
-                    yield Btn("⚑ Next waiting", id="btn-attention", variant="warning",
+                    yield Btn("⇅ Needs you", id="agent-sort", tooltip="Sort: who needs you, or where you were last")
+                    yield Btn("⚑ Next", id="btn-attention", variant="warning",
                               tooltip="Select the next agent that needs you and type your answer (g)")
                 yield Static("", id="agent-empty", classes="empty-note")
                 yield AgentTable(id="agent-table")
@@ -674,6 +691,13 @@ class Navigator(App):
         self.focus_table()
         self.set_interval(5, self.auto_refresh)
 
+    def on_resize(self, ev) -> None:
+        narrow = ev.size.width < 100
+        if narrow != self.has_class("-narrow"):
+            self.set_class(narrow, "-narrow")
+            if self.world:
+                self.fill_agents()  # shorter filter labels
+
     def auto_refresh(self) -> None:
         """Keep Projects and Agents live while the Navigator is open (only when something changed)."""
         if self.world is None or len(self.screen_stack) > 1 or self.active_tab() not in ("projects", "agents"):
@@ -702,7 +726,11 @@ class Navigator(App):
     # ---- data -----------------------------------------------------------------------------
     @work(thread=True, exclusive=True)
     def load_world(self) -> None:
-        world = model.build()
+        pre, self._prefetch = getattr(self, "_prefetch", None), None
+        try:
+            world = pre.result(timeout=30) if pre else model.build()
+        except Exception:
+            world = model.build()
         self.call_from_thread(self.apply_world, world)
 
     def apply_world(self, world: World) -> None:
@@ -852,7 +880,7 @@ class Navigator(App):
             self.call_from_thread(self.notify, str(e)[:300], title="herdr refused", severity="error")
             return
         if op == "focus":
-            self.call_from_thread(self.exit, msg)
+            self.call_from_thread(self.exit, msg)  # a jump: the Navigator would cover the pane
             return
         if op == "split":
             self.pane_selected = None  # follow the new, focused pane
@@ -931,7 +959,8 @@ class Navigator(App):
             self.call_from_thread(self.notify, str(e)[:300], title="herdr refused", severity="error")
             return
         if op == "restore" and not msg.startswith("✗"):
-            self.call_from_thread(self.exit, msg)
+            self.call_from_thread(self.notify, msg, timeout=5)
+            self.load_panes()
             return
         self.call_from_thread(self.notify, msg, timeout=4)
         self.call_from_thread(self.fill_saved)
@@ -1319,16 +1348,16 @@ class Navigator(App):
         if key.startswith("a:"):
             a = next((a for a in self.world.agents if a.key == key[2:]), None)
             if a and a.in_herdr:
-                self.finish(lambda: (model.herdr.focus_agent(a.pane_id), f"→ {a.pane_id}")[1])
+                self.finish(lambda: (model.herdr.focus_agent(a.pane_id), f"→ {a.pane_id}")[1], jump=True)
             elif a and a.mirror_pane:
-                self.finish(lambda: panes.focus(a.mirror_pane))
+                self.finish(lambda: panes.focus(a.mirror_pane), jump=True)
             elif a:
                 self.notify(f"'{a.display}' runs in another window: switch to it there.", timeout=6)
         elif key.startswith("s:"):
             cli, _, sid = key[2:].partition(":")
             s_ = next((x for x in self.world.sessions if x.cli == cli and x.id == sid), None)
             if s_:
-                self.finish(lambda: launch.resume(self.world, s_))
+                self.finish(lambda: launch.resume(self.world, s_, focus=False), busy=f"▶ opening {s_.title[:40]}…")
 
     @on(DataTable.RowHighlighted, "#proj-table")
     def _proj_hl(self, ev: DataTable.RowHighlighted) -> None:
@@ -1591,13 +1620,12 @@ class Navigator(App):
         grouped = self.agent_sort != "recent"
         if not grouped:
             rows.sort(key=lambda a: -max(visited.get(a.pane_id, 0), visited.get(a.mirror_pane, 0)))
-        else:  # nested under their project; who needs you first, the longest waiting first
-            urgency = lambda a: (model.STATE_ORDER.get(a.status, 9), a.waiting_since or 9e18)  # noqa: E731
+        else:  # nested under their project: needs you, then running, then idle; most recent first
             first: dict[str, tuple] = {}
             for a in rows:
-                first[a.project.root] = min(first.get(a.project.root, (99, 9e18)), urgency(a))
-            rows.sort(key=lambda a: (first[a.project.root], a.project.name.lower(), urgency(a),
-                                     a.project.worktree, a.display.lower()))
+                first[a.project.root] = min(first.get(a.project.root, (99,)), model.rank(a))
+            rows.sort(key=lambda a: (first[a.project.root], a.project.name.lower(), model.rank(a),
+                                     a.display.lower()))
         from . import startup, watch
         folded = startup.ui_state().get("agents_folded", {}) if grouped else {}
         watches, watch_icons = watch.load(), watch.KINDS
@@ -1662,7 +1690,7 @@ class Navigator(App):
                     cols[i].label = Text(want)
                     t.refresh()
         sort_btn = self.query_one("#agent-sort", Button)
-        sort_btn.label = "⇅ Recent first" if self.agent_sort == "recent" else "⇅ Needs you first"
+        sort_btn.label = "⇅ Recent" if self.agent_sort == "recent" else "⇅ Needs you"
         counts = model.Counter(a.status for a in self.world.agents)
         counts["needs"] = sum(counts.get(x, 0) for x in NEEDS_YOU)
         counts["outside"] = sum(1 for a in self.world.agents if not a.in_herdr)
@@ -1671,8 +1699,10 @@ class Navigator(App):
         for b in self.query("#agent-bar Button"):
             if b.id and b.id.startswith("flt-"):
                 f = b.id[4:]
-                b.label = f"{names[f]} {counts.get(f, 0)}"
-            b.variant = "primary" if b.id == f"flt-{self.agent_filter or 'all'}" else "default"
+                name = names[f].split()[0] if self.has_class("-narrow") and f != "all" else names[f]
+                b.label = f"{name} {counts.get(f, 0)}"
+                b.variant = "primary" if f == (self.agent_filter or "all") else "default"
+        self.query_one("#agent-bar").refresh(layout=True)  # a count grew a digit: re-measure the buttons
         what = {"needs": "waiting on you", "working": "working", "idle": "parked",
                 "outside": "running in other windows"}.get(self.agent_filter, "")
         self.set_empty("#agent-empty", "#agent-table",
@@ -1683,11 +1713,14 @@ class Navigator(App):
         if keep in keys:
             t.move_cursor(row=keys.index(keep), scroll=False)
             t.scroll_to(y=scroll, animate=False)
+        elif keys and self._place.get("agent") in keys and not getattr(self, "_placed", False):
+            t.move_cursor(row=keys.index(self._place["agent"]))
         elif keys:  # a project header has nothing to act on: start on who needs you, else the first agent
             agent_rows = [i for i, k in enumerate(keys) if self.agent_rows.get(k, (None, -1))[1] == -1
                           and self.agent_rows.get(k, (None, -1))[0]]
             needy = [i for i in agent_rows if self.agent_rows[keys[i]][0].status in NEEDS_YOU]
             t.move_cursor(row=(needy or agent_rows or [0])[0])
+        self._placed = bool(keys)
         live = {a.pane_id for a in self.world.agents if a.in_herdr}
         self.marked &= live
         send = self.query_one("#send-msg", Button)
@@ -1870,9 +1903,10 @@ class Navigator(App):
         if wt and wt.exists:
             p = model.projects.Project(v.project.root, v.project.name, wt.label, v.project.path, wt.path)
             self.finish(lambda: launch._open_in_tab(self.world, p, wt.path, f"{cli} {wt.label}",
-                                                    settings.load().launch.get(f"{cli}_new", cli)))
+                                                    settings.load().launch.get(f"{cli}_new", cli), focus=False),
+                        busy=f"▶ starting {cli}…")
         else:
-            self.finish(lambda: launch.new_agent(self.world, v.project, cli))
+            self.finish(lambda: launch.new_agent(self.world, v.project, cli, focus=False), busy=f"▶ starting {cli}…")
 
     def finish_worktree(self) -> None:
         from . import worktrees
@@ -1902,7 +1936,7 @@ class Navigator(App):
         entries = digest.items(world, self.seen_before)
         if entries:
             self.push_screen(Digest(entries, age(self.seen_before).strip()),
-                             lambda pane: pane and self.finish(lambda: panes.focus(pane)))
+                             lambda pane: pane and self.finish(lambda: panes.focus(pane), jump=True))
 
     def action_new_dialog(self) -> None:
         v, wt = self.selected()
@@ -1920,8 +1954,10 @@ class Navigator(App):
             p = v.project
             if wt and wt.exists and not r["branch"]:
                 p = model.projects.Project(v.project.root, v.project.name, wt.label, v.project.path, wt.path)
+            only = getattr(self, "new_only", False)  # from herdr's workspace menu: go to it
             self.finish(lambda: launch.new_session(self.world, p, r["folder"] or folder, r["cli"], r["name"],
-                                                   r["prefs"], r["branch"]))
+                                                   r["prefs"], r["branch"], focus=only),
+                        busy=f"▶ starting {r['name'] or r['cli']}…")
         self.push_screen(NewSession(clis, folder, v.project.label + (f" ⎇ {wt.label}" if wt else ""), is_git), done)
 
     def action_open(self) -> None:
@@ -1938,16 +1974,16 @@ class Navigator(App):
                     self.notify(f"{wt.label} was removed from disk", severity="warning")
                     return
                 p = model.projects.Project(v.project.root, v.project.name, wt.label, v.project.path, wt.path)
-                self.finish(lambda: launch.goto_project(self.world, p, wt.path))
+                self.finish(lambda: launch.goto_project(self.world, p, wt.path), jump=True)
             elif v:
-                self.finish(lambda: launch.goto_project(self.world, v.project))
+                self.finish(lambda: launch.goto_project(self.world, v.project), jump=True)
         elif tab == "agents":
             t = self.query_one("#agent-table", DataTable)
             if not t.row_count:
                 return
             k = t.coordinate_to_cell_key(t.cursor_coordinate).row_key.value
             if k.startswith("pane:"):
-                self.finish(lambda: panes.focus(k[5:]))
+                self.finish(lambda: panes.focus(k[5:]), jump=True)
                 return
             if k.startswith("grp:"):
                 self.fold_agents(k, None)
@@ -1956,24 +1992,85 @@ class Navigator(App):
             if not a:
                 return
             if a.in_herdr:
-                self.finish(lambda: (model.herdr.focus_agent(a.pane_id), f"→ {a.pane_id}")[1])
+                self.finish(lambda: (model.herdr.focus_agent(a.pane_id), f"→ {a.pane_id}")[1], jump=True)
             elif a.mirror_pane:
-                self.finish(lambda: panes.focus(a.mirror_pane))
+                self.finish(lambda: panes.focus(a.mirror_pane), jump=True)
             else:
                 self.notify(f"'{a.name}' runs in another terminal window (pid {a.pid}), so herdr can't "
                             "jump to it. To bring it here: exit it there, then resume it from Sessions (3).",
                             title="Outside herdr", timeout=10)
 
-    def finish(self, fn) -> None:
+    def finish(self, fn, jump: bool = False, busy: str = "") -> None:
+        """Run an action off the UI thread (the screen never freezes or greys out) and stay open
+        where you are. Only a jump (go to a pane, agent or project) closes the Navigator, since it
+        would cover what you jumped to."""
+        self.notify(busy or "Working…", timeout=2)
+        self._run_action(fn, jump)
+
+    @work(thread=True, group="action")
+    def _run_action(self, fn, jump: bool) -> None:
         try:
             msg = fn()
         except Exception as e:  # show it, keep the Navigator open
-            self.notify(str(e)[:300], title="herdr refused", severity="error", timeout=8)
+            self.call_from_thread(self.notify, str(e)[:300], title="herdr refused", severity="error", timeout=8)
             return
         if msg and msg.startswith("✗"):
-            self.notify(msg, severity="warning", timeout=10)
+            self.call_from_thread(self.notify, msg, severity="warning", timeout=10)
             return
-        self.exit(msg)
+        if jump or getattr(self, "new_only", False):
+            self.call_from_thread(self.exit, msg)
+            return
+        if msg:
+            self.call_from_thread(self.notify, msg, timeout=5)
+        self.load_world()  # the new session shows up, the cursor stays where it was
+
+    def exit(self, *args, **kw) -> None:  # type: ignore[override]
+        if not getattr(self, "_nav_closing", False):
+            self.remember_place()
+        self._nav_closing = True
+        super().exit(*args, **kw)
+
+    def _handle_exception(self, error: Exception) -> None:
+        """A background refresh that finds a widget gone (the Navigator closing, a dialog on top)
+        is harmless: note it in the state dir instead of tearing the whole Navigator down."""
+        from textual.css.query import NoMatches
+        from textual.worker import WorkerFailed
+        cause = error.error if isinstance(error, WorkerFailed) else error
+        if isinstance(cause, NoMatches):
+            try:
+                with open(settings.state_dir() / "ui-errors.log", "a", encoding="utf-8") as f:
+                    f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} ignored: {cause}\n")
+            except OSError:
+                pass
+            return
+        super()._handle_exception(error)
+
+    def call_from_thread(self, callback, *args, **kw):  # type: ignore[override]
+        """Workers finishing while the Navigator closes must not crash it: their screen is gone."""
+        from textual.css.query import NoMatches
+        if getattr(self, "_nav_closing", False):
+            return None
+
+        def safe(*a, **k):
+            try:
+                return callback(*a, **k)
+            except NoMatches:
+                return None
+        try:
+            return super().call_from_thread(safe, *args, **kw)
+        except RuntimeError:  # the event loop already stopped
+            return None
+
+    def remember_place(self) -> None:
+        """Where you were (tab, project, agent row), so the next F1 opens right there."""
+        from . import startup
+        try:
+            t = self.query_one("#agent-table", DataTable)
+            agent = t.coordinate_to_cell_key(t.cursor_coordinate).row_key.value if t.row_count else None
+            startup.set_ui("place", {"tab": self.active_tab(), "project": self.selected_key, "agent": agent,
+                                     "at": time.time()})
+        except Exception:
+            pass
 
     # ---- buttons --------------------------------------------------------------------------
     @on(Button.Pressed)

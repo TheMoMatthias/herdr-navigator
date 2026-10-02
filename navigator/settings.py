@@ -45,6 +45,9 @@ open_active_worktrees = true
 # Sessions running in other terminal windows get a "mirror" tab in their project's workspace:
 # it shows what they do and lists them in herdr's Agents panel under their real name.
 mirror_outside = true
+# Keep herdr's Spaces sorted like the Agents panel: who needs you first, then what runs, then
+# the most recently active. A repo moves together with its worktree Spaces. Off = your own order.
+sort_spaces = true
 
 [launch]
 # Commands used by "new agent" and "resume". {id} is the session id.
@@ -177,6 +180,7 @@ class Settings:
     auto_name: bool = True
     open_active_worktrees: bool = True
     mirror_outside: bool = True
+    sort_spaces: bool = True
     launch: dict[str, str] = field(default_factory=dict)
     restore: dict = field(default_factory=dict)
     context: dict = field(default_factory=dict)
@@ -255,6 +259,7 @@ def load() -> Settings:
         auto_name=bool(raw.get("workspaces", {}).get("auto_name", True)),
         open_active_worktrees=bool(raw.get("sidebar", {}).get("open_active_worktrees", True)),
         mirror_outside=bool(raw.get("sidebar", {}).get("mirror_outside", True)),
+        sort_spaces=bool(raw.get("sidebar", {}).get("sort_spaces", True)),
         launch=launch,
         restore={**defaults["restore"], **raw.get("restore", {})},
         context={**defaults["context"], **raw.get("context", {})},

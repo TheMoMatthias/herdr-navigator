@@ -41,6 +41,7 @@ class Agent:
     transcript: str = ""         # the session's transcript file, if known
     context: "insight.Context | None" = None  # how full its context window is
     waiting_since: float = 0.0   # when it last spoke, for agents that wait on you
+    seq: int = 0                 # herdr's state_change_seq: higher = changed state more recently
 
     @property
     def in_herdr(self) -> bool:
@@ -249,6 +250,7 @@ def build(with_sessions: bool = True) -> World:
             session_id=sid, pane_id=a["pane_id"], workspace_id=a.get("workspace_id", ""),
             tab_id=a.get("tab_id", ""), focused=bool(a.get("focused")), pid=r.pid if r else 0,
             activity=r.activity if r else "", subagents=r.subagents if r else [],
+            seq=int(a.get("state_change_seq") or 0),
         ))
     mirror_of = {sid: pane for pane, sid in mirrors.items()}
     for r in running:
@@ -317,6 +319,12 @@ def build(with_sessions: bool = True) -> World:
         key=lambda v: (not v.in_sidebar, -v.attention(), not v.pinned, -v.last_activity, v.project.name.lower()),
     )
     return World(ordered, agents, workspaces, sessions, live_sessions, focused_ws, tab_labels, err)
+
+
+def rank(a: Agent) -> tuple:
+    """Sort key used everywhere agents are listed: who needs you, then what runs, then idle;
+    within each, the most recent state change first (agents in other windows after herdr's)."""
+    return (STATE_ORDER.get(a.status, 9), 0 if a.in_herdr else 1, -a.seq)
 
 
 def age(ts: float) -> str:

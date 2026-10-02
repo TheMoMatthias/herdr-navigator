@@ -99,6 +99,6 @@ def after_change() -> None:
     """Sidebar tokens for workspaces that just appeared."""
     from . import sync
     try:
-        sync.sync()
+        sync.coalesced()
     except Exception:
         pass

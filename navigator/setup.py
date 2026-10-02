@@ -67,6 +67,12 @@ SHELLS = [
     (["prefix+shift+left", "ctrl+alt+shift+left"], ("uiwidth", "-6"), "Navigator: sidebar narrower"),
 ]
 
+# Plugin actions (they get the focused pane as context): (keys, action id, description)
+ACTIONS = [
+    (["prefix+f", "f10"], "fold", "Navigator: fold / unfold this project in the sidebar"),
+    (["prefix+shift+f", "ctrl+alt+shift+f"], "fold-all", "Navigator: fold / unfold every project in the sidebar"),
+]
+
 UI = {
     "agent_panel_sort": "priority",
     "status_indicators": "symbols",
@@ -234,6 +240,11 @@ def install(doc, added: dict) -> list[str]:
     for key, args, desc in SHELLS:
         t = tomlkit.table()
         t.update({"key": key, "type": "shell", "command": launcher(*args), "description": desc})
+        cmds.append(t)
+    for key, action, desc in ACTIONS:
+        t = tomlkit.table()
+        t.update({"key": key, "type": "plugin_action", "description": desc,
+                  "command": f"{settings.PLUGIN_ID}.{action}{'' if WINDOWS else '-unix'}"})
         cmds.append(t)
     added["commands"] = True
     return notes

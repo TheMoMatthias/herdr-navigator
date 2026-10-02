@@ -59,11 +59,13 @@ class SettingsPane(Horizontal):
     #set-nav { width: 22; height: 1fr; border: none; border-right: tall $primary 30%; padding: 0; }
     #set-body { width: 1fr; height: 1fr; padding: 0 2; }
     #set-body > VerticalScroll { height: 1fr; }
+    .acct { height: auto; margin: 0 0 1 0; padding: 0 0 0 1; border-left: tall $primary 40%; }
     .acct-row { height: 1; margin: 0 0 1 0; }
+    .acct-row.last { margin: 0; }
     .acct-name { width: 10; text-style: bold; }
     .acct-who { width: 1fr; color: $text-muted; }
-    .acct-row Select { width: 22; }
-    .acct-row Button { margin: 0 0 0 1; min-width: 3; }
+    .acct-row Select { width: 1fr; max-width: 34; }
+    .acct-row Button { margin: 0 1 0 0; min-width: 3; width: auto; }
     #al-status, #logon-status, #acct-note { height: auto; margin: 0 0 1 0; }
     #al-tg-status { height: auto; margin: 0 0 1 20; }
     #prompt-table { height: auto; max-height: 14; margin: 0 0 1 0; }
@@ -134,7 +136,7 @@ class SettingsPane(Horizontal):
         with Horizontal(classes="form-row"):
             yield Static("Auto-tick newest", classes="lbl")
             yield Field(str(r.get("per_lane", 3)), id="lg-per-lane", classes="num")
-            yield Static("per lane, used in the last", classes="unit")
+            yield Static("per lane · last", classes="unit")
             yield Field(str(r.get("window_days", 3)), id="lg-window", classes="num")
             yield Static("days", classes="unit")
         with Horizontal(classes="form-row"):
@@ -147,9 +149,9 @@ class SettingsPane(Horizontal):
             yield Static("Start", classes="lbl")
             yield Field(str(r.get("logon_delay_seconds", 20)), id="lg-delay", classes="num")
             yield Static("seconds after logon", classes="unit")
-        yield Tick("Claude: start each restored session under its own name (claude -n)",
+        yield Tick("Claude: restore each session under its own name (-n)",
                    bool(r.get("claude_name", True)), id="lg-name")
-        yield Tick("Claude: Remote Control on restored and new sessions (use them from your phone)",
+        yield Tick("Claude: Remote Control on (use sessions from your phone)",
                    bool(r.get("claude_remote_control", False)), id="lg-rc")
         with Horizontal(classes="bar"):
             yield Btn("▶ Open ticked now", id="lg-open", tooltip="Open every ticked session that is not running yet")
@@ -195,19 +197,25 @@ class SettingsPane(Horizontal):
     # ---- accounts -----------------------------------------------------------------------------
     def _accounts(self) -> ComposeResult:
         yield Static("Accounts per CLI", classes="section-title")
-        yield Static("Sign in opens the CLI's own sign-in in a new tab; when it is done, the Navigator offers to "
-                     "restart that CLI's sessions so they use the new login. Save as profile keeps the current "
-                     "login, ⇄ Switch changes to a saved one without signing out.", classes="hint", id="acct-note")
+        yield Static("To add another account: 💾 save the current login as a profile first (so you can come "
+                     "back to it), then 🔑 sign in with the other account. The sign-in opens in a new tab; when it "
+                     "is done the Navigator offers to restart that CLI's sessions on the new login. ⇄ Switch moves "
+                     "between saved profiles without signing in again.", classes="hint", id="acct-note")
         for cli in accounts.clis():
-            with Horizontal(classes="acct-row"):
-                yield Static(cli, classes="acct-name")
-                yield Static("…", id=f"acct-who-{cli}", classes="acct-who")
+            with Vertical(classes="acct"):
+                with Horizontal(classes="acct-row"):
+                    yield Static(cli, classes="acct-name")
+                    yield Static("…", id=f"acct-who-{cli}", classes="acct-who")
                 if profiles.supported(cli):
-                    yield Choice([], prompt="profile", id=f"acct-prof-{cli}")
-                    yield Btn("⇄ Switch", id=f"acct-switch-{cli}", tooltip="Switch to the chosen profile, then relaunch")
-                    yield Btn("Save as profile", id=f"acct-save-{cli}", tooltip="Save the current login as a profile")
-                yield Btn("Sign in", id=f"acct-in-{cli}")
-                yield Btn("Sign out", id=f"acct-out-{cli}")
+                    with Horizontal(classes="acct-row"):
+                        yield Choice([], prompt="saved profiles", id=f"acct-prof-{cli}")
+                        yield Btn("⇄ Switch to it", id=f"acct-switch-{cli}",
+                                  tooltip="Switch to the chosen profile, then relaunch")
+                        yield Btn("💾 Save current login", id=f"acct-save-{cli}",
+                                  tooltip="Save the current login as a profile you can switch back to")
+                with Horizontal(classes="acct-row last"):
+                    yield Btn("🔑 Sign in with another account", id=f"acct-in-{cli}")
+                    yield Btn("Sign out", id=f"acct-out-{cli}")
 
     @work(thread=True, group="accounts")
     def load_accounts(self) -> None:
@@ -223,7 +231,7 @@ class SettingsPane(Horizontal):
             Text.assemble(("○ " if out_ else "● ", "bold red" if out_ else "bold green"), who,
                           (f"  ·  profile {act}" if act else "", "cyan")))
         sign_in = self.query_one(f"#acct-in-{cli}", Button)
-        sign_in.label = "Sign in" if out_ else "Sign in again"
+        sign_in.label = "🔑 Sign in" if out_ else "🔑 Sign in with another account"
         sign_in.variant = "primary" if out_ else "default"
         self.query_one(f"#acct-out-{cli}", Button).disabled = out_
         if profiles.supported(cli):
@@ -296,7 +304,7 @@ class SettingsPane(Horizontal):
             yield Field(str(c.get("blocked_minutes", 10)), id="al-min", classes="num")
             yield Static("minutes (0 = never)", classes="unit")
         yield Tick("Also send the logon restore's result", bool(c.get("on_restore", True)), id="al-restore")
-        yield Tick("Toast in herdr when an agent's last message asks you something",
+        yield Tick("Toast in herdr when an agent asks you something",
                    bool(c.get("toast_reply", True)), id="al-toast")
         with Horizontal(classes="bar"):
             yield Btn("Send test", id="al-test", variant="primary", tooltip="A test message to every channel set up")
@@ -441,6 +449,17 @@ class SettingsPane(Horizontal):
         yield Tick("Sidebar: mirror agents that run outside herdr (read-only)", s.mirror_outside, id="gn-mirror")
         yield Tick("Name new workspaces after their project automatically", s.auto_name, id="gn-autoname")
         yield Tick("Hide sub-agent sessions in the lists", s.hide_subagents, id="gn-hidesub")
+        yield Tick("Sidebar: sort Spaces by need, running, recent", s.sort_spaces,
+                   id="gn-sortspaces")
+        from . import termfont
+        size = termfont.get()
+        with Horizontal(classes="form-row"):
+            yield Static("Font size", classes="lbl")
+            yield Btn("A−", id="gn-font-minus", disabled=size is None, tooltip="Smaller text in every tab")
+            yield Static(str(size) if size else "—", id="gn-font-val", classes="unit")
+            yield Btn("A+", id="gn-font-plus", disabled=size is None, tooltip="Larger text in every tab")
+            yield Static("Windows Terminal, all tabs" if size else "use your terminal's zoom: Ctrl + / Ctrl −",
+                         classes="unit")
         with Horizontal(classes="form-row"):
             yield Static("List sessions", classes="lbl")
             yield Static("of the last", classes="unit")
@@ -459,12 +478,17 @@ class SettingsPane(Horizontal):
         val = lambda i: self.query_one(i, Checkbox).value
         s = settings.load()
         age = _int(self.query_one("#gn-age", Input).value, s.max_age_days)
-        new = (val("#gn-wt"), val("#gn-mirror"), val("#gn-autoname"), val("#gn-hidesub"), age)
-        if new == (s.open_active_worktrees, s.mirror_outside, s.auto_name, s.hide_subagents, s.max_age_days):
+        new = (val("#gn-wt"), val("#gn-mirror"), val("#gn-autoname"), val("#gn-hidesub"), age, val("#gn-sortspaces"))
+        if new == (s.open_active_worktrees, s.mirror_outside, s.auto_name, s.hide_subagents, s.max_age_days,
+                   s.sort_spaces):
             return
-        settings.save_values("sidebar", {"open_active_worktrees": new[0], "mirror_outside": new[1]})
+        settings.save_values("sidebar", {"open_active_worktrees": new[0], "mirror_outside": new[1],
+                                         "sort_spaces": new[5]})
         settings.save_values("workspaces", {"auto_name": new[2]})
         settings.save_values("sessions", {"hide_subagents": new[3], "max_age_days": age})
+        if new[5] != s.sort_spaces:
+            from . import sync
+            sync.spawn_background()  # herdr's Spaces follow (or keep their order from now on)
         self._saved("Settings")
         self.app.load_world()
 
@@ -619,6 +643,11 @@ class SettingsPane(Horizontal):
             open_file(settings.settings_path())
         elif bid in ("sbw-minus", "sbw-plus"):
             self.app.action_sidebar_width("-6" if bid == "sbw-minus" else "+6")
+        elif bid in ("gn-font-minus", "gn-font-plus"):
+            from . import termfont
+            msg = termfont.set_size((termfont.get() or termfont.DEFAULT) + (-1 if bid == "gn-font-minus" else 1))
+            self.query_one("#gn-font-val", Static).update(str(termfont.get() or "—"))
+            self.app.notify(msg, severity="error" if msg.startswith("✗") else "information", timeout=4)
 
     @on(Input.Submitted, "#al-tg")
     def _tg_enter(self, ev: Input.Submitted) -> None:

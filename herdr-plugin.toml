@@ -1,6 +1,6 @@
 id = "momatthias.navigator"
 name = "Navigator"
-version = "0.14.2"
+version = "0.15.0"
 min_herdr_version = "0.9.3"
 description = "Clickable navigator for herdr: projects, worktrees, every agent and sub-agent (in herdr or not), cross-CLI session resume, project-grouped sidebar, key hints"
 platforms = ["linux", "macos", "windows"]
@@ -278,14 +278,28 @@ command = ["sh", "run.sh", "newhere"]
 # herdr's Agents panel is a tree by project: fold or unfold one (right-click a pane or a workspace)
 [[actions]]
 id = "fold"
-title = "Navigator: fold / unfold this project in Agents"
+title = "Navigator: fold / unfold this project in the sidebar"
 contexts = ["pane", "workspace"]
 platforms = ["windows"]
 command = ["cmd.exe", "/d", "/c", "run.cmd", "fold"]
 
 [[actions]]
 id = "fold-unix"
-title = "Navigator: fold / unfold this project in Agents"
+title = "Navigator: fold / unfold this project in the sidebar"
 contexts = ["pane", "workspace"]
 platforms = ["linux", "macos"]
 command = ["sh", "run.sh", "fold"]
+
+[[actions]]
+id = "fold-all"
+title = "Navigator: fold / unfold every project in the sidebar"
+contexts = ["pane", "workspace"]
+platforms = ["windows"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "fold", "all"]
+
+[[actions]]
+id = "fold-all-unix"
+title = "Navigator: fold / unfold every project in the sidebar"
+contexts = ["pane", "workspace"]
+platforms = ["linux", "macos"]
+command = ["sh", "run.sh", "fold", "all"]

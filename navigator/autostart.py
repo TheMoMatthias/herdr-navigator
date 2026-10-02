@@ -7,9 +7,11 @@ macOS: a LaunchAgent with RunAtLoad. Linux: an XDG autostart .desktop file.
 """
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -39,11 +41,36 @@ def _ps(script: str, **env: str) -> subprocess.CompletedProcess:
                           env={**os.environ, **env}, capture_output=True, text=True, creationflags=_NO_WINDOW)
 
 
-def installed() -> bool:
+_CACHE_SECONDS = 3600  # the task only changes through install()/uninstall(), which update the cache
+
+
+def _cache_file() -> Path:
+    from . import settings
+    return settings.state_dir() / "autostart.json"
+
+
+def _remember(on: bool) -> bool:
+    try:
+        _cache_file().write_text(json.dumps({"installed": on, "at": time.time()}), encoding="utf-8")
+    except OSError:
+        pass
+    return on
+
+
+def installed(fresh: bool = False) -> bool:
+    """Is the logon task there? Asking Windows (schtasks) costs ~0.6 s, so the answer is cached:
+    the Navigator asks this while it draws."""
+    if not fresh:
+        try:
+            d = json.loads(_cache_file().read_text(encoding="utf-8"))
+            if time.time() - d.get("at", 0) < _CACHE_SECONDS:
+                return bool(d.get("installed"))
+        except (OSError, ValueError):
+            pass
     if os.name == "nt":
         r = subprocess.run(["schtasks", "/Query", "/TN", TASK], capture_output=True, creationflags=_NO_WINDOW)
-        return r.returncode == 0
-    return entry_path().exists()
+        return _remember(r.returncode == 0)
+    return _remember(entry_path().exists())
 
 
 def _env() -> dict[str, str]:
@@ -74,7 +101,7 @@ def install() -> str:
             "-Description 'herdr Navigator: reopen ticked sessions at logon' -Force -ErrorAction Stop | Out-Null"
         )
         r = _ps(ps, NAV_PY=str(py), NAV_ROOT=str(ROOT), NAV_TASK=TASK)
-        if r.returncode != 0 or not installed():
+        if r.returncode != 0 or not installed(fresh=True):
             return f"✗ could not register the logon task: {(r.stderr or r.stdout).strip()[:200]}"
     elif sys.platform == "darwin":
         env_xml = "".join(f"<key>{k}</key><string>{v}</string>" for k, v in _env().items() if v)
@@ -98,18 +125,21 @@ Exec=sh -c "cd '{ROOT}' && env {envs} '{py}' -m navigator.restore boot"
 X-GNOME-Autostart-enabled=true
 NoDisplay=true
 """, encoding="utf-8")
+    if os.name != "nt":
+        _remember(True)
     return f"⏻ startup restore on ({p.name})"
 
 
 def uninstall() -> str:
     if os.name == "nt":
-        if not installed():
+        if not installed(fresh=True):
             return "startup restore was already off"
         _ps("Unregister-ScheduledTask -TaskName $env:NAV_TASK -Confirm:$false", NAV_TASK=TASK)
-        return "⏻ startup restore off" if not installed() else "✗ could not remove the logon task"
+        return "⏻ startup restore off" if not installed(fresh=True) else "✗ could not remove the logon task"
     p = entry_path()
     if p.exists():
         p.unlink()
+        _remember(False)
         return "⏻ startup restore off"
     return "startup restore was already off"
 

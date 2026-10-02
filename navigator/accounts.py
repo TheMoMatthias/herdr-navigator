@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import functools
 import shlex
 import shutil
 import subprocess
@@ -22,6 +23,11 @@ _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 _DETACHED = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
 
 
+@functools.lru_cache(maxsize=None)
+def _which(exe: str) -> bool:
+    return bool(shutil.which(exe))  # a PATH scan: ~0.1 s each on Windows, asked while drawing
+
+
 def clis() -> dict[str, dict]:
     """CLIs with a login command whose program is installed."""
     out = {}
@@ -31,7 +37,7 @@ def clis() -> dict[str, dict]:
             exe = shlex.split(cmd)[0] if cmd else ""
         except ValueError:
             continue
-        if exe and shutil.which(exe):
+        if exe and _which(exe):
             out[cli] = c
     return out
 

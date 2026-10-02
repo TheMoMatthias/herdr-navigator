@@ -110,15 +110,16 @@ def _run_in(ws_id: str, created: bool, home: str, cwd: str, label: str, command:
     return ws_id, pane, tab
 
 
-def _open_in_tab(world: World, project: Project, cwd: str, label: str, command: str) -> str:
+def _open_in_tab(world: World, project: Project, cwd: str, label: str, command: str, focus: bool = True) -> str:
     ws_id, pane, tab = open_tab(world, project, cwd, label, command)
-    herdr.focus_workspace(ws_id)
-    if tab:
-        herdr.focus_tab(tab)
-    return f"▶ {command}  in {project.label} ({pane})"
+    if focus:
+        herdr.focus_workspace(ws_id)
+        if tab:
+            herdr.focus_tab(tab)
+    return f"▶ {label or command}  in {project.label} ({pane})"
 
 
-def resume(world: World, s: Session) -> str:
+def resume(world: World, s: Session, focus: bool = True) -> str:
     from . import model
     try:  # the list may be minutes old: check what runs right now, so a session is never forked
         world = model.build()
@@ -126,7 +127,8 @@ def resume(world: World, s: Session) -> str:
         pass
     live = world.live_sessions.get(s.id)
     if live and live.in_herdr:
-        herdr.focus_agent(live.pane_id)
+        if focus:
+            herdr.focus_agent(live.pane_id)
         return f"→ already running in {live.pane_id}"
     if live:
         return (f"✗ '{live.name or s.title}' is running in another terminal (pid {live.pid}). "
@@ -136,17 +138,17 @@ def resume(world: World, s: Session) -> str:
     from . import startup
     cmd = startup.launch_command(s.cli, s.id, s.title if s.named else "",
                                  startup.prefs_of(f"{s.cli}:{s.id}"))
-    return _open_in_tab(world, s.project, s.cwd, s.title, cmd or s.resume_command())
+    return _open_in_tab(world, s.project, s.cwd, s.title, cmd or s.resume_command(), focus)
 
 
-def new_agent(world: World, project: Project, cli: str) -> str:
+def new_agent(world: World, project: Project, cli: str, focus: bool = True) -> str:
     cmd = settings.load().launch.get(f"{cli}_new", cli)
     cwd = project.path or project.root
-    return _open_in_tab(world, project, cwd, cli, cmd)
+    return _open_in_tab(world, project, cwd, cli, cmd, focus)
 
 
 def new_session(world: World, project: Project, folder: str, cli: str, name: str = "",
-                prefs: dict | None = None, branch: str = "") -> str:
+                prefs: dict | None = None, branch: str = "", focus: bool = True) -> str:
     """Start a named session with launch options; with `branch`, in a new git worktree of the
     project (herdr creates it and groups its workspace under the repo)."""
     from . import startup
@@ -156,7 +158,8 @@ def new_session(world: World, project: Project, folder: str, cli: str, name: str
         repo = project.path or project.root
         primary = next((w for w in world.workspaces if w.project and w.project.root == project.root
                         and not w.project.worktree), None)
-        args = ["worktree", "create", "--cwd", repo, "--branch", branch, "--label", (name or branch)[:28], "--focus"]
+        args = ["worktree", "create", "--cwd", repo, "--branch", branch, "--label", (name or branch)[:28],
+                "--focus" if focus else "--no-focus"]
         if primary:
             args += ["--workspace", primary.id]
         res = herdr.run(*args, timeout=60)
@@ -171,14 +174,15 @@ def new_session(world: World, project: Project, folder: str, cli: str, name: str
             return f"✗ worktree '{branch}' created, but its pane was not found: start {cli} there yourself"
         herdr.pane_run(pane, cmd)
         startup.remember_for_pane(pane, prefs)
-        if ws_id:
+        if ws_id and focus:
             herdr.focus_workspace(ws_id)
         return f"⎇ {branch}: ▶ {cmd}"
     if not os.path.isdir(folder):
         return f"✗ {folder} does not exist"
     ws_id, pane, tab = open_tab(world, project, folder, name or cli, cmd)
     startup.remember_for_pane(pane, prefs)
-    herdr.focus_workspace(ws_id)
-    if tab:
-        herdr.focus_tab(tab)
-    return f"▶ {cmd}  in {project.label} ({pane})"
+    if focus:
+        herdr.focus_workspace(ws_id)
+        if tab:
+            herdr.focus_tab(tab)
+    return f"▶ {name or cmd}  in {project.label} ({pane})"
