@@ -258,3 +258,36 @@ def test_preview_drops_the_cli_input_box_and_status_line():
                      "❯ ", "  Model: Opus | [███░░] 36%", "  ⏵⏵ bypass permissions on"])
     assert conversation_lines(raw) == ["● Done: tests pass.", "  ⎿ 81 passed"]
     assert conversation_lines("just text") == ["just text"]
+
+
+def test_asks_you_spots_a_question_at_the_end():
+    from navigator.insight import asks_you
+    assert asks_you("Done.\n\nShould I also push it?")
+    assert asks_you("All set. Let me know which option you prefer.")
+    assert asks_you("- **Memory:** upgrade to 64 GB?\n\nThe handover is updated.")
+    assert not asks_you("Done. Tests pass and the branch is pushed.")
+    assert not asks_you("```\nwhy?\n```\nFixed it.")
+    assert not asks_you("")
+
+
+def test_prompt_options_reads_a_permission_prompt():
+    from navigator.app import prompt_options
+    raw = "\n".join(["Bash command", "  rm -rf build", "Do you want to proceed?",
+                     "❯ 1. Yes", "  2. Yes, and don't ask again for rm commands", "  3. No, and tell Claude (esc)"])
+    assert prompt_options(raw) == [("1", "Yes"), ("2", "Yes, and don't ask again for rm commands"),
+                                   ("3", "No, and tell Claude (esc)")]
+    assert prompt_options("1. only one line") == []
+    assert prompt_options("step 1. first\nnothing else") == []
+
+
+def test_preview_drops_both_rules_of_the_input_box():
+    from navigator.app import conversation_lines
+    raw = "\n".join(["● It asks: upgrade to 64 GB?", "─" * 40 + " STORAGE ─", "❯ ", "─" * 50,
+                     "  Model: Opus | 36%"])
+    assert conversation_lines(raw) == ["● It asks: upgrade to 64 GB?"]
+
+
+def test_preview_keeps_a_rule_inside_the_answer():
+    from navigator.app import conversation_lines
+    raw = "\n".join(["Part one", "─" * 40, "Part two", "", "─" * 40 + " X ─", "❯ ", "─" * 40, "status"])
+    assert conversation_lines(raw) == ["Part one", "Part two"]

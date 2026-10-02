@@ -11,8 +11,10 @@ from dataclasses import dataclass, field
 from . import asks, herdr, insight, live, projects, settings
 from .sessions import Session, is_listed, load_sessions
 
-STATE_ORDER = {"blocked": 0, "done": 1, "working": 2, "idle": 3, "unknown": 4}
-STATE_ICON = {"blocked": "⚠", "done": "✔", "working": "◐", "idle": "○", "unknown": "?"}
+# "reply" is the Navigator's own: idle in herdr, but its last message asks you something.
+STATE_ORDER = {"blocked": 0, "reply": 1, "done": 2, "working": 3, "idle": 4, "unknown": 5}
+STATE_ICON = {"blocked": "⚠", "reply": "⏳", "done": "✔", "working": "◐", "idle": "○", "unknown": "?"}
+NEEDS_YOU = ("blocked", "reply", "done")
 # Claude's registry: busy (thinking), shell (running a command), idle; Codex (inferred): active
 EXTERNAL_STATUS = {"busy": "working", "shell": "working", "active": "working", "idle": "idle",
                    "waiting": "blocked", "permission": "blocked", "blocked": "blocked"}
@@ -38,6 +40,7 @@ class Agent:
     question: "asks.Question | None" = None  # a question it is waiting for you to answer
     transcript: str = ""         # the session's transcript file, if known
     context: "insight.Context | None" = None  # how full its context window is
+    waiting_since: float = 0.0   # when it last spoke, for agents that wait on you
 
     @property
     def in_herdr(self) -> bool:
@@ -103,7 +106,7 @@ class ProjectView:
 
     def attention(self) -> int:
         c = self.counts()
-        return c["blocked"] * 1000 + c["done"] * 100 + c["working"] * 10 + c["idle"]
+        return (c["blocked"] + c["reply"]) * 1000 + c["done"] * 100 + c["working"] * 10 + c["idle"]
 
     def active_worktrees(self) -> list[Worktree]:
         return [w for w in self.worktrees.values() if w.agents]
@@ -165,7 +168,7 @@ def mirror_panes() -> dict[str, str]:
 
 
 def summarize(counts: Counter) -> str:
-    parts = [f"{STATE_ICON[s]}{counts[s]}" for s in ("blocked", "done", "working", "idle") if counts.get(s)]
+    parts = [f"{STATE_ICON[s]}{counts[s]}" for s in ("blocked", "reply", "done", "working", "idle") if counts.get(s)]
     return " ".join(parts)
 
 
@@ -303,6 +306,10 @@ def build(with_sessions: bool = True) -> World:
         a.question = asks.pending(a.cli, a.transcript)  # a pending question means it waits for you
         if a.question:
             a.status = "blocked"
+        elif a.status == "idle" and insight.asks_you(insight.last_answer(a.cli, a.transcript, 1200)):
+            a.status = "reply"
+        if a.status in NEEDS_YOU:
+            a.waiting_since = insight.last_answer_at(a.cli, a.transcript)
 
     live_sessions = {a.session_id: a for a in agents if a.session_id}
     ordered = sorted(

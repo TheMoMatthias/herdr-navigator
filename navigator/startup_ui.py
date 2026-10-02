@@ -81,8 +81,8 @@ class ContextMenu(ModalScreen):
 
 LEGEND = Text.assemble(
     ("Symbols  ", "bold"),
-    ("⚠", "bold red"), " waiting on you   ", ("✔", "bold green"), " done   ", ("◐", "yellow"), " working   ",
-    ("○", "dim"), " idle   ", ("❓", "bold red"), " asks a question   ", ("↗", "magenta"), " other window   ",
+    ("⚠", "bold red"), " waits for approval   ", ("⏳", "bold #ff9e64"), " asks you   ", ("✔", "bold green"),
+    " done   ", ("◐", "yellow"), " working   ", ("○", "dim"), " parked\n         ", ("❓", "bold red"), " asks a question   ", ("↗", "magenta"), " other window   ",
     ("●", "green"), " running here\n         ",
     ("⎇", "#c678dd"), " worktree   ", ("↳", "yellow"), " sub-agent   ", ("▲", "bold red"), " context almost full   ",
     ("▸", ""), " tool it runs   ", ("☑", "green"), " on   ", ("☐", "dim"), " off   ",
@@ -111,7 +111,7 @@ class HelpScreen(ModalScreen):
             yield Static(self.title_, id="hp-title")
             yield Static(self.body)
             yield Static(LEGEND, id="hp-legend")
-            yield Static("Keys 1–7 switch tabs · the footer shows the keys that work right now · "
+            yield Static("Keys 1–6 switch tabs · the footer shows the keys that work right now · "
                          "⚙ Settings › Keys lists every key · Esc closes", id="hp-foot")
 
     def on_click(self) -> None:

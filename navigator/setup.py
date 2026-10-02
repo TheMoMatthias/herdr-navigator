@@ -56,7 +56,8 @@ POPUPS = [
     (["prefix+i", "f3"], "agents", "Navigator: every agent and sub-agent"),
     (["prefix+slash", "f4"], "keys", "Navigator: key cheat sheet"),
     (["prefix+m", "f6"], "panes", "Navigator: layout (arrange, split, move panes)"),
-    (["prefix+shift+o", "f7"], "recent", "Navigator: recent places"),
+    (["prefix+shift+o", "f7"], "recent", "Navigator: agents, where you were last first"),
+    (["prefix+comma", "f9"], "settings", "Navigator: settings (logon, accounts, alerts, updates)"),
 ]
 
 # Detached commands (no window): (keys, launcher args, description)

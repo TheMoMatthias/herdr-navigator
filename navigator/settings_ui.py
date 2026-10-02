@@ -27,7 +27,7 @@ from . import accounts, autostart, profiles, prompts, settings
 from .ui import Btn, Choice, Field, Tick
 
 SECTIONS = [("logon", "⏻  Logon restore"), ("accounts", "◉  Accounts"), ("alerts", "◔  Phone alerts"),
-            ("prompts", "☰  Prompts"), ("general", "⚙  General"), ("keys", "⌨  Keys")]
+            ("prompts", "☰  Prompts"), ("general", "⚙  General"), ("updates", "⟳  Updates"), ("keys", "⌨  Keys")]
 
 
 def open_file(path: Path) -> None:
@@ -87,6 +87,8 @@ class SettingsPane(Horizontal):
                 yield from self._prompts()
             with VerticalScroll(id="general"):
                 yield from self._general()
+            with VerticalScroll(id="updates"):
+                yield from self._updates()
             with VerticalScroll(id="keys"):
                 yield Static(id="keys-body")
 
@@ -113,6 +115,8 @@ class SettingsPane(Horizontal):
             nav.highlighted = idx
         if key == "accounts":
             self.load_accounts()
+        if key == "updates":
+            self.check_updates()
 
     @on(OptionList.OptionHighlighted, "#set-nav")
     def _nav(self, ev: OptionList.OptionHighlighted) -> None:
@@ -491,6 +495,64 @@ class SettingsPane(Horizontal):
     def _checked(self, ev: Checkbox.Changed) -> None:
         self._autosave(ev.checkbox.id or "")
 
+    # ---- updates ------------------------------------------------------------------------------
+    def _updates(self) -> ComposeResult:
+        from . import updater
+        yield Static("Updates", classes="section-title")
+        yield Static(Text.assemble(("Installed ", "dim"), (updater.installed_version(), "bold"),
+                                   ("   ·   from ", "dim"), (str(updater.ROOT), "dim")), id="up-version")
+        yield Static("Checking GitHub…", id="up-status")
+        with Horizontal(classes="bar"):
+            yield Btn("⬇ Update now", id="up-go", variant="primary", disabled=True,
+                      tooltip="Fetch the latest version and switch to it (never over local changes)")
+            yield Btn("⟳ Check again", id="up-check")
+        yield Static("", id="up-new")
+        yield Static("After an update, close the Navigator (Esc) and open it again to use the new version. "
+                     "Updates only fast-forward: local changes or local commits stop them, nothing is overwritten.",
+                     classes="hint")
+
+    @work(thread=True, exclusive=True, group="updates")
+    def check_updates(self) -> None:
+        from . import updater
+        self.app.call_from_thread(self.query_one("#up-status", Static).update, Text("Checking GitHub…", style="dim"))
+        st = updater.check()
+        self.app.call_from_thread(self.show_updates, st)
+
+    def show_updates(self, st) -> None:
+        status = self.query_one("#up-status", Static)
+        go = self.query_one("#up-go", Button)
+        new = self.query_one("#up-new", Static)
+        go.disabled = not (st.ok and st.behind and not st.dirty and not st.ahead)
+        if not st.ok:
+            status.update(Text("✗ " + st.why, style="bold red"))
+            new.update("")
+            return
+        if st.behind:
+            msg = Text.assemble((f"⬆ {st.latest} is available", "bold green"),
+                                (f"  ({st.behind} change{'s' * (st.behind != 1)})", "dim"))
+            if st.dirty:
+                msg.append(f"\nLocal changes block the update: {', '.join(st.dirty[:4])}", style="yellow")
+            if st.ahead:
+                msg.append(f"\nThis checkout has {st.ahead} commit(s) of its own: merge by hand", style="yellow")
+            status.update(msg)
+            new.update(Text("\n".join("  • " + c for c in st.new), style=""))
+        else:
+            extra = f"  ·  {st.ahead} local commit(s) not on GitHub yet" if st.ahead else ""
+            status.update(Text.assemble(("● Up to date", "bold green"), (f"  ({st.version}){extra}", "dim")))
+            new.update("")
+
+    @work(thread=True, exclusive=True, group="updates")
+    def run_update(self) -> None:
+        from . import updater
+        self.app.call_from_thread(self.query_one("#up-status", Static).update, Text("Updating…", style="bold"))
+        msg = updater.update()
+        bad = msg.startswith("✗")
+        self.app.call_from_thread(self.app.notify, msg + ("" if bad else "  Close (Esc) and reopen the Navigator."),
+                                  title="Update", severity="error" if bad else "information", timeout=12)
+        self.app.call_from_thread(self.query_one("#up-version", Static).update,
+                                  Text.assemble(("Installed ", "dim"), (updater.installed_version(), "bold")))
+        self.check_updates()
+
     # ---- buttons ------------------------------------------------------------------------------
     def on_button_pressed(self, ev) -> None:
         bid = ev.button.id or ""
@@ -542,6 +604,10 @@ class SettingsPane(Horizontal):
             else:
                 self.app.notify(f"'{name}' lives in the settings file ([prompts]): remove it there.",
                                 severity="warning")
+        elif bid == "up-check":
+            self.check_updates()
+        elif bid == "up-go":
+            self.run_update()
         elif bid == "gn-file":
             open_file(settings.settings_path())
         elif bid in ("sbw-minus", "sbw-plus"):

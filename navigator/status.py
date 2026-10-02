@@ -25,7 +25,7 @@ def _plain(counts: Counter) -> str:
 def line() -> str:
     """Most urgent first, then where you are, then the keys; every item says what it is and
     which key acts on it."""
-    menu = "F1 Navigator · F2 Sessions · F3 Agents · F6 Layout · Ctrl+Alt+R Back"
+    menu = "F1 Navigator · F2 Sessions · F3 Agents · F6 Layout · F9 Settings · Ctrl+Alt+R Back"
     try:
         snap = herdr.snapshot()
     except Exception:

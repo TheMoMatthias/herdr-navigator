@@ -24,7 +24,7 @@ everything your coding agents are doing:
   split, swap, resize, zoom, even out, move to a new tab or workspace, rename or close it
   with buttons. Or open a new tab from a preset (2 columns, 2×2 grid, …).
 * **Get back and get to what matters:** `Ctrl+Alt+R` flips to the pane you were just in,
-  `F7` lists every recent place, and `Ctrl+Alt+I` jumps to the next agent that needs you
+  `F7` lists where you were last, and `Ctrl+Alt+I` jumps to the next agent that needs you
   (blocked first, then finished, oldest first).
 * **Talk to agents from one place:** read an agent's latest output, send it a message, or
   answer its prompt (`⏎` / `Esc` / `^C`) without switching panes.
@@ -70,7 +70,8 @@ herdr plugin uninstall momatthias.navigator
 | `F3` · `Ctrl+B › I` | **Agents.** Every agent, inside herdr or not, with its current activity |
 | `F4` · `Ctrl+B › /` | **Keys.** Your live key bindings (⚙ Settings › Keys) |
 | `F6` · `Ctrl+B › M` | **Layout.** One-click shapes, drag-and-drop pane map, pane buttons, saved layouts |
-| `F7` · `Ctrl+B › Shift+O` | **Recent.** Every place you were, most recent first |
+| `F7` · `Ctrl+B › Shift+O` | **Recent.** Agents (and other panes) in the order you last visited them |
+| `F9` · `Ctrl+B › ,` | **Settings.** Logon restore, accounts, phone alerts, prompts, updates |
 | `Ctrl+Alt+R` · `Ctrl+B › ;` | Back to the previous pane (press again to flip back) |
 | `Ctrl+Alt+I` · `F8` | Jump to the next agent that needs you |
 | `Ctrl+Alt+Shift+→` / `←` | herdr sidebar wider / narrower, applied live |
@@ -78,8 +79,8 @@ herdr plugin uninstall momatthias.navigator
 Inside the Navigator:
 
 - **Seven tabs, the same shape each:** a one-row toolbar on top (the main action is blue),
-  the list below, and the keys that work right now in the footer. Keys `1`–`7` switch tabs:
-  Projects · Agents · Sessions · Layout · Recent · Usage · ⚙ Settings. Buttons with `▾` open a
+  the list below, and the keys that work right now in the footer. Keys `1`–`6` switch tabs:
+  Projects · Agents · Sessions · Layout · Usage · ⚙ Settings. Buttons with `▾` open a
   small menu. Every button has a tooltip. **Right-click a row** (or press `.`) for everything
   you can do with it, and **`?`** explains the tab you are on.
 - **⚙ Settings** holds everything you set up once, in sections: *Logon restore*, *Accounts*,
@@ -178,6 +179,15 @@ presses ⏎ / Esc / ^C, in every ticked agent at once.
 
 ### Working with many agents
 
+- **Who needs you.** Agents puts first the agents that need you, longest wait first, with a
+  `Waits` column: `⚠` waits for an approval or a question, `⏳` finished with a message that
+  asks you something (a question at its end, "should I…", "let me know…"), `✔` finished and
+  not yet seen. The rest is `○ Parked`. The top bar counts them (`⏳ 2 need a reply`).
+- **Answer without leaving.** `⚑ Next waiting` (`g`) selects the next agent that needs you and
+  puts you in the message box, its last words in the preview. When it shows numbered choices
+  (a permission prompt or a question), **Answer: [1 Yes] [2 …] [3 No]** buttons press that number.
+- **Recent first.** `⇅` sorts Agents by your last visit instead, other panes included (`F7`).
+
 - **Context gauge.** Agents has a `Ctx` column that shows how full each session's context is
   (yellow from 70%, red from 85%), and the top bar warns when one is nearly full. `⇣` sends
   `/compact` to the ticked agents, or to the selected one. Windows come from `[context]` (by model
@@ -209,7 +219,7 @@ in **Agents** as `❓` with the question and its options, also for sessions in o
 
 Always visible in herdr:
 
-- **Tab bar:** `⚠ other-project waiting for you (Ctrl+Alt+I) │ project: 2 working, 1 idle │ 3 sessions outside herdr (F3) │ F1 Menu · F2 Sessions · F6 Layout · F7 Recent · Ctrl+Alt+R Back` (most urgent first, plain words)
+- **Tab bar:** `⚠ other-project waiting for you (Ctrl+Alt+I) │ project: 2 working, 1 idle │ 3 sessions outside herdr (F3) │ F1 Navigator · F2 Sessions · F3 Agents · F6 Layout · F9 Settings · Ctrl+Alt+R Back` (most urgent first, plain words)
 - **Sidebar, spaces:** one group per repo. The repo's own checkout comes first (its second
   line shows the branch, e.g. `main`), and the active worktrees are indented under it, named
   after the session working there. `◐2 ○1` counts agents by state (working, idle, …).
@@ -251,6 +261,10 @@ socket API (`pane.focus`, `layout.*`). Presets always build a *new* tab, so no r
 is ever rebuilt.
 
 ## Settings
+
+**Updates** (⚙ Settings › Updates) checks GitHub for a newer version, lists what changed and
+updates with one click. It only fast-forwards: local changes or local commits stop it, so
+nothing of yours is overwritten. Reopen the Navigator afterwards.
 
 The common settings are in the Navigator itself (⚙ Settings, key `7`). Everything else is in
 `navigator.toml` in the plugin's config directory (`herdr plugin config-dir momatthias.navigator`;
