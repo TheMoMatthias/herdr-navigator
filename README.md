@@ -154,6 +154,30 @@ session, so later relaunches use them too.
 **Send to many:** in Agents, tick agents with ☐ (or Space). `Send` then types the message, or
 presses ⏎ / Esc / ^C, in every ticked agent at once.
 
+### Working with many agents
+
+- **Context gauge.** Agents has a `Ctx` column that shows how full each session's context is
+  (yellow from 70%, red from 85%), and the top bar warns when one is nearly full. `⇣` sends
+  `/compact` to the ticked agents, or to the selected one. Windows come from `[context]` (by model
+  name); Codex reports its own.
+- **Saved prompts.** `☰` sends a saved prompt in one click (Status, Compact, Wrap up, Commit &
+  push, Review, or your own from `[prompts]`). Type a message and pick *＋ Save the message as a
+  prompt* to keep it.
+- **Hand off.** `⇢` sends the selected agent's last answer to another agent, for example to let
+  Codex review Claude's plan (template in `[handoff]`).
+- **Finish a worktree.** In Projects, select a worktree and press `⎇ Finish`. It shows the
+  branch, the commits not yet in the main branch, uncommitted files and running agents. It then
+  closes the workspace and removes the checkout, but only when nothing is uncommitted or
+  running. The branch is always kept.
+- **While you were away.** If the Navigator was closed for more than 10 minutes, it opens with
+  what changed: agents that ask something, agents that finished (each with the first line of its
+  answer), and sessions that ended. Enter jumps there.
+- **Phone alerts.** Set `[alerts] ntfy_topic` (free [ntfy](https://ntfy.sh) app, no account) to
+  get a push when an agent has waited on you for `blocked_minutes`, and the result of the logon
+  restore. Test it with `python -m navigator.alerts test`.
+- **Usage tab** (`7`). Tokens per project and session for today and the last 7 days, and how much
+  of that was output, read incrementally from the Claude and Codex transcripts.
+
 Questions an agent is waiting on (Claude `AskUserQuestion`, Codex `request_user_input`) show up
 in **Agents** as `❓` with the question and its options, also for sessions in other windows.
 

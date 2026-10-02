@@ -96,6 +96,35 @@ claude_remote_control = false
 # Command that opens herdr in a terminal at logon ("" = Windows Terminal / the system terminal).
 terminal = ""
 
+[context]
+# Context window (tokens) by model name, for the Ctx gauge. The longest key contained in the
+# model id wins; a session seen using more than its window counts as a 1M-token window.
+default = 200000
+"claude-opus-5" = 1000000
+"claude-sonnet-5" = 1000000
+
+[prompts]
+# One-click prompts (Agents › ☰ Prompts), sent to the selected agent or every ticked one.
+"Status" = "Give me a short status: what is done, what is next, and is anything blocked?"
+"Compact" = "/compact"
+"Wrap up" = "Wrap up for today: summarise the state and write down how to resume tomorrow."
+"Commit & push" = "Commit your finished work with a clear message and push it."
+"Review" = "Review what you just did: anything wrong, risky or untested? Fix what you find."
+
+[handoff]
+# What "⇢ Hand off" sends to the other agent. {name} {cli} {project} {answer}
+template = "Hand-off from {name} ({cli}, {project}). Their latest answer:\\n\\n{answer}\\n\\nReview it and tell me what you think: what is right, what is wrong or missing."
+
+[alerts]
+# Phone alerts through ntfy (https://ntfy.sh, free, no account): install the ntfy app and
+# subscribe to a topic name only you know, then put it here. Empty = off.
+ntfy_topic = ""
+ntfy_server = "https://ntfy.sh"
+# Alert when an agent has waited on you this many minutes (0 = never).
+blocked_minutes = 10
+# Alert with the logon restore's result.
+on_restore = true
+
 # Sign in / sign out per CLI (Navigator › Startup › Sign in). `watch` is the file the CLI
 # rewrites when the sign-in succeeds; the Navigator then offers to relaunch that CLI's sessions.
 # `files` (and `json_keys`: keys inside JSON files) hold the login: account profiles save and
@@ -142,6 +171,10 @@ class Settings:
     mirror_outside: bool = True
     launch: dict[str, str] = field(default_factory=dict)
     restore: dict = field(default_factory=dict)
+    context: dict = field(default_factory=dict)
+    prompts: dict[str, str] = field(default_factory=dict)
+    alerts: dict = field(default_factory=dict)
+    handoff: str = ""
     login: dict[str, dict] = field(default_factory=dict)
 
 
@@ -216,6 +249,10 @@ def load() -> Settings:
         mirror_outside=bool(raw.get("sidebar", {}).get("mirror_outside", True)),
         launch=launch,
         restore={**defaults["restore"], **raw.get("restore", {})},
+        context={**defaults["context"], **raw.get("context", {})},
+        prompts=dict(raw.get("prompts", defaults["prompts"])),
+        alerts={**defaults["alerts"], **raw.get("alerts", {})},
+        handoff=str(raw.get("handoff", {}).get("template", defaults["handoff"]["template"])),
         login={k: {**defaults["login"].get(k, {}), **v} for k, v in
                {**defaults["login"], **raw.get("login", {})}.items()},
     )

@@ -26,7 +26,7 @@ from textual.widgets import Button, DataTable, Footer, Input, Static, TabbedCont
 from . import keys as keymap
 from . import arrange, attention, history, launch, layouts, model, panes, settings, sidebar, uiwidth
 from .model import STATE_ICON, Agent, World, age, summarize
-from .startup_ui import NewSession, StartupPane
+from .startup_ui import ContextMenu, Digest, FinishWorktree, NewSession, Prompt, StartupPane, UsagePane
 
 STATE_STYLE = {"blocked": "bold red", "done": "bold green", "working": "yellow", "idle": "dim", "unknown": "magenta"}
 CLI_STYLE = {
@@ -67,8 +67,17 @@ def installed_clis() -> list[str]:
             if shutil.which(exe):
                 out.append(key[:-4])
     return sorted(out, key=cli_rank)
-TABS = ["projects", "agents", "startup", "panes", "resume", "recent", "keys"]
+TABS = ["projects", "agents", "startup", "panes", "resume", "recent", "usage", "keys"]
 WT_SEP = "|wt|"
+
+
+def ctx_text(a) -> Text:
+    """Context fill: dim when roomy, yellow from 70%, red from 85% (time to /compact)."""
+    c = getattr(a, "context", None)
+    if not c:
+        return Text("")
+    style = "bold red" if c.pct >= 85 else "yellow" if c.pct >= 70 else "dim"
+    return Text(f"{c.pct:>3}%", style=style)
 
 
 def state_text(status: str) -> Text:
@@ -310,7 +319,8 @@ class Navigator(App):
         Binding("4", "tab('panes')", "Layout", show=False),
         Binding("5", "tab('resume')", "Resume", show=False),
         Binding("6", "tab('recent')", "Recent", show=False),
-        Binding("7", "tab('keys')", "Keys", show=False),
+        Binding("7", "tab('usage')", "Usage", show=False),
+        Binding("8", "tab('keys')", "Keys", show=False),
         Binding("enter", "open", "Open", priority=False),
         Binding("space", "toggle_sidebar", "Sidebar"),
         Binding("r", "resume_project", "Resume"),
@@ -372,6 +382,9 @@ class Navigator(App):
         self.pane_selected: str | None = None
         self.close_armed = ""
         self.marked: set[str] = set()          # Agents: panes picked for "send to many"
+        from . import digest
+        self.seen_before = digest.last_seen()  # for "while you were away"
+        self.digest_checked = False
 
     # ---- layout ---------------------------------------------------------------------------
     def compose(self) -> ComposeResult:
@@ -388,6 +401,8 @@ class Navigator(App):
                             yield Button("Resume", id="btn-resume", tooltip="Resume one of its sessions (r)")
                             yield Button("+ New", id="btn-new", tooltip="Start a new agent here: pick a CLI")
                             yield Button("▦", id="btn-layout", tooltip="Restore the newest saved layout (l)")
+                            yield Button("⎇ Finish", id="btn-wt-finish",
+                                         tooltip="Put this worktree away: check it, close it, remove the checkout")
                         with Horizontal(id="new-row"):
                             for cli in installed_clis():
                                 key = CLI_NEW_KEY.get(cli)
@@ -412,6 +427,9 @@ class Navigator(App):
                         yield Button("⏎", id="key-enter", tooltip="Press Enter in the agent (accept)")
                         yield Button("Esc", id="key-esc", tooltip="Press Esc in the agent (cancel)")
                         yield Button("^C", id="key-ctrl_c", tooltip="Interrupt the agent")
+                        yield Button("⇣", id="act-compact", tooltip="/compact: free up its context (ticked ones, or the selected)")
+                        yield Button("☰", id="act-prompts", tooltip="Saved prompts: send one in a click")
+                        yield Button("⇢", id="act-handoff", tooltip="Hand off: send its last answer to another agent")
                         yield Button("⚑ Next", id="btn-attention", tooltip="Jump to the next agent that needs you (g)")
             with TabPane("Startup", id="startup"):
                 yield StartupPane(id="startup-pane")
@@ -466,13 +484,15 @@ class Navigator(App):
                 yield ClickTwiceTable(id="resume-table")
             with TabPane("Recent", id="recent"):
                 yield ClickTwiceTable(id="recent-table")
+            with TabPane("Usage", id="usage"):
+                yield UsagePane(id="usage-pane")
             with TabPane("Keys", id="keys"):
                 yield VerticalScroll(Static(id="keys-body"))
         yield Footer()
 
     def on_mount(self) -> None:
         self.query_one("#proj-table", DataTable).add_columns("", "Project", "Agents", "Last")
-        self.query_one("#agent-table", DataTable).add_columns("", "", "CLI", "Agent", "Project", "Doing")
+        self.query_one("#agent-table", DataTable).add_columns("", "", "CLI", "Agent", "Ctx", "Project", "Doing")
         self.query_one("#resume-table", DataTable).add_columns("When", "CLI", "Project", "Session", "")
         self.query_one("#recent-table", DataTable).add_columns("When", "Project", "Pane", "")
         self.query_one("#saved-table", DataTable).add_columns("Saved layout", "Panes", "Saved")
@@ -500,6 +520,9 @@ class Navigator(App):
             bar.append(f"    ↗{outside} elsewhere", style="magenta")
         if subs:
             bar.append(f"    ↳{subs} sub-agents", style="yellow")
+        full = sum(1 for a in world.agents if a.context and a.context.pct >= 85)
+        if full:
+            bar.append(f"    ⚠ {full} context nearly full", style="bold red")
         if world.error:
             bar.append(f"    herdr unreachable", style="red")
         self.query_one("#topbar", Static).update(bar)
@@ -507,9 +530,13 @@ class Navigator(App):
         self.fill_agents()
         pane = self.query_one(StartupPane)
         pane.show(world)
+        if self.active_tab() == "usage":
+            self.query_one(UsagePane).load(world)
         relaunch = os.environ.pop("NAV_RELAUNCH", None)  # after a sign-in: offer the relaunch once
         if relaunch is not None:
             pane.open_relaunch(relaunch)
+            self.digest_checked = True
+        self.show_digest(world)
         self.fill_resume()
         self.set_hint()
         self.load_panes()
@@ -750,6 +777,8 @@ class Navigator(App):
             self.call_from_thread(self.query_one("#agent-preview", Static).update, out)
             return
         head = f"{a.display}  ·  {a.cli}  ·  {a.status}  ·  {a.project.label}"
+        if a.context:
+            head += f"  ·  context {a.context.pct}% of {a.context.window // 1000}k"
         out.append(head + "\n", style="bold cyan")
         if a.question and sub < 0:
             q = a.question
@@ -806,6 +835,62 @@ class Navigator(App):
                         "Use that window, or resume it here after it exits.", severity="warning", timeout=8)
             return
         self.run_send(a.pane_id, a.display, text, key)
+
+    # ---- saved prompts and hand-off -----------------------------------------------------------
+    def _prompts(self) -> dict[str, str]:
+        from . import prompts
+        return prompts.all_()
+
+    def _menu_at(self, widget) -> tuple[int, int]:
+        r = widget.region
+        return (r.x, max(0, r.y - 9))
+
+    def prompts_menu(self, widget) -> None:
+        items = [(f"p:{name}", f"{name}") for name in self._prompts()]
+        msg = self.query_one("#agent-msg", Input).value.strip()
+        if msg:
+            items.append(("save", "＋ Save the message as a prompt"))
+        items.append(("edit", "✎ Where to edit them"))
+        self.push_screen(ContextMenu(items, self._menu_at(widget)), self._prompt_chosen)
+
+    def _prompt_chosen(self, choice: str | None) -> None:
+        from . import prompts
+        if not choice:
+            return
+        if choice.startswith("p:"):
+            self.send_to_agent(self._prompts().get(choice[2:], ""))
+        elif choice == "save":
+            text = self.query_one("#agent-msg", Input).value.strip()
+            self.push_screen(Prompt("Name for this prompt", text[:50]),
+                             lambda name: name and (prompts.save(name, text), self.notify(f"Saved prompt '{name}'")))
+        elif choice == "edit":
+            self.notify(f"[prompts] in {settings.settings_path()}  ·  your saved ones: {prompts.path()}",
+                        title="Prompts", timeout=12)
+
+    def handoff_menu(self, widget) -> None:
+        src, sub = self.agent_selected()
+        if not src or sub >= 0:
+            self.notify("Select the agent whose answer you want to hand off.", severity="warning")
+            return
+        targets = [a for a in (self.world.agents if self.world else []) if a.in_herdr and a.pane_id != src.pane_id]
+        if not targets:
+            self.notify("No other agent in herdr to hand it to.", severity="warning")
+            return
+        items = [(f"t:{a.pane_id}", f"{a.cli:<6} {a.display[:34]}") for a in targets]
+        self.push_screen(ContextMenu(items, self._menu_at(widget)), lambda c: c and self.run_handoff(src, c[2:]))
+
+    @work(thread=True, group="send")
+    def run_handoff(self, src, target_pane: str) -> None:
+        from . import insight
+        answer = insight.last_answer(src.cli, src.transcript)
+        if not answer:
+            self.call_from_thread(self.notify, f"No answer found for {src.display}.", severity="warning")
+            return
+        tpl = settings.load().handoff
+        text = tpl.replace("{name}", src.display).replace("{cli}", src.cli) \
+            .replace("{project}", src.project.label).replace("{answer}", answer)
+        target = next((a for a in self.world.agents if a.pane_id == target_pane), None)
+        self.run_send(target_pane, target.display if target else target_pane, text, "")
 
     @work(thread=True, group="send")
     def run_send(self, pane: str, name: str, text: str, key: str) -> None:
@@ -894,6 +979,7 @@ class Navigator(App):
 
     def show_project_detail(self) -> None:
         v, wt = self.selected()
+        self.query_one("#btn-wt-finish", Button).display = bool(wt and wt.exists)
         info = self.query_one("#proj-info", Static)
         if not v:
             info.update("")
@@ -993,11 +1079,11 @@ class Navigator(App):
             box = (Text("☑", style="bold green") if a.pane_id in self.marked else Text("☐", style="dim")) \
                 if a.in_herdr else ""
             t.add_row(box, Text(STATE_ICON.get(a.status, "?"), style=STATE_STYLE.get(a.status, "")), cli_tag(a.cli),
-                      who, proj, doing, key=a.key)
+                      who, ctx_text(a), proj, doing, key=a.key)
             self.agent_rows[a.key] = (a, -1)
             for i, sa in enumerate(a.subagents):
                 k = f"{a.key}#sub{i}"
-                t.add_row("", Text("↳", style="yellow"), "", Text(f"  {sa.name}", style="yellow"),
+                t.add_row("", Text("↳", style="yellow"), "", Text(f"  {sa.name}", style="yellow"), "",
                           Text(sa.kind or "", style="dim"), (sa.activity or sa.description)[:70], key=k)
                 self.agent_rows[k] = (a, i)
         for b in self.query("#agent-bar Button"):
@@ -1104,6 +1190,7 @@ class Navigator(App):
         row("Layout tab: drag a pane", "middle swaps · edge places it beside")
         row("Startup tab: click ☐", "tick for logon (bright = yours, dim = automatic)")
         row("Startup tab: right-click", "open, relaunch, launch options, back to automatic")
+        row("Agents tab: click ☐", "tick agents: Send, ⏎, ⇣ compact and ☰ prompts go to all of them")
         self.query_one("#keys-body", Static).update(out)
 
     # ---- actions --------------------------------------------------------------------------
@@ -1112,6 +1199,10 @@ class Navigator(App):
 
     def focus_table(self) -> None:
         tab = self.active_tab()
+        if tab == "usage" and self.world:
+            self.query_one(UsagePane).load(self.world)
+            self.query_one("#usage-table", DataTable).focus()
+            return
         if tab == "panes":
             self.query_one("#pane-map", LayoutMap).focus()
             self.load_panes()
@@ -1226,6 +1317,36 @@ class Navigator(App):
         else:
             self.finish(lambda: launch.new_agent(self.world, v.project, cli))
 
+    def finish_worktree(self) -> None:
+        from . import worktrees
+        v, wt = self.selected()
+        if not (v and wt and wt.exists):
+            return
+        st = worktrees.status(wt.path, v.project.path or v.project.root, [a.display for a in wt.agents],
+                              [wt.workspace.id] if wt.workspace else [])
+
+        def done(action):
+            if action == "remove":
+                self.finish(lambda: worktrees.remove(st, v.project.path or v.project.root))
+            elif action == "close":
+                msgs = worktrees.close_workspaces(st)
+                self.notify("\n".join(msgs) or "nothing to close")
+                self.refresh_world_and_sidebar()
+        self.push_screen(FinishWorktree(st, f"{v.project.name} ⎇ {wt.label}"), done)
+
+    def show_digest(self, world: World) -> None:
+        from . import digest
+        if self.digest_checked:
+            return
+        self.digest_checked = True
+        digest.mark_seen()
+        if not digest.due(self.seen_before):
+            return
+        entries = digest.items(world, self.seen_before)
+        if entries:
+            self.push_screen(Digest(entries, age(self.seen_before).strip()),
+                             lambda pane: pane and self.finish(lambda: panes.focus(pane)))
+
     def action_new_dialog(self) -> None:
         v, wt = self.selected()
         if not v:
@@ -1324,6 +1445,12 @@ class Navigator(App):
             self.query_one("#agent-msg", Input).value = ""
         elif bid.startswith("key-"):
             self.send_to_agent(key=bid[4:].replace("_", "+"))
+        elif bid == "act-compact":
+            self.send_to_agent("/compact")
+        elif bid == "act-prompts":
+            self.prompts_menu(ev.button)
+        elif bid == "act-handoff":
+            self.handoff_menu(ev.button)
         elif bid == "mark-clear":
             self.marked = set()
             self.fill_agents()
@@ -1339,6 +1466,8 @@ class Navigator(App):
             self.layout_op("delete", self.saved_selected())
         elif bid in ("sbw-minus", "sbw-plus"):
             self.action_sidebar_width("-6" if bid == "sbw-minus" else "+6")
+        elif bid == "btn-wt-finish":
+            self.finish_worktree()
         elif bid == "btn-layout":
             self.action_restore_layout()
         elif bid.startswith("shape-"):

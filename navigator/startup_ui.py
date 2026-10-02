@@ -699,3 +699,162 @@ class NewSession(ModalScreen):
                          remote_control=self.query_one("#ns-rc", Switch).value)
         self.dismiss({"cli": cli, "name": name, "folder": self.query_one("#ns-folder", Input).value.strip(),
                       "branch": branch, "prefs": prefs})
+
+
+class FinishWorktree(ModalScreen):
+    """Put a worktree away: its state, then close its workspace or remove the checkout."""
+
+    DEFAULT_CSS = """
+    FinishWorktree { align: center middle; background: $background 50%; }
+    #fw { width: 76; height: auto; border: round $primary; background: $panel; padding: 1 2; }
+    #fw-buttons { height: 3; margin-top: 1; }
+    #fw-buttons Button { margin-right: 1; }
+    """
+    BINDINGS = [("escape", "dismiss(None)", "Cancel")]
+
+    def __init__(self, st, label: str) -> None:
+        super().__init__()
+        self.st, self.label = st, label
+
+    def compose(self) -> ComposeResult:
+        st = self.st
+        t = Text.assemble(("Finish worktree  ", "bold"), (self.label, "bold magenta"), "\n", (st.path, "dim"), "\n\n")
+        if st.branch:
+            t.append(f"branch {st.branch}", style="bold")
+            if st.base and st.base != st.branch:
+                t.append(f"   {st.ahead} commit(s) not in {st.base}", style="yellow" if st.ahead else "green")
+                if st.behind:
+                    t.append(f" · {st.behind} behind", style="dim")
+            t.append("\n")
+        if st.dirty:
+            t.append(f"{len(st.dirty)} uncommitted change(s):\n", style="bold red")
+            for ln in st.dirty[:6]:
+                t.append(f"   {ln}\n", style="red")
+        else:
+            t.append("working tree clean\n", style="green")
+        if st.agents:
+            t.append(f"running: {', '.join(st.agents)}\n", style="bold yellow")
+        if st.ahead and not st.dirty:
+            t.append("\nIts commits stay on the branch: merge it when you are ready.\n", style="dim")
+        if st.blockers:
+            t.append("\nCan't remove yet: " + "; ".join(st.blockers) + "\n", style="red")
+        with Vertical(id="fw"):
+            yield Static(t)
+            with Horizontal(id="fw-buttons"):
+                yield Button("⎇ Remove worktree", id="fw-remove", variant="error", disabled=not st.removable,
+                             tooltip="Close its workspace and delete the checkout folder. The branch is kept.")
+                yield Button("Close workspace", id="fw-close", disabled=bool(st.agents or not st.workspaces),
+                             tooltip="Only close it in herdr; the checkout stays on disk")
+                yield Button("Cancel", id="fw-cancel")
+
+    @on(Button.Pressed)
+    def _btn(self, ev: Button.Pressed) -> None:
+        ev.stop()
+        self.dismiss({"fw-remove": "remove", "fw-close": "close"}.get(ev.button.id or ""))
+
+
+class Digest(ModalScreen):
+    """While you were away. Pick an entry to jump to it; Esc closes."""
+
+    DEFAULT_CSS = """
+    Digest { align: center middle; background: $background 50%; }
+    #dg { width: 110; max-width: 96%; height: auto; max-height: 90%; border: round $primary;
+          background: $panel; padding: 1 2; }
+    #dg OptionList { height: auto; max-height: 24; border: none; background: $panel; }
+    """
+    BINDINGS = [("escape", "dismiss(None)", "Close")]
+    ICON = {"asks": ("❓ asks", "bold red"), "finished": ("✔ done", "bold green"), "ended": ("■ ended", "dim")}
+
+    def __init__(self, entries, away: str) -> None:
+        super().__init__()
+        self.entries, self.away = entries, away
+
+    def compose(self) -> ComposeResult:
+        opts = []
+        for i, e in enumerate(self.entries):
+            icon, style = self.ICON[e.kind]
+            t = Text.assemble((f"{icon:<8}", style), (f"{e.name[:28]:<29}", "bold"), (f"{e.project[:24]:<25}", "cyan"),
+                              (e.line[:40], "dim"))
+            t.no_wrap = True
+            opts.append(Option(t, id=str(i)))
+        with Vertical(id="dg"):
+            yield Static(Text.assemble(("While you were away", "bold"), (f"  ·  last look {self.away} ago", "dim"),
+                                       ("    Enter jumps there · Esc closes", "dim")))
+            yield OptionList(*opts)
+
+    def on_mount(self) -> None:
+        self.query_one(OptionList).focus()
+
+    @on(OptionList.OptionSelected)
+    def _pick(self, ev: OptionList.OptionSelected) -> None:
+        e = self.entries[int(ev.option.id)]
+        self.dismiss(e.pane_id or None)
+
+
+class UsagePane(Vertical):
+    """Tokens per project and session: today, the last 7 days, and how much of it was output."""
+
+    DEFAULT_CSS = """
+    #usage-sum { height: 1; padding: 0 1; color: $text-muted; }
+    #usage-table { height: 1fr; }
+    """
+
+    def compose(self) -> ComposeResult:
+        yield Static("Reading transcripts…", id="usage-sum")
+        yield DataTable(id="usage-table", cursor_type="row", zebra_stripes=True)
+
+    def on_mount(self) -> None:
+        self.query_one("#usage-table", DataTable).add_columns("Project / session", "CLI", "Today", "7 days",
+                                                              "of it output", "Last")
+        self.loaded = False
+
+    def load(self, world) -> None:
+        if not getattr(self, "loaded", False):
+            self.loaded = True
+            self._collect(world)
+
+    @work(thread=True, exclusive=True, group="usage")
+    def _collect(self, world) -> None:
+        from . import usage
+        data = usage.collect()
+        self.app.call_from_thread(self._show, world, data)
+
+    def _show(self, world, data) -> None:
+        from datetime import date, timedelta
+        from .app import cli_tag
+        from . import usage
+        today = date.today().isoformat()
+        week = (date.today() - timedelta(days=usage.DAYS - 1)).isoformat()
+        by_id = {s.id: s for s in world.sessions}
+        groups: dict[str, list] = {}
+        for (cli, sid), su in data.items():
+            wk = su.period(week)
+            if not wk.total:
+                continue
+            s = by_id.get(sid)
+            proj = s.project.name if s else "other / hidden"   # worktrees count toward their repo
+            groups.setdefault(proj, []).append((su, s, su.period(today), wk))
+        t = self.query_one("#usage-table", DataTable)
+        t.clear()
+        grand_today, grand_week = usage.Tally(), usage.Tally()
+        order = sorted(groups.items(), key=lambda kv: -sum(x[3].total for x in kv[1]))
+        for proj, rows in order:
+            pt, pw = usage.Tally(), usage.Tally()
+            for _, _, td, wk in rows:
+                pt.add(td)
+                pw.add(wk)
+            grand_today.add(pt)
+            grand_week.add(pw)
+            t.add_row(Text(proj, style="bold cyan"), "", usage.human(pt.total) if pt.total else "",
+                      Text(usage.human(pw.total), style="bold"),
+                      usage.human(pw.out), "", key=f"P|{proj}")
+            for su, s, td, wk in sorted(rows, key=lambda x: -x[3].total)[:8]:
+                title = Text("  " + (s.title[:44] if s else su.sid[:8]))
+                if s and s.project.worktree:
+                    title.append(f"  ⎇ {s.project.worktree}"[:20], style="yellow")
+                t.add_row(title, cli_tag(su.cli), usage.human(td.total) if td.total else "",
+                          usage.human(wk.total), usage.human(wk.out), age(s.mtime) if s else "", key=f"S|{su.sid}")
+        self.query_one("#usage-sum", Static).update(Text.assemble(
+            ("today ", "dim"), (usage.human(grand_today.total), "bold"), ("   ·   7 days ", "dim"),
+            (usage.human(grand_week.total), "bold"), (f"   ·   of it output {usage.human(grand_week.out)}", "dim"),
+            ("     tokens, cache reads included", "dim")))

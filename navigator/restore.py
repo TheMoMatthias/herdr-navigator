@@ -495,6 +495,12 @@ def boot(delay: float | None = None) -> str:
     summary = open_now(rows)
     held = " Claude needs a sign-in: Navigator › Startup › Sign in." if "held 0" not in summary else ""
     notify("Startup restore", summary + held)
+    try:
+        from . import alerts
+        if settings.load().alerts.get("on_restore", True):
+            alerts.send("Sessions restored", summary + held, "white_check_mark" if " failed 0" in summary else "warning")
+    except Exception as e:
+        log(f"alert failed: {e}")
     return summary
 
 

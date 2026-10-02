@@ -30,6 +30,11 @@ def line() -> str:
         snap = herdr.snapshot()
     except Exception:
         return f"herdr unreachable  │  {menu}"
+    try:  # phone alert for an agent that has waited on you too long (off unless configured)
+        from . import alerts
+        alerts.check_waiting(snap)
+    except Exception:
+        pass
     ws_id = snap.get("focused_workspace_id", "")
     cwd = next((p.get("cwd", "") for p in snap.get("panes", []) if p.get("workspace_id") == ws_id), "")
     here = projects.resolve(cwd).label if cwd else "?"

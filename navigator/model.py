@@ -8,7 +8,7 @@ import time
 from collections import Counter
 from dataclasses import dataclass, field
 
-from . import asks, herdr, live, projects, settings
+from . import asks, herdr, insight, live, projects, settings
 from .sessions import Session, is_listed, load_sessions
 
 STATE_ORDER = {"blocked": 0, "done": 1, "working": 2, "idle": 3, "unknown": 4}
@@ -36,6 +36,8 @@ class Agent:
     subagents: list[live.SubAgent] = field(default_factory=list)
     mirror_pane: str = ""        # herdr pane mirroring this outside session, if any
     question: "asks.Question | None" = None  # a question it is waiting for you to answer
+    transcript: str = ""         # the session's transcript file, if known
+    context: "insight.Context | None" = None  # how full its context window is
 
     @property
     def in_herdr(self) -> bool:
@@ -290,11 +292,15 @@ def build(with_sessions: bool = True) -> World:
     for v in views.values():
         v.in_sidebar = v.live if selection is None else (v.project.root in selection)
 
-    for a in agents:  # a pending question means it waits for you, whatever else it reports
-        if a.status == "working" or not a.session_id:
+    for a in agents:
+        if not a.session_id:
             continue
         r, s = run_by_id.get(a.session_id), by_session.get(a.session_id)
-        a.question = asks.pending(a.cli, (r.transcript if r else "") or (s.path if s else ""))
+        a.transcript = (r.transcript if r else "") or (s.path if s else "")
+        a.context = insight.context(a.cli, a.transcript)
+        if a.status == "working":
+            continue
+        a.question = asks.pending(a.cli, a.transcript)  # a pending question means it waits for you
         if a.question:
             a.status = "blocked"
 
