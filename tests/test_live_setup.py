@@ -335,7 +335,8 @@ def test_agent_panel_tree_groups_by_project_most_urgent_first():
     rows = [(x[0].display,) + tuple(x[1:]) for x in sync.agent_tree(agents)]
     assert [r[0] for r in rows] == ["B2", "B1", "A2", "A1"]   # Beta first: it holds the agent that needs you
     assert rows[0][2].startswith("▾ Beta  ?1 ○1") and rows[1][2] == "" and rows[2][2].startswith("▾ Alpha")
-    assert rows[0][3] == "├─ ? B2" and rows[1][3] == "└─ ○ B1" and rows[3][3] == "└─ ○ A1"
+    assert rows[0][3] == "├─ ? B2" and rows[1][3] == sync.PAD * 2 + "└─ ○ B1"
+    assert rows[3][3] == sync.PAD * 2 + "└─ ○ A1"
     assert rows[0][4] == "│" + sync.PAD * 4 + "▹ lead-3" and rows[1][4] == ""
     assert [r[1] for r in rows] == ["0000", "0001", "0002", "0003"]
     assert all(ch not in "".join(r[2] + r[3] + r[4] for r in rows) for ch in "⏳✔⚠⎇")   # no wide glyphs

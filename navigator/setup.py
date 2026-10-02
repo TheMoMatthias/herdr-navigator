@@ -85,7 +85,7 @@ def _icon_rules(bold: bool) -> list[dict]:
                          ("●", {"fg": "#b8bb26", "bold": bold}), ("◐", {"fg": "#fabd2f", "bold": bold}),
                          ("↗", {"fg": "#d3869b"})):
         for branch in ("├─", "└─"):
-            out.append({"starts_with": f"{branch} {glyph} ", **style})
+            out.append({"contains": f"{branch} {glyph} ", **style})
     return out
 
 

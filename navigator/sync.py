@@ -19,7 +19,6 @@ import time
 from collections import Counter
 
 from . import herdr, model, settings
-from .model import summarize
 
 SOURCE = f"plugin:{settings.PLUGIN_ID}"
 
@@ -127,7 +126,9 @@ def agent_tree(agents: list, folded: dict | None = None) -> list[tuple]:
             more = len(group) - len(shown)
             head = (f"{'▸' if shut else '▾'} {a.project.name[:30]}  {side_counts(group)}"
                     + (f"  +{more} folded" if more else ""))
-        line = f"{'└─' if last else '├─'} {SIDE_ICON.get(a.status, '·')} {a.display[:34]}"
+        # herdr indents an entry's 2nd and later rows by two columns: the heading carrier's line is
+        # its 2nd row, so every other agent's line (its 1st row) gets the same two-column pad
+        line = (PAD * 2 if not head else "") +             f"{'└─' if last else '├─'} {SIDE_ICON.get(a.status, '·')} {a.display[:34]}"
         lane = f"{PAD if last else '│'}{PAD * 4}▹ {a.project.worktree}" if a.project.worktree else ""
         out.append((a, f"{i:04d}", head, line, lane, False))
     return out
@@ -186,7 +187,8 @@ def sync(force: bool = False) -> None:
         mine = [a for a in (v.agents if v else []) if (
             a.project.worktree == p.worktree if p.worktree else a.project.worktree not in open_wts - {""})]
         outside = [a for a in mine if not a.in_herdr and not a.mirror_pane]
-        _report("workspace", w.id, "agents", summarize(inside), old, sent, seq)
+        _report("workspace", w.id, "agents", side_counts([a for a in world.agents if a.workspace_id == w.id]),
+                old, sent, seq)
         _report("workspace", w.id, "outside", "", old, sent, seq)  # now part of the session rows
         lines = session_lines(w.label, [a for a in world.agents if a.workspace_id == w.id] + outside)
         for i in range(SESSION_ROWS):
