@@ -752,6 +752,9 @@ class Navigator(App):
         pane.show(world)
         if self.active_tab() == "usage":
             self.query_one(UsagePane).load(world)
+        nav_pane = os.environ.pop("NAV_PANE", None)  # right-click › Arrange panes: this pane selected
+        if nav_pane:
+            self.pane_selected = nav_pane
         relaunch = os.environ.pop("NAV_RELAUNCH", None)  # after a sign-in: offer the relaunch once
         if relaunch is not None:
             pane.open_relaunch(relaunch)

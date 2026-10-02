@@ -85,6 +85,17 @@ herdr plugin uninstall momatthias.navigator
 | `F10` · `Ctrl+B › F` | Fold / unfold the focused pane's project in herdr's sidebar (`Ctrl+B › Shift+F`: all) |
 | `Ctrl+B › Shift+C` | `/compact` the focused agent **with your saved instructions** (also: right-click a pane, or ⇣ Compact in Agents) |
 
+**Right-click menus.** herdr's own menus get Navigator entries:
+
+| Right-click on | Adds |
+|---|---|
+| a terminal (pane) | *compact this agent* · *Pane: move left / right / up / down* · *even out all splits* · *move to a new tab* · *arrange panes…* (the Layout map with this pane selected) · fold. herdr's own entries stay: Split right/down, Zoom, Swap, Rename, Close |
+| a Space (workspace) | *compact this agent* (the Space's agent; with several, right-click the agent's pane) · new agent here · fold |
+| an Agents row | herdr gives plugins no entry there: click the row (it focuses the pane), then `Ctrl+B › Shift+C` to compact or right-click the terminal |
+
+If a right-click in a terminal goes to the program instead of opening the menu, switch it back with
+herdr's *Use Herdr right-click menu*.
+
 **Compact without retyping.** Write once what a compaction must keep (⚙ Settings › Prompts ›
 *Compact instructions*, or `[compact] instructions` in navigator.toml). Every Compact then sends
 `/compact <your instructions>` to Claude Code (other CLIs get a plain `/compact`): the ⇣ Compact

@@ -30,6 +30,17 @@ def send(pane: str, cli: str) -> str:
     return "⇣ compacting" + (" with your instructions" if cmd != "/compact" else "")
 
 
+def _note_context(ctx: dict) -> None:
+    """What herdr handed the last action (for diagnosing a right-click that picks the wrong pane)."""
+    try:
+        keep = {k: os.environ.get(k, "") for k in ("HERDR_PANE_ID", "HERDR_TAB_ID", "HERDR_WORKSPACE_ID",
+                                                    "HERDR_PLUGIN_ACTION_ID")}
+        (settings.state_dir() / "last-action.json").write_text(json.dumps({"env": keep, "context": ctx}),
+                                                               encoding="utf-8")
+    except Exception:  # a diagnostic note never stops the action
+        pass
+
+
 def main() -> None:
     """herdr action: compact the agent in the pane it was invoked on (or the focused one)."""
     try:
@@ -37,9 +48,24 @@ def main() -> None:
     except ValueError:
         ctx = {}
     snap = herdr.snapshot()
-    pane = (os.environ.get("HERDR_PANE_ID") or ctx.get("pane_id") or (ctx.get("pane") or {}).get("pane_id")
-            or snap.get("focused_pane_id", ""))
-    agent = next((a for a in snap.get("agents", []) if a.get("pane_id") == pane), None)
+    agents = snap.get("agents", [])
+    pane = os.environ.get("HERDR_PANE_ID") or ctx.get("pane_id") or (ctx.get("pane") or {}).get("pane_id")
+    ws = os.environ.get("HERDR_WORKSPACE_ID") or ctx.get("workspace_id") or (ctx.get("workspace") or {}).get(
+        "workspace_id")
+    agent = next((a for a in agents if pane and a.get("pane_id") == pane
+                  and (not ws or a.get("workspace_id") == ws)), None)  # never a pane of another Space
+    if not agent and ws:  # right-click on a Space: its agent, when there is exactly one
+        here = [a for a in agents if a.get("workspace_id") == ws]
+        if len(here) > 1:
+            herdr.run("notification", "show", f"{len(here)} agents in this Space", "--body",
+                      "Right-click the agent's own pane (or focus it and press prefix+shift+c).", check=False)
+            return
+        agent = here[0] if here else None
+    if not agent and not pane and not ws:
+        agent = next((a for a in agents if a.get("pane_id") == snap.get("focused_pane_id")), None)
+    if agent:
+        pane = agent["pane_id"]
+    _note_context(ctx)
     if not agent:
         herdr.run("notification", "show", "Nothing to compact here", "--body",
                   "This pane runs no agent. Focus an agent's pane, then press prefix+shift+c.", check=False)

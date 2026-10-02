@@ -475,6 +475,7 @@ def test_compact_sends_saved_instructions_only_where_the_cli_takes_them(monkeypa
     monkeypatch.setattr(compact.herdr, "snapshot", lambda: {"focused_pane_id": "w1:p2", "agents": [
         {"pane_id": "w1:p2", "agent": "claude", "terminal_title_stripped": "LEAD"}]})
     monkeypatch.delenv("HERDR_PANE_ID", raising=False)
+    monkeypatch.delenv("HERDR_WORKSPACE_ID", raising=False)   # tests may run inside a herdr pane
     monkeypatch.setenv("HERDR_PLUGIN_CONTEXT_JSON", "{}")
     compact.main()                                   # the key binding: the focused agent pane
     assert sent == [("agent", "prompt", "w1:p2", "/compact Keep the state, findings and next steps.")]
@@ -482,3 +483,43 @@ def test_compact_sends_saved_instructions_only_where_the_cli_takes_them(monkeypa
     monkeypatch.setenv("HERDR_PANE_ID", "w9:p9")     # a pane with no agent: a hint, nothing sent
     compact.main()
     assert len(sent) == 1 and "Nothing to compact" in notes[-1][2]
+
+
+def test_right_click_compact_on_a_space_never_picks_another_spaces_pane(monkeypatch):
+    from types import SimpleNamespace
+    from navigator import compact
+    fake = SimpleNamespace(compact={"instructions": "keep it"})
+    monkeypatch.setattr(compact, "settings", SimpleNamespace(load=lambda: fake))
+    monkeypatch.setattr(compact, "_note_context", lambda ctx: None)
+    sent, notes = [], []
+    monkeypatch.setattr(compact.herdr, "run", lambda *a, **k: (sent if a[:2] == ("agent", "prompt") else notes).append(a))
+    agents = [{"pane_id": "w1:p1", "workspace_id": "w1", "agent": "claude"},
+              {"pane_id": "w2:p1", "workspace_id": "w2", "agent": "codex"},
+              {"pane_id": "w3:p1", "workspace_id": "w3", "agent": "claude"},
+              {"pane_id": "w3:p2", "workspace_id": "w3", "agent": "claude"}]
+    monkeypatch.setattr(compact.herdr, "snapshot", lambda: {"agents": agents, "focused_pane_id": "w1:p1"})
+    monkeypatch.setenv("HERDR_PLUGIN_CONTEXT_JSON", "{}")
+    monkeypatch.setenv("HERDR_WORKSPACE_ID", "w2")
+    monkeypatch.setenv("HERDR_PANE_ID", "w1:p1")           # the globally focused pane, in another Space
+    compact.main()
+    assert sent == [("agent", "prompt", "w2:p1", "/compact")]   # w2's own (codex: plain) agent
+    monkeypatch.setenv("HERDR_WORKSPACE_ID", "w3")
+    monkeypatch.setenv("HERDR_PANE_ID", "w3:p9")           # a shell pane; two agents in the Space
+    compact.main()
+    assert len(sent) == 1 and "2 agents" in notes[-1][2]
+
+
+def test_pane_menu_actions_map_to_herdr_operations(monkeypatch):
+    from navigator import paneact
+    calls = []
+    monkeypatch.setattr(paneact, "target", lambda: ("w1:p2", "w1:t1"))
+    monkeypatch.setattr(paneact.panes, "swap", lambda p, d: calls.append(("swap", p, d)) or "ok")
+    monkeypatch.setattr(paneact.panes, "equalize", lambda t: calls.append(("even", t)) or "ok")
+    monkeypatch.setattr(paneact.panes, "to_new_tab", lambda p: calls.append(("newtab", p)) or "ok")
+    monkeypatch.setattr(paneact.herdr, "run", lambda *a, **k: calls.append(a) or {})
+    monkeypatch.setattr("navigator.compact._note_context", lambda ctx: None)
+    for op in ("move-left", "move-right", "move-up", "move-down", "even", "newtab", "arrange"):
+        paneact.run(op)
+    assert calls[:6] == [("swap", "w1:p2", "left"), ("swap", "w1:p2", "right"), ("swap", "w1:p2", "up"),
+                         ("swap", "w1:p2", "down"), ("even", "w1:t1"), ("newtab", "w1:p2")]
+    assert "NAV_PANE=w1:p2" in calls[6] and "NAV_TAB=panes" in calls[6]

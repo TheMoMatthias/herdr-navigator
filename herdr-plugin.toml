@@ -1,6 +1,6 @@
 id = "momatthias.navigator"
 name = "Navigator"
-version = "0.16.1"
+version = "0.16.2"
 min_herdr_version = "0.9.3"
 description = "Clickable navigator for herdr: projects, worktrees, every agent and sub-agent (in herdr or not), cross-CLI session resume, project-grouped sidebar, key hints"
 platforms = ["linux", "macos", "windows"]
@@ -308,13 +308,113 @@ command = ["sh", "run.sh", "fold", "all"]
 [[actions]]
 id = "compact"
 title = "Navigator: compact this agent (with your instructions)"
-contexts = ["pane"]
+contexts = ["pane", "workspace"]
 platforms = ["windows"]
 command = ["cmd.exe", "/d", "/c", "run.cmd", "compact"]
 
 [[actions]]
 id = "compact-unix"
 title = "Navigator: compact this agent (with your instructions)"
-contexts = ["pane"]
+contexts = ["pane", "workspace"]
 platforms = ["linux", "macos"]
 command = ["sh", "run.sh", "compact"]
+
+# Right-click a terminal: what herdr's own pane menu lacks (it has Split right/down, Zoom, Swap, Close)
+
+[[actions]]
+id = "pane-move-left"
+title = "Pane: move left"
+contexts = ["pane"]
+platforms = ["windows"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "paneact", "move-left"]
+
+[[actions]]
+id = "pane-move-left-unix"
+title = "Pane: move left"
+contexts = ["pane"]
+platforms = ["linux", "macos"]
+command = ["sh", "run.sh", "paneact", "move-left"]
+
+[[actions]]
+id = "pane-move-right"
+title = "Pane: move right"
+contexts = ["pane"]
+platforms = ["windows"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "paneact", "move-right"]
+
+[[actions]]
+id = "pane-move-right-unix"
+title = "Pane: move right"
+contexts = ["pane"]
+platforms = ["linux", "macos"]
+command = ["sh", "run.sh", "paneact", "move-right"]
+
+[[actions]]
+id = "pane-move-up"
+title = "Pane: move up"
+contexts = ["pane"]
+platforms = ["windows"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "paneact", "move-up"]
+
+[[actions]]
+id = "pane-move-up-unix"
+title = "Pane: move up"
+contexts = ["pane"]
+platforms = ["linux", "macos"]
+command = ["sh", "run.sh", "paneact", "move-up"]
+
+[[actions]]
+id = "pane-move-down"
+title = "Pane: move down"
+contexts = ["pane"]
+platforms = ["windows"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "paneact", "move-down"]
+
+[[actions]]
+id = "pane-move-down-unix"
+title = "Pane: move down"
+contexts = ["pane"]
+platforms = ["linux", "macos"]
+command = ["sh", "run.sh", "paneact", "move-down"]
+
+[[actions]]
+id = "pane-even"
+title = "Pane: even out all splits in this tab"
+contexts = ["pane"]
+platforms = ["windows"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "paneact", "even"]
+
+[[actions]]
+id = "pane-even-unix"
+title = "Pane: even out all splits in this tab"
+contexts = ["pane"]
+platforms = ["linux", "macos"]
+command = ["sh", "run.sh", "paneact", "even"]
+
+[[actions]]
+id = "pane-newtab"
+title = "Pane: move to a new tab"
+contexts = ["pane"]
+platforms = ["windows"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "paneact", "newtab"]
+
+[[actions]]
+id = "pane-newtab-unix"
+title = "Pane: move to a new tab"
+contexts = ["pane"]
+platforms = ["linux", "macos"]
+command = ["sh", "run.sh", "paneact", "newtab"]
+
+[[actions]]
+id = "pane-arrange"
+title = "Pane: arrange panes… (Navigator layout map)"
+contexts = ["pane"]
+platforms = ["windows"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "paneact", "arrange"]
+
+[[actions]]
+id = "pane-arrange-unix"
+title = "Pane: arrange panes… (Navigator layout map)"
+contexts = ["pane"]
+platforms = ["linux", "macos"]
+command = ["sh", "run.sh", "paneact", "arrange"]
