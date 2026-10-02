@@ -31,8 +31,8 @@ from .startup_ui import ContextMenu, Digest, FinishWorktree, NewSession, Prompt,
 from . import ui
 from .ui import Btn, Field
 
-STATE_STYLE = {"blocked": "bold red", "reply": "bold #ff9e64", "done": "bold green", "working": "yellow", "idle": "dim",
-               "unknown": "magenta"}
+STATE_STYLE = {"blocked": "bold #fe8019", "reply": "bold #fe8019", "done": "bold", "working": "dim", "idle": "dim",
+               "unknown": "dim"}
 NEEDS_YOU = model.NEEDS_YOU
 CLI_STYLE = {
     "claude": "#d97757", "codex": "#10a37f", "pi": "#7aa2f7", "opencode": "#e5c07b", "kilo": "#f8f675",
@@ -52,7 +52,7 @@ TAG_WIDTH = 6
 def cli_tag(cli: str) -> Text:
     """The source CLI as a coloured fixed-width name, so titles after it line up."""
     name = CLI_SHORT.get(cli, cli or "?")[:TAG_WIDTH]
-    return Text(name.ljust(TAG_WIDTH), style=CLI_STYLE.get(cli, "dim"))
+    return Text(name.ljust(TAG_WIDTH), style="dim")  # one tone: the name says which CLI
 
 
 def cli_rank(cli: str) -> tuple[int, str]:
@@ -129,7 +129,7 @@ def ctx_text(a) -> Text:
     c = getattr(a, "context", None)
     if not c:
         return Text("")
-    style = "bold red" if c.pct >= 85 else "yellow" if c.pct >= 70 else "dim"
+    style = "bold #fe8019" if c.pct >= 85 else "bold" if c.pct >= 70 else "dim"
     return Text(f"{c.pct:>3}%", style=style)
 
 
@@ -195,8 +195,8 @@ class TopBar(Static):
         self.post_message(self.Clicked())
 
 
-STATE_WORDS = (("blocked", "waiting on you", "bold red"), ("reply", "need a reply", "bold #ff9e64"),
-               ("done", "done", "bold green"), ("working", "working", "yellow"), ("idle", "parked", "dim"))
+STATE_WORDS = (("blocked", "waiting on you", "bold #fe8019"), ("reply", "need a reply", "bold #fe8019"),
+               ("done", "done", "bold"), ("working", "working", "dim"), ("idle", "parked", "dim"))
 
 
 def counts_text(counts) -> Text:
@@ -406,9 +406,9 @@ class LayoutMap(Widget):
                     if fill:
                         style[y][x] = fill
                     elif sel and (edge_x or edge_y):
-                        style[y][x] = "bold cyan"
+                        style[y][x] = "bold"
                     elif edge_x or edge_y:
-                        style[y][x] = "bold green" if b.focused else "dim"
+                        style[y][x] = "bold" if b.focused else "dim"
             inner = max(1, x1 - x0 - 2)
             icon = model.STATE_ICON.get(b.status, "") if b.status else ""
             lines = [f"{icon} {b.label}".strip()[:inner], (b.pane_id + ("  ◀ you" if b.focused else ""))[:inner]]
@@ -422,7 +422,7 @@ class LayoutMap(Widget):
                 xs = x0 + 1 + max(0, (inner - len(line)) // 2)
                 for j, ch in enumerate(line):
                     grid[yy][xs + j] = ch
-                    style[yy][xs + j] = fill or (("bold cyan" if sel else "bold") if i == 0 else "dim")
+                    style[yy][xs + j] = fill or (("bold" if sel else "bold") if i == 0 else "dim")
         out = Text()
         for y in range(H):
             for x in range(W):
@@ -608,7 +608,7 @@ class Navigator(App):
                     for label, f in AGENT_FILTERS:
                         yield Btn(label, id=f"flt-{f or 'all'}")
                     yield Static("", classes="grow")
-                    yield Btn("⇅ Needs you", id="agent-sort", tooltip="Sort: who needs you, or where you were last")
+                    yield Btn("⇅ Running", id="agent-sort", tooltip="Sort: running, then who needs you, then most recent; or where you were last")
                     yield Btn("⚑ Next", id="btn-attention", variant="warning",
                               tooltip="Select the next agent that needs you and type your answer (g)")
                 yield Static("", id="agent-empty", classes="empty-note")
@@ -768,17 +768,17 @@ class Navigator(App):
         outside = sum(1 for a in world.agents if not a.in_herdr)
         subs = sum(len(a.subagents) for a in world.agents)
         where = self.current_project.label if self.current_project else "—"
-        bar = Text.assemble(("▣ ", "cyan"), (where, "bold cyan"), ("   │   ", "dim"))
+        bar = Text.assemble(("▣ ", "bold"), (where, "bold"), ("   │   ", "dim"))
         bar.append_text(counts_text(total) or Text("no agents running", style="dim"))
         if outside:
-            bar.append(f" · ↗ {outside} in other windows", style="magenta")
+            bar.append(f" · ↗ {outside} in other windows", style="dim")
         if subs:
-            bar.append(f" · ↳ {subs} sub-agents", style="yellow")
+            bar.append(f" · ↳ {subs} sub-agents", style="dim")
         full = [a for a in world.agents if a.context and a.context.pct >= 85]
         if full:
             bar.append("   │   ", style="dim")
             bar.append(f"▲ context almost full: {', '.join(a.display[:18] for a in full[:2])}"
-                       + (f" +{len(full) - 2}" if len(full) > 2 else ""), style="bold red")
+                       + (f" +{len(full) - 2}" if len(full) > 2 else ""), style="bold #fe8019")
         if world.error:
             bar.append(f"    herdr unreachable", style="red")
         self.query_one("#topbar", Static).update(bar)
@@ -812,7 +812,7 @@ class Navigator(App):
         b = next((b for b in lay.panes if b.pane_id == self.pane_selected), None) if lay else None
         info = Text()
         if b:
-            info.append(f"{b.label[:26]}\n", style="bold cyan")
+            info.append(f"{b.label[:26]}\n", style="bold")
             info.append(b.pane_id + ("  ⛶" if lay.zoomed else ""), style="dim")
         self.query_one("#pane-selected", Static).update(info)
         from . import watch
@@ -1008,14 +1008,14 @@ class Navigator(App):
         head = f"{a.display}  ·  {a.cli}  ·  {word}  ·  {a.project.label}"
         if a.context:
             head += f"  ·  context {a.context.pct}% of {a.context.window // 1000}k"
-        out.append(head + "\n", style="bold cyan")
+        out.append(head + "\n", style="bold")
         if a.in_herdr and sub < 0:
             from . import watch
             for _, w in watch.for_pane(a.pane_id, watch.load()):
-                out.append(watch.describe(w) + "  (right-click to stop)\n", style="yellow")
+                out.append(watch.describe(w) + "  (right-click to stop)\n", style="dim")
         if a.question and sub < 0:
             q = a.question
-            out.append(f"❓ {q.text}\n", style="bold red")
+            out.append(f"❓ {q.text}\n", style="bold #fe8019")
             for i, o in enumerate(q.options, 1):
                 out.append(f"   {i}. {o}\n", style="red")
             if q.more:
@@ -1044,7 +1044,7 @@ class Navigator(App):
                 out.append_text(line)
                 out.append("\n")
             out.append("↗ runs in another window: type there. The mirror resumes it here once it exits.",
-                       style="dim magenta")
+                       style="dim")
             opts = []
         self.call_from_thread(self.query_one("#agent-preview", Static).update, out)
         self.call_from_thread(self.show_answers, a if sub < 0 else None, opts)
@@ -1252,13 +1252,13 @@ class Navigator(App):
                     flt in w.label.lower() or any(flt in a.display.lower() for a in w.agents) for w in show):
                 continue
             here = self.current_project and v.project.root == self.current_project.root
-            box = Text("☑", style="bold green") if v.in_sidebar else Text("☐", style="dim")
+            box = Text("☑", style="bold") if v.in_sidebar else Text("☐", style="dim")
             is_open = bool(flt) or not folded.get(v.project.root, False)
             self.proj_open[v.project.root] = is_open
-            chevron = Text(("▾" if is_open else "▸") if show else "", style="bold cyan")
-            name = Text(v.project.name[:30], style="bold cyan" if here else ("bold" if v.in_sidebar else ""))
+            chevron = Text(("▾" if is_open else "▸") if show else "", style="bold")
+            name = Text(v.project.name[:30], style="bold" if here else ("bold" if v.in_sidebar else ""))
             if here:
-                name.append("  ◀ here", style="cyan")
+                name.append("  ◀ here", style="bold")
             if show and not is_open:
                 name.append(f"  ⎇{len(show)}", style="dim")
 
@@ -1298,9 +1298,9 @@ class Navigator(App):
         agents = wt.agents if wt else v.agents
         sessions = wt.sessions if wt else v.sessions
         out = Text()
-        out.append(v.project.name, style="bold cyan")
+        out.append(v.project.name, style="bold")
         if wt:
-            out.append(f" ⎇ {wt.label}", style="bold #c678dd")
+            out.append(f" ⎇ {wt.label}", style="bold")
         out.append(f"\n{(wt.path if wt else v.project.path) or v.project.root}", style="dim")
         extra = []
         if not wt and v.worktrees:
@@ -1323,11 +1323,11 @@ class Navigator(App):
             for a in sorted(agents, key=lambda a: model.STATE_ORDER.get(a.status, 9)):
                 name = Text(a.display[:32], style="bold")
                 if not a.in_herdr:
-                    name.append("  ↗", style="magenta")
+                    name.append("  ↗", style="dim")
                 items.add_row(Text(STATE_ICON.get(a.status, "?"), style=STATE_STYLE.get(a.status, "")), name,
                               Text((a.activity or "")[:24], style="dim"), key=f"a:{a.key}")
                 for i, sa in enumerate(a.subagents):
-                    items.add_row("", Text(f"  ↳ {sa.name}"[:32], style="yellow"),
+                    items.add_row("", Text(f"  ↳ {sa.name}"[:32], style="dim"),
                                   Text((sa.activity or "")[:30], style="dim"), key=f"x:{a.key}:{i}")
         live_ids = {a.session_id for a in agents}
         rest = [s_ for s_ in sessions if s_.id not in live_ids][:10]
@@ -1620,7 +1620,7 @@ class Navigator(App):
         grouped = self.agent_sort != "recent"
         if not grouped:
             rows.sort(key=lambda a: -max(visited.get(a.pane_id, 0), visited.get(a.mirror_pane, 0)))
-        else:  # nested under their project: needs you, then running, then idle; most recent first
+        else:  # nested under their project: running, then needs you, then idle; most recent first
             first: dict[str, tuple] = {}
             for a in rows:
                 first[a.project.root] = min(first.get(a.project.root, (99,)), model.rank(a))
@@ -1646,19 +1646,19 @@ class Navigator(App):
             here = self.current_project and a.project.root == self.current_project.root
             who = Text(("  " if grouped else "") + a.display[:30], style="bold")
             if not a.in_herdr:
-                who.append("  ↗", style="magenta")
+                who.append("  ↗", style="dim")
             marks = "".join(sorted({watch_icons.get(w.get("kind"), "") for w in watches.values()
                                     if w.get("pane") == a.pane_id}))
             if marks:
                 who.append(" " + marks)
             if grouped:  # the project is the group above; say only which checkout
                 proj = Text(("⎇ " + a.project.worktree)[:26] if a.project.worktree else "main",
-                            style="#c678dd" if a.project.worktree else "dim")
+                            style="dim" if a.project.worktree else "dim")
             else:
-                proj = Text(a.project.label[:26], style="cyan" if here else "")
+                proj = Text(a.project.label[:26], style="bold" if here else "")
             raw_doing = a.activity or a.title or ""
-            doing = Text("❓ " + clip(a.question.text, 52), style="bold red") if a.question else clip(raw_doing, 56)
-            box = (Text("☑", style="bold green") if a.pane_id in self.marked else Text("☐", style="dim")) \
+            doing = Text("❓ " + clip(a.question.text, 52), style="bold #fe8019") if a.question else clip(raw_doing, 56)
+            box = (Text("☑", style="bold") if a.pane_id in self.marked else Text("☐", style="dim")) \
                 if a.in_herdr else ""
             waits = Text(age(a.waiting_since), style=STATE_STYLE.get(a.status, "")) \
                 if a.status in NEEDS_YOU and a.waiting_since else ""
@@ -1670,7 +1670,7 @@ class Navigator(App):
             self.agent_rows[a.key] = (a, -1)
             for i, sa in enumerate(a.subagents):
                 k = f"{a.key}#sub{i}"
-                t.add_row("", Text("↳", style="yellow"), "", Text(f"  {sa.name}", style="yellow"), "", "",
+                t.add_row("", Text("↳", style="dim"), "", Text(f"  {sa.name}", style="dim"), "", "",
                           Text(sa.kind or "", style="dim"), clip(sa.activity or sa.description or "", 56), key=k)
                 self.agent_rows[k] = (a, i)
         if self.agent_sort == "recent" and not self.agent_filter:
@@ -1690,7 +1690,7 @@ class Navigator(App):
                     cols[i].label = Text(want)
                     t.refresh()
         sort_btn = self.query_one("#agent-sort", Button)
-        sort_btn.label = "⇅ Recent" if self.agent_sort == "recent" else "⇅ Needs you"
+        sort_btn.label = "⇅ Recent" if self.agent_sort == "recent" else "⇅ Running"
         counts = model.Counter(a.status for a in self.world.agents)
         counts["needs"] = sum(counts.get(x, 0) for x in NEEDS_YOU)
         counts["outside"] = sum(1 for a in self.world.agents if not a.in_herdr)
@@ -1740,7 +1740,7 @@ class Navigator(App):
         out.append("  ·  press it, release, then the key\n\n", style="dim")
 
         def row(keys_: str, what: str, dim: bool = False) -> None:
-            out.append(f"  {keys_:<36} ", style="dim" if dim else "bold yellow")
+            out.append(f"  {keys_:<36} ", style="dim" if dim else "bold")
             out.append(f"{what}\n", style="dim" if dim else "")
 
         if custom:

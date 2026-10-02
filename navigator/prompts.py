@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from . import settings
+from . import jsonfile, settings
 
 
 def path() -> Path:
@@ -13,7 +13,7 @@ def path() -> Path:
 
 def saved() -> dict[str, str]:
     try:
-        return dict(json.loads(path().read_text(encoding="utf-8")))
+        return dict(jsonfile.read(path(), {}))
     except (OSError, ValueError):
         return {}
 
@@ -25,7 +25,7 @@ def all_() -> dict[str, str]:
 def save(name: str, text: str) -> None:
     data = saved()
     data[name.strip()[:40]] = text
-    path().write_text(json.dumps(data, indent=1), encoding="utf-8")
+    jsonfile.write(path(), data, indent=1)
 
 
 def delete(name: str) -> bool:
@@ -34,5 +34,5 @@ def delete(name: str) -> bool:
     if name not in data:
         return False
     data.pop(name)
-    path().write_text(json.dumps(data, indent=1), encoding="utf-8")
+    jsonfile.write(path(), data, indent=1)
     return True

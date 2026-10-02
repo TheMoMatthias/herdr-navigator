@@ -8,7 +8,7 @@ import time
 from collections import Counter
 from dataclasses import dataclass, field
 
-from . import asks, herdr, insight, live, projects, settings
+from . import asks, herdr, insight, jsonfile, live, projects, settings
 from .sessions import Session, is_listed, load_sessions
 
 # "reply" is the Navigator's own: idle in herdr, but its last message asks you something.
@@ -163,7 +163,7 @@ def is_plugin_pane(cwd: str) -> bool:
 def mirror_panes() -> dict[str, str]:
     """pane_id -> session_id of the mirror panes the Navigator opened."""
     try:
-        return json.loads((settings.state_dir() / "mirrors.json").read_text(encoding="utf-8"))
+        return jsonfile.read(settings.state_dir() / "mirrors.json", {})
     except (OSError, ValueError):
         return {}
 
@@ -182,13 +182,13 @@ def _selection_file():
 def load_selection() -> set[str] | None:
     """Project roots ticked for the sidebar; None until the user ticks anything."""
     try:
-        return set(json.loads(_selection_file().read_text(encoding="utf-8"))["roots"])
+        return set(jsonfile.read(_selection_file(), None)["roots"])
     except (OSError, ValueError, KeyError, TypeError):
         return None
 
 
 def save_selection(roots: set[str]) -> None:
-    _selection_file().write_text(json.dumps({"roots": sorted(roots)}), encoding="utf-8")
+    jsonfile.write(_selection_file(), {"roots": sorted(roots)})
 
 
 # --- live state ----------------------------------------------------------------------------
@@ -321,10 +321,16 @@ def build(with_sessions: bool = True) -> World:
     return World(ordered, agents, workspaces, sessions, live_sessions, focused_ws, tab_labels, err)
 
 
+# What runs now is always on top, then who waits on you, then what ran last: within each group
+# the most recent state change (herdr's state_change_seq) first.
+RANK_ORDER = {"working": 0, "blocked": 1, "reply": 2, "done": 3, "idle": 4, "unknown": 5}
+
+
 def rank(a: Agent) -> tuple:
-    """Sort key used everywhere agents are listed: who needs you, then what runs, then idle;
-    within each, the most recent state change first (agents in other windows after herdr's)."""
-    return (STATE_ORDER.get(a.status, 9), 0 if a.in_herdr else 1, -a.seq)
+    """Sort key used everywhere agents are listed (herdr's Agents panel and Spaces, the
+    Navigator): running, then needs you, then idle; the most recent change first within each,
+    agents in other windows after herdr's."""
+    return (RANK_ORDER.get(a.status, 9), 0 if a.in_herdr else 1, -a.seq)
 
 
 def age(ts: float) -> str:

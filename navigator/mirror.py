@@ -23,7 +23,7 @@ from . import herdr, live, model, settings
 from .sessions import _loads, load_sessions
 
 SOURCE = f"plugin:{settings.PLUGIN_ID}"
-STATE_STYLE = {"working": "yellow", "idle": "dim", "blocked": "bold red", "ended": "magenta"}
+STATE_STYLE = {"working": "dim", "idle": "dim", "blocked": "bold #fe8019", "ended": "dim"}
 
 
 def feed(path: str, limit: int = 40) -> list[Text]:
@@ -37,7 +37,7 @@ def feed(path: str, limit: int = 40) -> list[Text]:
             text = c if isinstance(c, str) else next(
                 (x.get("text", "") for x in (c or []) if isinstance(x, dict) and x.get("type") == "text"), "")
             if text and not text.lstrip().startswith("<"):
-                out.append(Text("👤 " + live._short(text, 300), style="bold cyan"))
+                out.append(Text("👤 " + live._short(text, 300), style="bold"))
         elif t == "assistant":
             for part in (d.get("message") or {}).get("content") or []:
                 if part.get("type") == "text" and part.get("text", "").strip():
@@ -46,7 +46,7 @@ def feed(path: str, limit: int = 40) -> list[Text]:
                     out.append(Text("▸ " + live._describe_tool(part.get("name", "tool"), part.get("input")),
                                     style="dim"))
         elif t == "event_msg" and p.get("type") == "user_message":
-            out.append(Text("👤 " + live._short(p.get("message", ""), 300), style="bold cyan"))
+            out.append(Text("👤 " + live._short(p.get("message", ""), 300), style="bold"))
         elif t == "response_item" and p.get("type") in ("function_call", "custom_tool_call"):
             out.append(Text("▸ " + live._describe_tool(p.get("name", "tool"), p.get("arguments") or p.get("input")),
                             style="dim"))
@@ -120,18 +120,18 @@ class Mirror(App):
         head.append(f"   {self.cli}", style="dim")
         head.append(f"   {state}", style=STATE_STYLE.get(state, ""))
         proj = r.project.label if r else (s.project.label if s else "")
-        head.append(f"   {proj}\n", style="cyan")
+        head.append(f"   {proj}\n", style="bold")
         if r:
             head.append(f"Running in another terminal window (pid {r.pid}). This pane mirrors it live; "
                         "type in that window. ", style="dim")
             head.append("Once it exits, ▶ Resume continues it here.", style="dim")
         else:
             head.append("The session has exited its other window. ▶ Resume continues it here in herdr.",
-                        style="bold green")
+                        style="bold")
         self.query_one("#head", Static).update(head)
         subs = Text()
         for sa in (r.subagents if r else []):
-            subs.append(f"↳ {sa.name}", style="yellow")
+            subs.append(f"↳ {sa.name}", style="dim")
             subs.append(f" ({sa.kind or 'agent'}{', ' + sa.model if sa.model else ''}) {sa.description[:50]}  ")
             subs.append(f"{sa.activity[:60]}\n", style="dim")
         self.query_one("#subs", Static).update(subs)

@@ -12,7 +12,7 @@ import re
 import time
 from pathlib import Path
 
-from . import herdr, settings
+from . import herdr, jsonfile, settings
 from .model import World
 from .projects import Project
 
@@ -30,7 +30,7 @@ def _file(project: Project) -> Path:
 
 def saved(project: Project) -> dict[str, dict]:
     try:
-        return json.loads(_file(project).read_text(encoding="utf-8"))
+        return jsonfile.read(_file(project), {})
     except (OSError, ValueError):
         return {}
 
@@ -58,7 +58,7 @@ def save(world: World, project: Project, tab_id: str, name: str) -> str:
 
     data = saved(project)
     data[name] = {"saved_at": time.time(), "root": strip(root)}
-    _file(project).write_text(json.dumps(data, indent=1), encoding="utf-8")
+    jsonfile.write(_file(project), data, indent=1)
     return f"💾 saved layout '{name}' for {project.name}"
 
 
@@ -66,7 +66,7 @@ def delete(project: Project, name: str) -> str:
     data = saved(project)
     if data.pop(name, None) is None:
         return f"✗ no layout '{name}'"
-    _file(project).write_text(json.dumps(data, indent=1), encoding="utf-8")
+    jsonfile.write(_file(project), data, indent=1)
     return f"🗑 deleted layout '{name}'"
 
 

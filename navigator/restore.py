@@ -21,7 +21,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from . import herdr, launch, model, settings, startup
+from . import herdr, jsonfile, launch, model, settings, startup
 from .sessions import Session
 
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -91,13 +91,13 @@ def _panes_file() -> Path:
 
 def load_panes() -> dict[str, dict]:
     try:
-        return json.loads(_panes_file().read_text(encoding="utf-8"))
+        return jsonfile.read(_panes_file(), {})
     except (OSError, ValueError):
         return {}
 
 
 def save_panes(m: dict[str, dict]) -> None:
-    _panes_file().write_text(json.dumps(m, indent=1), encoding="utf-8")
+    jsonfile.write(_panes_file(), m, indent=1)
 
 
 def record_panes(world: model.World, snap: dict) -> None:

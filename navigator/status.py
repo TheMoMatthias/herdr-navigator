@@ -107,6 +107,24 @@ def main() -> None:
     except (AttributeError, ValueError):
         pass
     print(line())
+    _maybe_view()
+
+
+def _maybe_view() -> None:
+    """The tab bar runs this every few seconds even when no agent changes state: re-apply the
+    Agents view herdr dropped (plugin reload, server restart) within ~20 s, for ~5 ms a check."""
+    from . import settings, sync
+    f = settings.state_dir() / "view-checked"
+    try:
+        if time.time() - f.stat().st_mtime < 20:
+            return
+    except OSError:
+        pass
+    try:
+        f.touch()
+    except OSError:
+        pass
+    sync.ensure_view()
 
 
 if __name__ == "__main__":

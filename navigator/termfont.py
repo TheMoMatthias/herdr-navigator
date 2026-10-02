@@ -9,6 +9,8 @@ import os
 import shutil
 from pathlib import Path
 
+from . import jsonfile
+
 DEFAULT = 12  # Windows Terminal's own default
 LOW, HIGH = 6, 36
 
@@ -62,5 +64,5 @@ def set_size(size: int) -> str:
     for pr in prof.get("list", []):  # a profile with its own size would ignore the default
         if isinstance(pr, dict) and isinstance(pr.get("font"), dict) and "size" in pr["font"]:
             pr["font"]["size"] = size
-    p.write_text(json.dumps(d, indent=4, ensure_ascii=False), encoding="utf-8")
+    jsonfile.write(p, d, indent=4)
     return f"Font size {size}: Windows Terminal applies it to every tab right away"

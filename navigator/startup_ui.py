@@ -81,12 +81,12 @@ class ContextMenu(ModalScreen):
 
 LEGEND = Text.assemble(
     ("Symbols  ", "bold"),
-    ("⚠", "bold red"), " waits for approval   ", ("⏳", "bold #ff9e64"), " asks you   ", ("✔", "bold green"),
-    " done   ", ("◐", "yellow"), " working   ", ("○", "dim"), " parked\n         ", ("❓", "bold red"), " asks a question   ", ("↗", "magenta"), " other window   ",
-    ("●", "green"), " running here\n         ",
-    ("⎇", "#c678dd"), " worktree   ", ("↳", "yellow"), " sub-agent   ", ("▲", "bold red"), " context almost full   ",
-    ("▸", ""), " tool it runs   ", ("☑", "green"), " on   ", ("☐", "dim"), " off   ",
-    ("▾ ▸", "cyan"), " fold   ", ("▾", ""), " opens a menu")
+    ("⚠", "bold #fe8019"), " waits for approval   ", ("⏳", "bold #fe8019"), " asks you   ", ("✔", "bold"),
+    " done   ", ("◐", "dim"), " working   ", ("○", "dim"), " parked\n         ", ("❓", "bold #fe8019"), " asks a question   ", ("↗", "dim"), " other window   ",
+    ("●", "bold"), " running here\n         ",
+    ("⎇", "dim"), " worktree   ", ("↳", "dim"), " sub-agent   ", ("▲", "bold #fe8019"), " context almost full   ",
+    ("▸", ""), " tool it runs   ", ("☑", "bold"), " on   ", ("☐", "dim"), " off   ",
+    ("▾ ▸", "bold"), " fold   ", ("▾", ""), " opens a menu")
 
 
 class HelpScreen(ModalScreen):
@@ -163,7 +163,7 @@ class LaunchOptions(ModalScreen):
     def compose(self) -> ComposeResult:
         p = self.prefs
         with Vertical(id="lo"):
-            yield Static(Text.assemble(("Launch options  ", "bold"), (self.title_[:44], "cyan")))
+            yield Static(Text.assemble(("Launch options  ", "bold"), (self.title_[:44], "bold")))
             if self.cli == "claude":
                 rc_default = bool(settings.load().restore.get("claude_remote_control", False))
                 with Horizontal(classes="form-row"):
@@ -372,9 +372,9 @@ class StartupPane(Vertical):
             running = [r for r in g.rows if r.session.id in live]
             is_open = self._is_open(g, len(running), filtering)
             self.open_now[root] = is_open
-            chevron = Text("▾" if is_open else "▸", style="bold cyan")
-            box = Text("☑" if g.on else "☐", style=("bold" if g.pinned else "dim") + (" green" if g.on else ""))
-            label = Text(g.project.name[:24], style="bold cyan" if g.on else "bold")
+            chevron = Text("▾" if is_open else "▸", style="bold")
+            box = Text("☑" if g.on else "☐", style=("bold" if g.pinned else "dim") )
+            label = Text(g.project.name[:24], style="bold" if g.on else "bold")
             stats = []
             if g.on:
                 stats.append(f"{len(g.ticked)} ticked")
@@ -403,17 +403,17 @@ class StartupPane(Vertical):
                 ticked_here = r.ticked and g.on
                 now = ""
                 if a:  # running: here (●), in another window (↗), or asking you something (❓)
-                    now = Text("●", style="bold green") if a.in_herdr else Text("↗", style="bold magenta")
+                    now = Text("●", style="bold") if a.in_herdr else Text("↗", style="bold")
                     if a.question:
-                        now = Text("❓", style="bold red")
+                        now = Text("❓", style="bold #fe8019")
                 tick = Text("☑" if r.ticked else "☐",
-                            style=("bold" if r.pinned else "dim") + (" green" if ticked_here else ""))
+                            style=("bold" if r.pinned else "dim") )
                 title = Text(s.title[:40])
                 if r.ticked and not r.pinned:
                     title.append("  auto", style="dim italic")
                 if r.prefs:
                     title.append("  ✎ options", style="dim")
-                lane = Text(f"⎇ {s.project.worktree}"[:15], style="#c678dd") if s.project.worktree else ""
+                lane = Text(f"⎇ {s.project.worktree}"[:15], style="dim") if s.project.worktree else ""
                 t.add_row("", tick, now, cli_tag(s.cli), title, lane, age(s.mtime), key=k)
             hidden = len(found) - len(rows)
             if hidden > 0:
@@ -425,11 +425,11 @@ class StartupPane(Vertical):
             except Exception:
                 pass
         cap = int(settings.load().restore.get("max_sessions", 30))
-        sumtext = Text.assemble(("At logon ", "dim"), (f"{min(n_ticked, cap)} reopen", "bold green"),
+        sumtext = Text.assemble(("At logon ", "dim"), (f"{min(n_ticked, cap)} reopen", "bold"),
                                 (f" ({n_mine} yours, {n_ticked - n_mine} auto)", "dim"),
                                 (f" · {n_open} of them run now", "dim"))
         if n_ticked > cap:
-            sumtext.append(f" · capped at {cap}", style="bold yellow")
+            sumtext.append(f" · capped at {cap}", style="bold #fe8019")
         self.query_one("#start-sum", Static).update(sumtext)
         fold = self.query_one("#st-fold", Button)
         fold.label = "⊞ Unfold all" if not any(self.open_now.values()) else "⊟ Fold all"
@@ -566,14 +566,14 @@ class StartupPane(Vertical):
         self.relaunch_cli = cli
         t = restore.relaunch_targets(cli, self.world)
         what = cli or "every CLI"
-        txt = Text.assemble(("Relaunch ", "bold"), (what, "bold cyan"), "  —  restarts each session in its own pane\n")
-        txt.append(f"  ↻ {len(t['restart'])} restart: ", style="green")
+        txt = Text.assemble(("Relaunch ", "bold"), (what, "bold"), "  —  restarts each session in its own pane\n")
+        txt.append(f"  ↻ {len(t['restart'])} restart: ", style="bold")
         txt.append(", ".join(a.display for a in t["restart"])[:300] or "none")
         if t["busy"]:
-            txt.append(f"\n  ◐ {len(t['busy'])} working, left alone unless you include busy: ", style="yellow")
+            txt.append(f"\n  ◐ {len(t['busy'])} working, left alone unless you include busy: ", style="dim")
             txt.append(", ".join(a.display for a in t["busy"])[:200])
         if t["elsewhere"]:
-            txt.append(f"\n  ↗ {len(t['elsewhere'])} in other terminals, restart them there: ", style="magenta")
+            txt.append(f"\n  ↗ {len(t['elsewhere'])} in other terminals, restart them there: ", style="dim")
             txt.append(", ".join(a.display for a in t["elsewhere"])[:200])
         self.query_one("#relaunch-text", Static).update(txt)
         self.query_one("#relaunch-box").add_class("show")
@@ -809,7 +809,7 @@ class NewSession(ModalScreen):
     def compose(self) -> ComposeResult:
         rc_default = bool(settings.load().restore.get("claude_remote_control", False))
         with Vertical(id="ns"):
-            yield Static(Text.assemble(("New session  ", "bold"), (self.project_label[:40], "cyan")))
+            yield Static(Text.assemble(("New session  ", "bold"), (self.project_label[:40], "bold")))
             with Horizontal(classes="form-row"):
                 yield Static("CLI", classes="lbl")
                 yield Choice([(c, c) for c in self.clis], value=self.clis[0], allow_blank=False, id="ns-cli")
@@ -899,22 +899,22 @@ class FinishWorktree(ModalScreen):
 
     def compose(self) -> ComposeResult:
         st = self.st
-        t = Text.assemble(("Finish worktree  ", "bold"), (self.label, "bold magenta"), "\n", (st.path, "dim"), "\n\n")
+        t = Text.assemble(("Finish worktree  ", "bold"), (self.label, "bold"), "\n", (st.path, "dim"), "\n\n")
         if st.branch:
             t.append(f"branch {st.branch}", style="bold")
             if st.base and st.base != st.branch:
-                t.append(f"   {st.ahead} commit(s) not in {st.base}", style="yellow" if st.ahead else "green")
+                t.append(f"   {st.ahead} commit(s) not in {st.base}", style="dim" if st.ahead else "bold")
                 if st.behind:
                     t.append(f" · {st.behind} behind", style="dim")
             t.append("\n")
         if st.dirty:
-            t.append(f"{len(st.dirty)} uncommitted change(s):\n", style="bold red")
+            t.append(f"{len(st.dirty)} uncommitted change(s):\n", style="bold #fe8019")
             for ln in st.dirty[:6]:
                 t.append(f"   {ln}\n", style="red")
         else:
-            t.append("working tree clean\n", style="green")
+            t.append("working tree clean\n", style="bold")
         if st.agents:
-            t.append(f"running: {', '.join(st.agents)}\n", style="bold yellow")
+            t.append(f"running: {', '.join(st.agents)}\n", style="bold #fe8019")
         if st.ahead and not st.dirty:
             t.append("\nIts commits stay on the branch: merge it when you are ready.\n", style="dim")
         if st.blockers:
@@ -944,7 +944,7 @@ class Digest(ModalScreen):
     #dg OptionList { height: auto; max-height: 24; border: none; background: $panel; }
     """
     BINDINGS = [("escape", "dismiss(None)", "Close")]
-    ICON = {"asks": ("❓ asks", "bold red"), "finished": ("✔ done", "bold green"), "ended": ("■ ended", "dim")}
+    ICON = {"asks": ("❓ asks", "bold #fe8019"), "finished": ("✔ done", "bold"), "ended": ("■ ended", "dim")}
 
     def __init__(self, entries, away: str) -> None:
         super().__init__()
@@ -954,7 +954,7 @@ class Digest(ModalScreen):
         opts = []
         for i, e in enumerate(self.entries):
             icon, style = self.ICON[e.kind]
-            t = Text.assemble((f"{icon:<8}", style), (f"{e.name[:28]:<29}", "bold"), (f"{e.project[:24]:<25}", "cyan"),
+            t = Text.assemble((f"{icon:<8}", style), (f"{e.name[:28]:<29}", "bold"), (f"{e.project[:24]:<25}", "dim"),
                               (e.line[:40], "dim"))
             t.no_wrap = True
             opts.append(Option(t, id=str(i)))
@@ -1026,13 +1026,13 @@ class UsagePane(Vertical):
                 pw.add(wk)
             grand_today.add(pt)
             grand_week.add(pw)
-            t.add_row(Text(proj, style="bold cyan"), "", usage.human(work_(pt)) if work_(pt) else "",
+            t.add_row(Text(proj, style="bold"), "", usage.human(work_(pt)) if work_(pt) else "",
                       Text(usage.human(work_(pw)), style="bold"), usage.human(pw.out),
                       Text(usage.human(pw.cached), style="dim"), "", key=f"P|{proj}")
             for su, s, td, wk in sorted(rows, key=lambda x: -work_(x[3]))[:8]:
                 title = Text("  " + (s.title[:44] if s else su.sid[:8]))
                 if s and s.project.worktree:
-                    title.append(f"  ⎇ {s.project.worktree}"[:20], style="#c678dd")
+                    title.append(f"  ⎇ {s.project.worktree}"[:20], style="dim")
                 t.add_row(title, cli_tag(su.cli), usage.human(work_(td)) if work_(td) else "",
                           usage.human(work_(wk)), usage.human(wk.out), Text(usage.human(wk.cached), style="dim"),
                           age(s.mtime) if s else "", key=f"S|{su.sid}")

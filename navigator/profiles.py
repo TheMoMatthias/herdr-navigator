@@ -17,7 +17,7 @@ import shutil
 import time
 from pathlib import Path
 
-from . import settings
+from . import jsonfile, settings
 
 SLOT_KEYS = "json-keys.json"
 
@@ -32,14 +32,14 @@ def _meta_path() -> Path:
 
 def _meta() -> dict:
     try:
-        return json.loads(_meta_path().read_text(encoding="utf-8"))
+        return jsonfile.read(_meta_path(), {})
     except (OSError, ValueError):
         return {}
 
 
 def _save_meta(m: dict) -> None:
     _meta_path().parent.mkdir(parents=True, exist_ok=True)
-    _meta_path().write_text(json.dumps(m, indent=1), encoding="utf-8")
+    jsonfile.write(_meta_path(), m, indent=1)
 
 
 def _cfg(cli: str) -> dict:
@@ -76,7 +76,7 @@ def label(cli: str, name: str) -> str:
 
 
 def _read_json(p: Path) -> dict:
-    try:
+    try:  # plain read: these are the CLIs' own login files, never copied aside
         return json.loads(p.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
@@ -88,7 +88,7 @@ def _capture(cli: str, slot: Path) -> None:
         if f.exists():
             shutil.copy2(f, slot / f.name)
     keys = {str(p): {k: _read_json(p).get(k) for k in ks if k in _read_json(p)} for p, ks in json_keys(cli).items()}
-    (slot / SLOT_KEYS).write_text(json.dumps(keys), encoding="utf-8")
+    jsonfile.write((slot / SLOT_KEYS), keys)
 
 
 def _replace(tmp: Path, dst: Path) -> None:

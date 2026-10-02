@@ -106,8 +106,8 @@ def session_lines(label: str, agents: list, folded: bool = False) -> list[str]:
 
 def agent_tree(agents: list, folded: dict | None = None) -> list[tuple]:
     """herdr's Agents panel as a tree: (agent, order, heading, line, lane, hidden) per agent in
-    herdr. Projects come in the order of their most urgent agent, agents by model.rank (needs
-    you, then running, then idle; the most recent state change first). The first shown agent of
+    herdr. Projects come in the order of their most urgent agent, agents by model.rank (running,
+    then needs you, then idle; the most recent state change first). The first shown agent of
     a project carries the project heading row. A folded project shows only the agents that need
     you (or its first agent, to carry the heading)."""
     folded = folded or {}
@@ -175,12 +175,30 @@ def _sort_spaces(world) -> int:
     return moves
 
 
-def _set_view(world) -> None:
-    """Make herdr's Agents panel follow the tree order (until the herdr server restarts)."""
+VIEW_LABEL = "by project"
+
+
+def _set_view(world=None) -> None:
+    """Make herdr's Agents panel follow the tree order."""
     herdr.request("agent.view.set", {
-        "source": SOURCE, "label": "by project",
+        "source": SOURCE, "label": VIEW_LABEL,
         "filter": {"op": "not", "filter": {"op": "eq", "field": {"token": "hide"}, "value": "1"}},
-        "sort": [{"field": {"token": "order"}, "order": "asc"}]})
+        "sort": [{"field": {"token": "order"}, "order": "asc"}]}, timeout=6)
+
+
+def ensure_view() -> bool:
+    """herdr drops a plugin's Agents view when the plugin is reloaded or re-linked and when the
+    server restarts. A clear from a source that owns nothing changes nothing but reports what is
+    active (~5 ms), so the view is re-applied exactly when it is missing. True = it was missing."""
+    try:
+        cur = herdr.request("agent.view.clear", {"source": "plugin:navigator.probe"}, timeout=4)
+        if cur.get("active") and cur.get("source") == SOURCE and cur.get("label") == VIEW_LABEL:
+            return False
+        _set_view()
+        return True
+    except (herdr.HerdrError, OSError, ValueError) as e:
+        print(f"navigator: agent view not checked: {e}")
+        return False
 
 
 def _named(ws: str | None = None, label: str | None = None) -> dict:
@@ -288,14 +306,7 @@ def sync(force: bool = False) -> None:
         _report("pane", a.pane_id, "grp", head, old, sent, seq)
         _report("pane", a.pane_id, "line", line, old, sent, seq)
         _report("pane", a.pane_id, "lane", lane, old, sent, seq)
-    if old.get("view") != "by project 2":
-        try:
-            _set_view(world)
-            sent["view"] = "by project 2"
-        except Exception as e:
-            print(f"navigator: agent view not set: {e}")
-    else:
-        sent["view"] = "by project 2"
+    ensure_view()
 
     for a in world.agents:
         if a.in_herdr:  # mirror panes report their own tokens

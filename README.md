@@ -8,7 +8,7 @@ everything your coding agents are doing:
   Space gets its own indented row under it (`├ ⏳ STORAGE`), tabs included. herdr's Agents panel is
   nested the same way: a heading per project (`▾ AlgoTrader ⏳1 ○5`), its agents below as
   `├─ ? STORAGE · needs reply`, a worktree agent's `▹ lane` under its name, the project with
-  whoever needs you first (`!` waits on you, `?` needs a reply), then what is running, then the
+  what is running first, then whoever needs you (`!` waits on you, `?` needs a reply), then the
   most recently active. Spaces follow the same order (a repo moves with its worktree Spaces;
   ⚙ Settings › General turns that off). Fold a project with `F10` / `Ctrl+B › F` (the focused
   pane's project) or `Ctrl+B › Shift+F` (every project), or right-click a pane or a workspace ›

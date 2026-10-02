@@ -333,11 +333,11 @@ def test_agent_panel_tree_groups_by_project_most_urgent_first():
     agents = [ag("A1", "idle", a_root, "p1"), ag("A2", "working", a_root, "p4"), ag("B1", "idle", b_root, "p2"),
               ag("B2", "reply", wt, "p3"), ag("OUT", "blocked", a_root, "")]   # not in herdr: not in its panel
     rows = [(x[0].display,) + tuple(x[1:]) for x in sync.agent_tree(agents)]
-    assert [r[0] for r in rows] == ["B2", "B1", "A2", "A1"]   # Beta first: it holds the agent that needs you
-    assert rows[0][2].startswith("▾ Beta  ?1 ○1") and rows[1][2] == "" and rows[2][2].startswith("▾ Alpha")
-    assert rows[0][3] == "├─ ? B2" and rows[1][3] == sync.PAD * 2 + "└─ ○ B1"
-    assert rows[3][3] == sync.PAD * 2 + "└─ ○ A1"
-    assert rows[0][4] == "│" + sync.PAD * 4 + "▹ lead-3" and rows[1][4] == ""
+    assert [r[0] for r in rows] == ["A2", "A1", "B2", "B1"]   # Alpha first: it holds the agent that runs
+    assert rows[0][2].startswith("▾ Alpha  ◐1 ○1") and rows[1][2] == "" and rows[2][2].startswith("▾ Beta")
+    assert rows[0][3] == "├─ ◐ A2" and rows[1][3] == sync.PAD * 2 + "└─ ○ A1"
+    assert rows[2][3] == "├─ ? B2" and rows[3][3] == sync.PAD * 2 + "└─ ○ B1"
+    assert rows[2][4] == "│" + sync.PAD * 4 + "▹ lead-3" and rows[3][4] == ""
     assert [r[1] for r in rows] == ["0000", "0001", "0002", "0003"]
     assert all(ch not in "".join(r[2] + r[3] + r[4] for r in rows) for ch in "⏳✔⚠⎇")   # no wide glyphs
     # folded: only who needs you stays, else the first agent carries the heading
@@ -347,13 +347,13 @@ def test_agent_panel_tree_groups_by_project_most_urgent_first():
     assert not f["A2"][5] and f["A1"][5] and f["A2"][2].startswith("▸ Alpha")
 
 
-def test_rank_puts_needs_you_then_running_then_most_recent():
+def test_rank_puts_running_then_needs_you_then_most_recent():
     from navigator import model
     p = projects.Project("/r", "R")
     ag = lambda n, st, seq, pane="p": model.Agent("claude", st, p, name=n, pane_id=pane, seq=seq)  # noqa: E731
     xs = [ag("old-idle", "idle", 3), ag("new-idle", "idle", 9), ag("run", "working", 1), ag("ask", "blocked", 2),
           ag("out", "idle", 99, pane="")]
-    assert [a.name for a in sorted(xs, key=model.rank)] == ["ask", "run", "new-idle", "old-idle", "out"]
+    assert [a.name for a in sorted(xs, key=model.rank)] == ["run", "ask", "new-idle", "old-idle", "out"]
 
 
 def test_folded_space_keeps_only_who_needs_you():
@@ -419,3 +419,16 @@ def test_font_size_writes_windows_terminal_defaults_with_a_backup(tmp_path, monk
     assert "font" not in d["profiles"]["list"][1] and (tmp_path / "settings.json.navigator-backup").exists()
     termfont.set_size(99)
     assert termfont.get() == termfont.HIGH
+
+
+def test_state_json_never_reads_a_broken_file_as_empty_silently(tmp_path):
+    from navigator import jsonfile
+    f = tmp_path / "startup.json"
+    jsonfile.write(f, {"sessions": {"claude:1": {"tick": True}}}, indent=1)
+    assert jsonfile.read(f, {})["sessions"]["claude:1"]["tick"] is True
+    f.write_text('{"sessions": {"claude:1": {"ti', encoding="utf-8")   # caught mid-write, for good
+    assert jsonfile.read(f, {}) == {}
+    kept = list(tmp_path.glob("startup.json.unreadable-*"))
+    assert kept and kept[0].read_text(encoding="utf-8").startswith('{"sessions"')   # nothing lost
+    assert jsonfile.read(tmp_path / "missing.json", None) is None
+    assert not list(tmp_path.glob("*.tmp"))   # no temp files left behind

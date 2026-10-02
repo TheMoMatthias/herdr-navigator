@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 from dataclasses import dataclass, field
 
-from . import projects, settings
+from . import jsonfile, projects, settings
 from .sessions import Session
 
 EFFORTS = ["", "low", "medium", "high", "xhigh", "max"]
@@ -28,9 +28,8 @@ def _path():
 
 
 def load() -> dict:
-    try:
-        data = json.loads(_path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    data = jsonfile.read(_path(), {})
+    if not isinstance(data, dict):
         data = {}
     data.setdefault("projects", {})
     data.setdefault("sessions", {})
@@ -38,7 +37,7 @@ def load() -> dict:
 
 
 def save(data: dict) -> None:
-    _path().write_text(json.dumps(data, indent=1), encoding="utf-8")
+    jsonfile.write(_path(), data, indent=1)
 
 
 def skey(s: Session) -> str:
@@ -166,16 +165,14 @@ def _ui_path() -> Path:
 
 
 def ui_state() -> dict:
-    try:
-        return json.loads(_ui_path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
+    data = jsonfile.read(_ui_path(), {})
+    return data if isinstance(data, dict) else {}
 
 
 def set_ui(key: str, value) -> None:
     data = ui_state()
     data[key] = value
-    _ui_path().write_text(json.dumps(data, indent=1), encoding="utf-8")
+    jsonfile.write(_ui_path(), data, indent=1)
 
 
 def set_project(root: str, on: bool | None = None, auto: bool | None = None) -> None:
@@ -266,7 +263,7 @@ def remember_for_pane(pane_id: str, prefs: dict) -> None:
         data = {}
     data = {k: v for k, v in data.items() if time.time() - v.get("at", 0) < 3600}
     data[pane_id] = {"prefs": clean, "at": time.time()}
-    _pending_path().write_text(json.dumps(data), encoding="utf-8")
+    jsonfile.write(_pending_path(), data)
 
 
 def claim_pending(pane_id: str, key: str) -> None:
@@ -277,7 +274,7 @@ def claim_pending(pane_id: str, key: str) -> None:
         return
     if pane_id in data:
         set_prefs(key, data.pop(pane_id)["prefs"])
-        _pending_path().write_text(json.dumps(data), encoding="utf-8")
+        jsonfile.write(_pending_path(), data)
 
 
 # ---- one-time import from the session-restore tool ----------------------------------------------

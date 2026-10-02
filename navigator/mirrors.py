@@ -14,7 +14,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import herdr, model, settings
+from . import herdr, jsonfile, model, settings
 
 LOCK_STALE = 60
 
@@ -28,7 +28,7 @@ def load() -> dict[str, str]:
 
 
 def save(m: dict[str, str]) -> None:
-    _file().write_text(json.dumps(m), encoding="utf-8")
+    jsonfile.write(_file(), m)
 
 
 def forget(pane: str) -> None:

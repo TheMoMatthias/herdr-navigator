@@ -449,7 +449,7 @@ class SettingsPane(Horizontal):
         yield Tick("Sidebar: mirror agents that run outside herdr (read-only)", s.mirror_outside, id="gn-mirror")
         yield Tick("Name new workspaces after their project automatically", s.auto_name, id="gn-autoname")
         yield Tick("Hide sub-agent sessions in the lists", s.hide_subagents, id="gn-hidesub")
-        yield Tick("Sidebar: sort Spaces by need, running, recent", s.sort_spaces,
+        yield Tick("Sidebar: sort Spaces by running, need, recent", s.sort_spaces,
                    id="gn-sortspaces")
         from . import termfont
         size = termfont.get()

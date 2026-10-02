@@ -19,7 +19,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import herdr, settings
+from . import herdr, jsonfile, settings
 
 KINDS = {"done": "🔔", "chain": "⛓", "errors": "🚨"}
 ERROR_RE = re.compile(r"(\bFAILED\b|\bFAIL:|Traceback \(most recent call last\)|^\s*\w*Error:|\bERROR\b|"
@@ -33,13 +33,13 @@ def _file() -> Path:
 
 def load() -> dict:
     try:
-        return json.loads(_file().read_text(encoding="utf-8"))
+        return jsonfile.read(_file(), {})
     except (OSError, ValueError):
         return {}
 
 
 def _save(d: dict) -> None:
-    _file().write_text(json.dumps(d, indent=1), encoding="utf-8")
+    jsonfile.write(_file(), d, indent=1)
 
 
 def _alive(pid: int) -> bool:
