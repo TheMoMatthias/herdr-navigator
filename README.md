@@ -191,6 +191,15 @@ presses ⏎ / Esc / ^C, in every ticked agent at once.
   `Where` column says which checkout. `←`/`→`, a click on `▾` or Enter on the header folds a
   group; a folded group still shows the agents that need you.
 - **Recent first.** `⇅` sorts Agents by your last visit instead, other panes included (`F7`).
+- **Watch and chain.** Right-click an agent: `🔔 Tell me when it finishes` (a herdr toast, and
+  your phone when alerts are set up), or `⛓ When it finishes, hand its answer to…` another agent,
+  which turns Hand off into a plan → review pipeline. Watched agents carry 🔔 / ⛓ after their
+  name; right-click again to stop. In Layout, `🚨 Watch for errors` tells you when a test or
+  server pane prints `FAILED`, a traceback or `Error:` (new output only).
+- **Needs a reply, in herdr too.** herdr's own agent list and pane borders say `needs reply`, and
+  a toast with sound appears when an agent starts asking you something (Settings › Phone alerts).
+- **New agent from a workspace.** Right-click a workspace in herdr's sidebar ›
+  `Navigator: new agent session here…`, or right-click a project heading in Agents.
 
 - **Context gauge.** Agents has a `Ctx` column that shows how full each session's context is
   (yellow from 70%, red from 85%), and the top bar warns when one is nearly full. `⇣` sends

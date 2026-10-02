@@ -296,6 +296,8 @@ class SettingsPane(Horizontal):
             yield Field(str(c.get("blocked_minutes", 10)), id="al-min", classes="num")
             yield Static("minutes (0 = never)", classes="unit")
         yield Tick("Also send the logon restore's result", bool(c.get("on_restore", True)), id="al-restore")
+        yield Tick("Toast in herdr when an agent's last message asks you something",
+                   bool(c.get("toast_reply", True)), id="al-toast")
         with Horizontal(classes="bar"):
             yield Btn("Send test", id="al-test", variant="primary", tooltip="A test message to every channel set up")
 
@@ -325,7 +327,8 @@ class SettingsPane(Horizontal):
         return {"telegram_bot_token": v("#al-tg"), "ntfy_topic": v("#al-ntfy"), "webhook_url": v("#al-hook"),
                 "whatsapp_phone": v("#al-wa-phone"), "whatsapp_apikey": v("#al-wa-key"),
                 "blocked_minutes": _int(v("#al-min"), 10),
-                "on_restore": self.query_one("#al-restore", Checkbox).value}
+                "on_restore": self.query_one("#al-restore", Checkbox).value,
+                "toast_reply": self.query_one("#al-toast", Checkbox).value}
 
     @work(thread=True, group="alerts")
     def run_test_send(self) -> None:

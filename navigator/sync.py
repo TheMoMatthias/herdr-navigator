@@ -138,8 +138,28 @@ def sync(force: bool = False) -> None:
                 herdr.run("workspace", "rename", w.id, want, check=False)
                 _named(w.id, want)
 
+    replies_file = settings.state_dir() / "replies.json"
+    try:
+        before = json.loads(replies_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        before = None
+    for a in world.agents:  # herdr's own agent list and pane borders say "needs reply" too
+        if not a.in_herdr:
+            continue
+        label = "needs reply" if a.status == "reply" else ""
+        k = f"pane:{a.pane_id}:state-label"
+        if old.get(k) != label:
+            args = ["--agent", a.cli, "--state-label", f"idle={label}"] if label else ["--clear-state-labels"]
+            herdr.run("pane", "report-metadata", a.pane_id, "--source", SOURCE, *args, "--seq", next(_SEQ),
+                      check=False)
+        sent[k] = label
+        if (label and before is not None and a.pane_id not in before
+                and settings.load().alerts.get("toast_reply", True)):
+            herdr.run("notification", "show", f"{a.display[:40]} needs a reply", "--body",
+                      f"{a.project.label}: its last message asks you something", "--sound", "request",
+                      check=False)
     try:  # who waits on a reply (or a question in another window): read by alerts.check_waiting
-        (settings.state_dir() / "replies.json").write_text(json.dumps({
+        replies_file.write_text(json.dumps({
             (a.pane_id or f"out:{a.cli}:{a.session_id}"): {
                 "name": a.display, "workspace_id": a.workspace_id,
                 "why": "needs a reply" if a.status == "reply" else "waits for you"}

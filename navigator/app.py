@@ -655,6 +655,8 @@ class Navigator(App):
                         yield Static("⇧+arrows swap · Ctrl+arrows size", classes="hint")
                         yield Btn("↦ To new tab      t", id="pop-newtab")
                         yield Btn("✎ Rename          n", id="pop-rename")
+                        yield Btn("🚨 Watch for errors", id="pane-watch",
+                                  tooltip="Tell me (toast + phone) when this pane prints FAILED, a traceback, Error: …")
                         yield Btn("✕ Close pane    Del", id="pop-close", variant="error")
             with TabPane("5 Usage", id="usage"):
                 yield UsagePane(id="usage-pane")
@@ -719,6 +721,15 @@ class Navigator(App):
         if relaunch is not None:
             pane.open_relaunch(relaunch)
             self.digest_checked = True
+        new_ws = os.environ.pop("NAV_NEW", None)  # herdr workspace menu › New agent here
+        if new_ws:
+            p = world.project_of_workspace(new_ws)
+            if p:
+                self.new_only = True
+                self.digest_checked = True
+                self.new_agent_in(p.root + (WT_SEP + p.worktree if p.worktree else ""))
+            else:
+                self.notify("That workspace is not inside a project folder.", severity="warning")
         self.show_digest(world)
         self.set_hint()
         self.load_panes()
@@ -776,6 +787,11 @@ class Navigator(App):
             info.append(f"{b.label[:26]}\n", style="bold cyan")
             info.append(b.pane_id + ("  ⛶" if lay.zoomed else ""), style="dim")
         self.query_one("#pane-selected", Static).update(info)
+        from . import watch
+        on = bool(b and watch.for_pane(b.pane_id, watch.load()))
+        btn = self.query_one("#pane-watch", Button)
+        btn.label = "✕ Stop error watch" if on else "🚨 Watch for errors"
+        btn.variant = "warning" if on else "default"
 
     @on(LayoutMap.Picked)
     def _picked(self, ev) -> None:
@@ -964,6 +980,10 @@ class Navigator(App):
         if a.context:
             head += f"  ·  context {a.context.pct}% of {a.context.window // 1000}k"
         out.append(head + "\n", style="bold cyan")
+        if a.in_herdr and sub < 0:
+            from . import watch
+            for _, w in watch.for_pane(a.pane_id, watch.load()):
+                out.append(watch.describe(w) + "  (right-click to stop)\n", style="yellow")
         if a.question and sub < 0:
             q = a.question
             out.append(f"❓ {q.text}\n", style="bold red")
@@ -1413,6 +1433,11 @@ class Navigator(App):
             a, sub = self.agent_rows.get(ev.row_key, (None, -1))
             if a and sub < 0:
                 self.push_screen(ContextMenu(self.agent_menu_items(a), ev.at), lambda c: self.on_agent_menu(a, c))
+            elif ev.row_key.startswith("grp:"):
+                root = ev.row_key[4:]
+                items = [("new", "＋ New agent in this project…"), ("fold", "▸ / ▾ Fold or unfold")]
+                self.push_screen(ContextMenu(items, ev.at), lambda c: c == "new" and self.new_agent_in(root)
+                                 or c == "fold" and self.fold_agents(ev.row_key, None))
 
     def project_menu_items(self) -> list[tuple[str, str]]:
         v, wt = self.selected()
@@ -1443,7 +1468,12 @@ class Navigator(App):
             items += [("msg", "✉ Message it…"), ("enter", "⏎ Press Enter (accept)"), ("esc", "Esc (cancel)"),
                       ("stop", "^C Stop it"), ("compact", "⇣ Compact its context"), ("handoff", "⇢ Hand off its answer…"),
                       ("relaunch", "↻ Relaunch it (restart in place)"),
-                      ("mark", "☐ Untick for Send" if a.pane_id in self.marked else "☑ Tick for Send to many")]
+                      ("mark", "☐ Untick for Send" if a.pane_id in self.marked else "☑ Tick for Send to many"),
+                      ("w-done", "🔔 Tell me when it finishes"),
+                      ("w-chain", "⛓ When it finishes, hand its answer to…")]
+            from . import watch
+            items += [(f"wx:{k}", f"✕ Stop: {watch.describe(w)}") for k, w in watch.for_pane(a.pane_id)]
+        items.append(("new-beside", f"＋ New agent in {a.project.label[:30]}…"))
         if a.session_id and self.world:
             key = f"{a.cli}:{a.session_id}"
             row = next((r for g in startup.plan(self.world.sessions) for r in g.rows if startup.skey(r.session) == key),
@@ -1468,6 +1498,19 @@ class Navigator(App):
             self.handoff_menu(self.query_one("#act-handoff", Button))
         elif choice == "relaunch":
             self.run_relaunch(a.pane_id, a.cli, a.session_id, a.display)
+        elif choice == "w-done":
+            from . import watch
+            self.notify(watch.start("done", a.pane_id, a.display), timeout=4)
+            self.fill_agents()
+        elif choice == "w-chain":
+            self.chain_menu(a)
+        elif choice.startswith("wx:"):
+            from . import watch
+            watch.cancel(choice[3:])
+            self.notify("Stopped watching.", timeout=2)
+            self.fill_agents()
+        elif choice == "new-beside":
+            self.new_agent_in(a.project.root + (WT_SEP + a.project.worktree if a.project.worktree else ""))
         elif choice == "mark":
             self.toggle_mark(a.key)
         elif choice == "logon":
@@ -1477,6 +1520,29 @@ class Navigator(App):
             startup.set_ticks({key: not (row and row.ticked)}, [a.project.root] if not (row and row.ticked) else [])
             self.notify("Reopens at logon." if not (row and row.ticked) else "Won't reopen at logon.", timeout=2)
             self.query_one(StartupPane).refresh_rows()
+
+    def chain_menu(self, src) -> None:
+        targets = [a for a in (self.world.agents if self.world else []) if a.in_herdr and a.pane_id != src.pane_id]
+        if not targets:
+            self.notify("No other agent in herdr to hand it to.", severity="warning")
+            return
+        items = [("-head", f"When {src.display[:24]} finishes, send its answer to")]
+        items += [(f"t:{a.pane_id}", f"{a.cli:<6} {a.display[:34]}") for a in targets]
+
+        def chosen(c):
+            if not c or not c.startswith("t:"):
+                return
+            from . import watch
+            t = next(a for a in targets if a.pane_id == c[2:])
+            self.notify(watch.start("chain", src.pane_id, src.display, t.pane_id, t.display), timeout=5)
+            self.fill_agents()
+        self.push_screen(ContextMenu(items, self._menu_below(self.query_one("#agent-table"))), chosen)
+
+    def new_agent_in(self, key: str, dialog: bool = True) -> None:
+        """New agent in this project (or worktree), from Agents or from herdr's workspace menu."""
+        self.selected_key = key
+        if dialog:
+            self.action_new_dialog()
 
     @work(thread=True, group="relaunch")
     def run_relaunch(self, pane: str, cli: str, sid: str, name: str) -> None:
@@ -1530,8 +1596,9 @@ class Navigator(App):
                 first[a.project.root] = min(first.get(a.project.root, (99, 9e18)), urgency(a))
             rows.sort(key=lambda a: (first[a.project.root], a.project.name.lower(), urgency(a),
                                      a.project.worktree, a.display.lower()))
-        from . import startup
+        from . import startup, watch
         folded = startup.ui_state().get("agents_folded", {}) if grouped else {}
+        watches, watch_icons = watch.load(), watch.KINDS
         group = None
         for a in rows:
             if grouped and a.project.root != group:
@@ -1550,6 +1617,10 @@ class Navigator(App):
             who = Text(("  " if grouped else "") + a.display[:30], style="bold")
             if not a.in_herdr:
                 who.append("  ↗", style="magenta")
+            marks = "".join(sorted({watch_icons.get(w.get("kind"), "") for w in watches.values()
+                                    if w.get("pane") == a.pane_id}))
+            if marks:
+                who.append(" " + marks)
             if grouped:  # the project is the group above; say only which checkout
                 proj = Text(("⎇ " + a.project.worktree)[:26] if a.project.worktree else "main",
                             style="#c678dd" if a.project.worktree else "dim")
@@ -1841,6 +1912,8 @@ class Navigator(App):
 
         def done(r):
             if not r:
+                if getattr(self, "new_only", False):
+                    self.exit()  # opened only for this dialog, from herdr's workspace menu
                 return
             p = v.project
             if wt and wt.exists and not r["branch"]:
@@ -1911,6 +1984,19 @@ class Navigator(App):
         }
         if bid in actions:
             actions[bid]()
+        elif bid == "pane-watch":
+            from . import watch
+            lay = self.pane_layout
+            b = next((b for b in lay.panes if b.pane_id == self.pane_selected), None) if lay else None
+            if b:
+                cur = watch.for_pane(b.pane_id)
+                if cur:
+                    for k, _ in cur:
+                        watch.cancel(k)
+                    self.notify("Stopped watching for errors.", timeout=2)
+                else:
+                    self.notify(watch.start("errors", b.pane_id, b.label or b.pane_id), timeout=4)
+                self.show_panes(lay)
         elif bid.startswith("pop-"):
             parts = bid[4:].split("-")
             if parts[0] == "rename":

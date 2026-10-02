@@ -1,6 +1,6 @@
 id = "momatthias.navigator"
 name = "Navigator"
-version = "0.12.0"
+version = "0.13.0"
 min_herdr_version = "0.9.3"
 description = "Clickable navigator for herdr: projects, worktrees, every agent and sub-agent (in herdr or not), cross-CLI session resume, project-grouped sidebar, key hints"
 platforms = ["linux", "macos", "windows"]
@@ -218,3 +218,58 @@ title = "Navigator: jump to the next agent that needs you"
 contexts = ["workspace"]
 platforms = ["linux", "macos"]
 command = ["sh", "run.sh", "attention", "next"]
+
+[[events]]
+on = "worktree.created"
+platforms = ["windows"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "sync"]
+
+[[events]]
+on = "worktree.created"
+platforms = ["linux", "macos"]
+command = ["sh", "run.sh", "sync"]
+
+[[events]]
+on = "worktree.opened"
+platforms = ["windows"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "sync"]
+
+[[events]]
+on = "worktree.opened"
+platforms = ["linux", "macos"]
+command = ["sh", "run.sh", "sync"]
+
+[[events]]
+on = "worktree.removed"
+platforms = ["windows"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "sync"]
+
+[[events]]
+on = "worktree.removed"
+platforms = ["linux", "macos"]
+command = ["sh", "run.sh", "sync"]
+
+[[events]]
+on = "workspace.closed"
+platforms = ["windows"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "sync"]
+
+[[events]]
+on = "workspace.closed"
+platforms = ["linux", "macos"]
+command = ["sh", "run.sh", "sync"]
+
+# herdr's workspace menu: start a new agent session in that workspace's project (or worktree).
+[[actions]]
+id = "new-here"
+title = "Navigator: new agent session here…"
+contexts = ["workspace"]
+platforms = ["windows"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "newhere"]
+
+[[actions]]
+id = "new-here-unix"
+title = "Navigator: new agent session here…"
+contexts = ["workspace"]
+platforms = ["linux", "macos"]
+command = ["sh", "run.sh", "newhere"]

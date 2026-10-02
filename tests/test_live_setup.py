@@ -300,3 +300,24 @@ def test_session_lines_nest_sessions_under_their_space():
 def test_sidebar_rows_fit_herdr_limits():
     assert len(setup.SPACE_ROWS) <= 16 and all(len(r) <= 16 for r in setup.SPACE_ROWS)
     assert sum("$s" in str(r) for r in setup.SPACE_ROWS) == 8
+
+
+def test_error_watch_sees_only_new_failures():
+    from navigator import watch
+    before = ["$ pytest", "collected 3 items", "FAILED test_old - boom", "1 failed"]
+    # the old failure scrolled up; only what came after the last lines we saw counts
+    now = before[1:] + ["$ pytest", "3 passed"]
+    assert watch.failures(watch.new_lines(before, now)) == []
+    now2 = now + ["Traceback (most recent call last):", "ValueError: bad", "npm ERR! code 1"]
+    got = watch.failures(watch.new_lines(now, now2))
+    assert got == ["Traceback (most recent call last):", "ValueError: bad", "npm ERR! code 1"]
+    assert watch.new_lines([], ["FAILED x"]) == []          # the first read is the baseline
+    assert watch.failures(["all good", "0 errors"]) == []
+
+
+def test_manifest_has_worktree_events_and_new_here_action():
+    s = (setup.ROOT / "herdr-plugin.toml").read_text(encoding="utf-8")
+    doc = tomlkit.parse(s)
+    ons = {e["on"] for e in doc["events"]}
+    assert {"worktree.created", "worktree.removed", "worktree.opened"} <= ons
+    assert any(a["id"] == "new-here" for a in doc["actions"])
