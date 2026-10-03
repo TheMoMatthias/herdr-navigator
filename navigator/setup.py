@@ -60,6 +60,11 @@ POPUPS = [
     (["prefix+comma", "f9"], "settings", "Navigator: settings (logon, accounts, alerts, updates)"),
 ]
 
+# Small popups: (keys, launcher module, width, height, description)
+MENUS = [
+    (["prefix+period", "f5"], "panemenu", 48, 23, "Navigator: pane menu (compact, split, move, arrange)"),
+]
+
 # Detached commands (no window): (keys, launcher args, description)
 SHELLS = [
     (["ctrl+alt+i", "f8"], ("attention", "next"), "Navigator: next agent that needs you"),
@@ -84,38 +89,24 @@ UI = {
     "tab_bar_right_separator": "  ",
 }
 
-# Three tones only, the same everywhere: muted text for the tree, bold for what runs or just
-# finished, one orange accent for whoever needs you. Everything else (lanes, sub-agent counts,
-# "+N folded") is dim.
-MUTED, ACCENT = "#a89984", "#fe8019"
-
-
-def _icon_rules() -> list[dict]:
-    """Style a tree line by the state glyph after its branch (sync.SIDE_ICON)."""
-    out = []
-    for glyph, style in (("!", {"fg": ACCENT, "bold": True}), ("?", {"fg": ACCENT, "bold": True}),
-                         ("◐", {"bold": True}), ("●", {"bold": True})):
-        for branch in ("├─", "└─"):
-            out.append({"contains": f"{branch} {glyph} ", **style})
-    out.append({"contains": " folded", "dim": True})
-    out.append({"contains": " more", "dim": True})
-    return out
-
+# One tone for the whole tree: every branch (├─ └─ │), name and worktree is the same muted
+# colour and weight, so the connectors line up evenly. State shows only in the glyph after the
+# branch (! ? ● ◐ ○ from sync.SIDE_ICON) and in herdr's own state text; the Space heading is bold.
+MUTED = "#a89984"
+TREE = {"fg": MUTED}
 
 # one row per session inside the Space ($s1..$s8 from sync.py); empty rows disappear
-_SESSION_RULES = _icon_rules()
 SPACE_ROWS = [
     ["state_icon", "workspace", {"token": "$agents", "dim": True}],
     ["branch", "git_status"],
-    *[[{"token": f"$s{i}", "fg": MUTED, "rules": _SESSION_RULES}] for i in range(1, 9)],
+    *[[{"token": f"$s{i}", **TREE}] for i in range(1, 9)],
 ]
 # herdr's Agents panel as a tree by project (tokens and order from sync.agent_tree): a heading
 # row on the first agent of each project, then "├─ ◐ NAME · state", then the worktree if any
-_LINE_RULES = _icon_rules()
 AGENT_ROWS = [
     [{"token": "$grp", "bold": True}],
-    [{"token": "$line", "fg": MUTED, "rules": _LINE_RULES}, "state_text", {"token": "$subagents", "dim": True}],
-    [{"token": "$lane", "fg": MUTED, "dim": True}, {"token": "$where", "dim": True}],
+    [{"token": "$line", **TREE}, "state_text", {"token": "$subagents", "dim": True}],
+    [{"token": "$lane", **TREE}, {"token": "$where", "dim": True}],
 ]
 
 
@@ -254,6 +245,11 @@ def install(doc, added: dict) -> list[str]:
         t = tomlkit.table()
         t.update({"key": key, "type": "popup", "command": launcher("app", tab),
                   "width": "94%", "height": "90%", "description": desc})
+        cmds.append(t)
+    for key, mod, width, height, desc in MENUS:
+        t = tomlkit.table()
+        t.update({"key": key, "type": "popup", "command": launcher(mod), "width": width, "height": height,
+                  "description": desc})
         cmds.append(t)
     for key, args, desc in SHELLS:
         t = tomlkit.table()

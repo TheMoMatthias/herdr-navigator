@@ -3,7 +3,7 @@
 The text lives in navigator.toml (`[compact] instructions`, Settings > Prompts). Claude Code
 takes it as `/compact <instructions>`; other CLIs get a plain `/compact`. Sent from the
 Navigator (Compact button, the row menu, every ticked agent) or from herdr itself: a key
-(prefix+shift+c) or right-click on a pane > "Navigator: compact this agent"."""
+(prefix+shift+c) or the pane menu (F5, panemenu.py)."""
 from __future__ import annotations
 
 import json

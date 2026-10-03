@@ -1,6 +1,6 @@
 """Fold a project in herdr's sidebar: its Agents tree and its Spaces' session rows shrink to the
 agents that need you. Run from a key (prefix+f / F10: the focused pane's project; prefix+shift+f:
-every project at once) or herdr's right-click menu on a pane or a workspace. Shares the fold
+every project at once) or the pane menu (F5). Shares the fold
 state with the Navigator's Agents tab, then re-syncs herdr's sidebar."""
 from __future__ import annotations
 

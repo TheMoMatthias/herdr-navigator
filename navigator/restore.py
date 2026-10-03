@@ -1,10 +1,13 @@
 """Reopen sessions: the logon restore, "open ticked now", and relaunching sessions in place.
 
 At logon (`restore boot`, started by the autostart entry): wait, start herdr in a terminal if it
-is not running, let herdr bring back its own agent panes (it resumes Claude and Codex panes by
-itself), then open every ticked session that is not already running anywhere, one per tab in
-its project's workspace. Each launch is verified (herdr detects an agent in the pane) and the
-result goes to restore.log and a herdr notification.
+is not running, wait until the startup hook has resumed every pane herdr restored (each gets the
+session that ran there, named: from our record, else herdr's own agent_session for the pane),
+then open every ticked session that is not already running anywhere, one per tab in its
+project's workspace. Last, the guarantee check waits until every ticked and resumed session has
+a live agent and names any that has not, in restore.log, a herdr notification and the phone
+alert. `run.cmd restore check` runs that check by hand. Sessions with no conversation (a Claude
+file holding only a title) are left out with that reason: `claude --resume` cannot open them.
 
 Relaunch in place: stop the agent process in its pane and run its resume command in the same
 pane, so the layout stays. Used after signing in to an account, and from the menu.
@@ -50,13 +53,23 @@ def notify(title: str, body: str = "") -> None:
 # ---- what is running ----------------------------------------------------------------------------
 
 def running_ids(snap: dict | None = None) -> set[str]:
-    """Session ids open right now: herdr panes (their reported session) and other terminals."""
+    """Session ids open right now, or being resumed in their own pane at this moment."""
+    ids = live_ids(snap)
+    # sessions being resumed in their own panes right now (herdr may not have detected them yet)
+    ids |= {e["sid"] for e in load_panes().values() if time.time() - e.get("resumed_at", 0) < 300}
+    return ids
+
+
+def live_ids(snap: dict | None = None) -> set[str]:
+    """Session ids with a live agent: herdr panes (their reported session) and other terminals."""
     ids: set[str] = set()
     try:
         snap = snap if snap is not None else herdr.snapshot()
         for p in snap.get("panes", []):
             ref = p.get("agent_session") or {}
-            if ref.get("value"):
+            # herdr keeps a pane's agent_session after a restart even though nothing runs there:
+            # only a pane with a live agent counts as running
+            if ref.get("value") and p.get("agent"):
                 ids.add(str(ref["value"]))
     except Exception:
         pass
@@ -66,8 +79,6 @@ def running_ids(snap: dict | None = None) -> set[str]:
                 ids.add(a.session_id)
     except Exception:
         pass
-    # sessions being resumed in their own panes right now (herdr may not have detected them yet)
-    ids |= {e["sid"] for e in load_panes().values() if time.time() - e.get("resumed_at", 0) < 300}
     return ids
 
 
@@ -75,6 +86,28 @@ def running_ids(snap: dict | None = None) -> set[str]:
 # herdr keeps pane ids across a server restart (measured), but resumes agents without their name
 # or launch options. So the plugin records which session runs in which pane, setup turns herdr's
 # own resume off, and at server start each recorded pane gets its session back, named.
+
+def server_id() -> str:
+    """The running herdr server: its socket file holds "<pid>:<nonce>", rewritten at every start."""
+    try:
+        return Path(os.environ.get("HERDR_SOCKET_PATH") or herdr._default_socket()).read_text(
+            encoding="utf-8", errors="replace").strip()[:80]
+    except OSError:
+        return ""
+
+
+def has_conversation(s: Session | None) -> bool:
+    """False for a Claude session file that holds only metadata (title, mode) and no message:
+    `claude --resume` answers "No conversation found" for those."""
+    if s is None or s.cli != "claude" or not s.path:
+        return True
+    try:
+        with open(s.path, "rb") as fh:
+            head = fh.read(4_000_000)
+    except OSError:
+        return True
+    return b'"type":"user"' in head or b'"type":"assistant"' in head
+
 
 def _server_key() -> str:
     """Pane ids repeat across herdr servers (named sessions): keep one record per server."""
@@ -118,11 +151,21 @@ def record_panes(world: model.World, snap: dict) -> None:
                 startup.claim_pending(pane, f"{a.cli}:{a.session_id}")  # options chosen at "New session"
             m[pane] = {**old, **e}
             changed = True
+    # After a herdr restart every pane comes back empty, so "no agent in a live pane" means "you
+    # quit it" only once this server's resume has run: before that the record is what resumes it.
+    settled = _resumed_this_server() and now - _resumed_at() > 60
     for pane, e in list(m.items()):
-        gone_agent = pane in existing and pane not in agent_panes and not existing[pane].get("agent")
+        if pane in agent_panes:
+            if e.pop("quit", None):
+                changed = True
+            continue
+        gone_agent = pane in existing and not existing[pane].get("agent")
         resuming = now - e.get("resumed_at", 0) < 300
-        if (gone_agent and not resuming) or now - e.get("at", 0) > 30 * 86400:
-            del m[pane]  # the agent was quit in a live pane, or the pane is long gone
+        if gone_agent and settled and not resuming and e.get("quit") != e.get("sid"):
+            e["quit"] = e.get("sid")  # kept: herdr's leftover agent_session must not bring it back
+            changed = True
+        elif pane not in existing and now - e.get("at", 0) > 30 * 86400:
+            del m[pane]
             changed = True
     if changed:
         save_panes(m)
@@ -140,18 +183,43 @@ def resume_panes() -> str:
         lock.unlink(missing_ok=True)
         return resume_panes()
     try:
+        from .sessions import load_sessions
         m = load_panes()
         snap = herdr.snapshot()
-        panes = {p["pane_id"]: p for p in snap.get("panes", [])}
+        by_id = {x.id: x for x in load_sessions(include_hidden=True)}
         todo_: list[tuple[str, dict]] = []
-        for pane, e in m.items():
-            p = panes.get(pane)
-            if not p or p.get("agent") or _foreground(pane):
-                continue  # pane gone, or herdr (or someone) already started something there
-            if not os.path.isdir(e.get("cwd") or p.get("cwd") or ""):
+        skipped: list[str] = []
+        elsewhere = live_ids(snap)  # never a second process on a session that runs somewhere
+        for p in snap.get("panes", []):
+            pane = p["pane_id"]
+            rec = m.get(pane, {})
+            ref = p.get("agent_session") or {}
+            # our record first (name, options); else what herdr itself remembers for the pane
+            sid = rec.get("sid") or ref.get("value") or ""
+            cli = rec.get("cli") or ref.get("agent") or ""
+            if not sid or not cli or p.get("agent") or rec.get("quit") == sid:
                 continue
-            todo_.append((pane, e))
+            if sid in elsewhere:
+                skipped.append(f"{rec.get('name') or sid[:8]}: already running elsewhere")
+                continue
+            if _foreground(pane):
+                continue  # something else already runs there
+            s = by_id.get(sid)
+            name = rec.get("name") or (s.title if s and s.named else "")
+            cwd = rec.get("cwd") or p.get("cwd") or ""
+            if not os.path.isdir(cwd):
+                skipped.append(f"{name or sid[:8]}: folder gone")
+                continue
+            if not has_conversation(s):
+                skipped.append(f"{name or sid[:8]}: never started a conversation, nothing to resume")
+                continue
+            e = {"cli": cli, "sid": sid, "name": name, "cwd": cwd, "at": rec.get("at", time.time())}
+            m[pane] = {**rec, **e}
+            todo_.append((pane, m[pane]))
+        for x in skipped:
+            log(f"pane resume skipped {x}")
         if not todo_:
+            log("pane resume: no panes to resume")
             return "no panes to resume"
         gate = claude_needs_refresh() and any(e["cli"] == "claude" for _, e in todo_)
         todo_.sort(key=lambda x: x[1]["cli"] != "claude")  # with an expired token, one Claude first
@@ -180,7 +248,24 @@ def resume_panes() -> str:
         return summary
     finally:
         lock.unlink(missing_ok=True)
-        (settings.state_dir() / f"panes-resumed-{_server_key()}").write_text(str(time.time()), encoding="utf-8")
+        jsonfile.write(settings.state_dir() / f"panes-resumed-{_server_key()}.json",
+                       {"server": server_id(), "at": time.time()})
+
+
+def _resumed_mark() -> dict:
+    try:
+        return jsonfile.read(settings.state_dir() / f"panes-resumed-{_server_key()}.json", {}) or {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _resumed_this_server() -> bool:
+    mark = _resumed_mark()
+    return bool(mark.get("server")) and mark.get("server") == server_id()
+
+
+def _resumed_at() -> float:
+    return float(_resumed_mark().get("at", 0))
 
 
 def on_server_start() -> None:
@@ -196,16 +281,14 @@ def on_server_start() -> None:
     sync.main()
 
 
-def _wait_panes_resumed(since: float, timeout: float = 120) -> None:
-    f = settings.state_dir() / f"panes-resumed-{_server_key()}"
+def _wait_panes_resumed(timeout: float = 120) -> bool:
+    """Until the startup hook has resumed this server's panes (whoever started herdr)."""
     end = time.time() + timeout
     while time.time() < end:
-        try:
-            if float(f.read_text(encoding="utf-8")) >= since:
-                return
-        except (OSError, ValueError):
-            pass
+        if _resumed_this_server():
+            return True
         time.sleep(2)
+    return False
 
 
 def todo(sessions: list[Session] | None = None, everything: bool = False) -> tuple[list[startup.Row], list[str]]:
@@ -225,6 +308,9 @@ def todo(sessions: list[Session] | None = None, everything: bool = False) -> tup
             continue
         if not settings.load().launch.get(f"{s.cli}_resume"):
             skipped.append(f"{s.title[:40]}: no resume command for {s.cli}")
+            continue
+        if not has_conversation(s):
+            skipped.append(f"{s.title[:40]}: never started a conversation, nothing to resume")
             continue
         out.append(r)
     return out, skipped
@@ -470,7 +556,6 @@ def boot(delay: float | None = None) -> str:
     delay = float(cfg.get("logon_delay_seconds", 20)) if delay is None else delay
     log(f"logon restore: waiting {delay:.0f}s")
     time.sleep(delay)
-    started = time.time()
     if not server_up():
         try:
             subprocess.Popen(terminal_command(), close_fds=True)
@@ -483,25 +568,54 @@ def boot(delay: float | None = None) -> str:
         if not server_up():
             log("herdr server never came up")
             return "✗ herdr did not start"
-        _wait_panes_resumed(started)  # the startup hook resumes the recorded panes first
-        time.sleep(5)
+    # the startup hook resumes herdr's own panes first; ticked sessions it brought back are then
+    # running and are not opened twice
+    if not _wait_panes_resumed():
+        log("pane resume did not report back in 120s: running it from here")
+        log("pane resume: " + resume_panes())
+    time.sleep(5)
     rows, skipped = todo()
     for s in skipped:
         log(f"skipped {s}")
-    if not rows:
-        log("logon restore: nothing to open (everything ticked is already running)")
-        notify("Startup restore", "Everything you ticked is already open.")
-        return "nothing to open"
-    summary = open_now(rows)
-    held = " Claude needs a sign-in: Navigator › ⚙ Settings › Accounts." if "held 0" not in summary else ""
+    summary = open_now(rows) if rows else "opened 0 (everything ticked was already running)"
+    held = " Claude needs a sign-in: Navigator › ⚙ Settings › Accounts." if " held 0" not in summary and rows else ""
+    want, missing = guarantee()
+    if missing:
+        summary += f" · {len(missing)} of {len(want)} NOT running: " + ", ".join(missing[:8])
+    else:
+        summary += f" · all {len(want)} sessions running"
+    if skipped:
+        summary += f" · {len(skipped)} left out (see restore.log)"
+    log("logon restore: " + summary)
     notify("Startup restore", summary + held)
     try:
         from . import alerts
         if settings.load().alerts.get("on_restore", True):
-            alerts.send("Sessions restored", summary + held, "white_check_mark" if " failed 0" in summary else "warning")
+            alerts.send("Sessions restored", summary + held, "warning" if missing else "white_check_mark")
     except Exception as e:
         log(f"alert failed: {e}")
     return summary
+
+
+def guarantee(timeout: float = 120) -> tuple[dict[str, str], list[str]]:
+    """The proof after a restore: every ticked session and every pane resumed in this boot must
+    have a live agent. Waits up to `timeout`; returns (expected id -> name, names still missing)."""
+    from .sessions import load_sessions
+    want = {r.session.id: r.session.title for r in startup.selected(load_sessions())
+            if has_conversation(r.session) and os.path.isdir(r.session.cwd)
+            and settings.load().launch.get(f"{r.session.cli}_resume")}
+    now = time.time()
+    want |= {e["sid"]: e.get("name") or e["sid"][:8] for e in load_panes().values()
+             if now - e.get("resumed_at", 0) < 900}
+    end = time.time() + timeout
+    while True:
+        missing = sorted(want[sid] for sid in set(want) - live_ids())
+        if not missing or time.time() >= end:
+            break
+        time.sleep(5)
+    for name in missing:
+        log(f"NOT RUNNING after restore: {name}")
+    return want, missing
 
 
 def main() -> None:
@@ -522,6 +636,9 @@ def main() -> None:
         on_server_start()
     elif cmd == "panes":
         print(resume_panes())
+    elif cmd == "check":
+        want, missing = guarantee(timeout=0)
+        print(f"{len(want) - len(missing)} of {len(want)} running", *[f"missing: {m}" for m in missing], sep="\n")
     elif cmd == "dry-run":
         rows, skipped = todo()
         for r in rows:

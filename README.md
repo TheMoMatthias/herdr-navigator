@@ -11,9 +11,9 @@ everything your coding agents are doing:
   what is running first, then whoever needs you (`!` waits on you, `?` needs a reply), then the
   most recently active. Spaces follow the same order (a repo moves with its worktree Spaces;
   ⚙ Settings › General turns that off). Fold a project with `F10` / `Ctrl+B › F` (the focused
-  pane's project) or `Ctrl+B › Shift+F` (every project), or right-click a pane or a workspace ›
-  `Navigator: fold / unfold`. herdr has no right-click menu on Agents rows for plugins, so those
-  are the ways in; folding in the Navigator's Agents tab does the same. A folded project keeps
+  pane's project) or `Ctrl+B › Shift+F` (every project), or the pane menu (`F5`). herdr's
+  right-click menus take no plugin entries, so those are the ways in; folding in the Navigator's
+  Agents tab does the same. A folded project keeps
   only who needs you, in the Agents panel and under its Spaces (`+5 folded`).
 * **What is running where?** Every Claude Code and Codex agent is listed per project and
   worktree, including sessions running in *other* terminal windows and their live
@@ -83,18 +83,14 @@ herdr plugin uninstall momatthias.navigator
 | `F7` · `Ctrl+B › Shift+O` | **Recent.** Agents (and other panes) in the order you last visited them |
 | `F9` · `Ctrl+B › ,` | **Settings.** Logon restore, accounts, phone alerts, prompts, font size, updates |
 | `F10` · `Ctrl+B › F` | Fold / unfold the focused pane's project in herdr's sidebar (`Ctrl+B › Shift+F`: all) |
-| `Ctrl+B › Shift+C` | `/compact` the focused agent **with your saved instructions** (also: right-click a pane, or ⇣ Compact in Agents) |
+| `Ctrl+B › Shift+C` | `/compact` the focused agent **with your saved instructions** (also: the pane menu, or ⇣ Compact in Agents) |
+| `F5` · `Ctrl+B › .` | **Pane menu** over the current pane: compact this agent · split right / down · zoom · move the pane left / right / up / down · even out all splits · move to a new tab · arrange panes… (the Layout map) · new agent session here… · fold this project. Click an entry, or arrows + Enter; Esc closes |
 
-**Right-click menus.** herdr's own menus get Navigator entries:
-
-| Right-click on | Adds |
-|---|---|
-| a terminal (pane) | *compact this agent* · *Pane: move left / right / up / down* · *even out all splits* · *move to a new tab* · *arrange panes…* (the Layout map with this pane selected) · fold. herdr's own entries stay: Split right/down, Zoom, Swap, Rename, Close |
-| a Space (workspace) | *compact this agent* (the Space's agent; with several, right-click the agent's pane) · new agent here · fold |
-| an Agents row | herdr gives plugins no entry there: click the row (it focuses the pane), then `Ctrl+B › Shift+C` to compact or right-click the terminal |
-
-If a right-click in a terminal goes to the program instead of opening the menu, switch it back with
-herdr's *Use Herdr right-click menu*.
+**Why a key and not right-click.** herdr 0.9.3 builds its right-click menus (terminal, Space,
+Agents row) from a fixed list, and plugin actions run only from a key, a Ctrl+click link handler
+or the CLI. So the Navigator's entries live in the pane menu: click an Agents row or a Space (that
+focuses its pane), then press `F5`. herdr's own right-click menu keeps Split right/down, Zoom,
+Swap, Rename and Close.
 
 **Compact without retyping.** Write once what a compaction must keep (⚙ Settings › Prompts ›
 *Compact instructions*, or `[compact] instructions` in navigator.toml). Every Compact then sends
@@ -202,7 +198,17 @@ back when you log on.
 **After a herdr restart** (logon, update, crash) every pane that had an agent gets its session
 back in that same pane, with its name, Remote Control and launch options. herdr keeps pane ids
 across restarts, and setup sets herdr's own `[session] resume_agents_on_restore = false`
-because that resume starts sessions without them. Uninstall restores herdr's default.
+because that resume starts sessions without them. Uninstall restores herdr's default. Each
+pane's session comes from the Navigator's record, or else from what herdr itself remembers for
+the pane, so a pane moved to another Space still comes back. A session already running in
+another terminal is never started twice.
+
+**Guarantee check.** After every logon restore the Navigator waits until each ticked and each
+resumed session has a live agent, then reports `all N sessions running` or names the ones that
+are not (notification, phone alert, `restore.log`). Run it any time with
+`run.cmd restore check`. A Claude session that never got its first message (only a title on
+disk) cannot be resumed (`claude --resume` says *No conversation found*); it is left out and
+named in the log.
 
 **New session** (*With name, worktree, model…* under `+ New agent ▾` in Projects, or `N`) asks for the CLI, a name, the
 folder, optionally a **new git worktree** (created by herdr, so it is grouped under the repo),
@@ -232,8 +238,8 @@ presses ⏎ / Esc / ^C, in every ticked agent at once.
   server pane prints `FAILED`, a traceback or `Error:` (new output only).
 - **Needs a reply, in herdr too.** herdr's own agent list and pane borders say `needs reply`, and
   a toast with sound appears when an agent starts asking you something (Settings › Phone alerts).
-- **New agent from a workspace.** Right-click a workspace in herdr's sidebar ›
-  `Navigator: new agent session here…`, or right-click a project heading in Agents.
+- **New agent from a workspace.** Click the Space, press `F5` › *New agent session here…*, or
+  right-click a project heading in the Navigator's Agents tab.
 
 - **Context gauge.** Agents has a `Ctx` column that shows how full each session's context is
   (yellow from 70%, red from 85%), and the top bar warns when one is nearly full. `⇣` sends
@@ -266,7 +272,7 @@ in **Agents** as `❓` with the question and its options, also for sessions in o
 
 Always visible in herdr:
 
-- **Tab bar:** `⚠ other-project waiting for you (Ctrl+Alt+I) │ project: 2 working, 1 idle │ 3 sessions outside herdr (F3) │ F1 Navigator · F2 Sessions · F3 Agents · F6 Layout · F9 Settings · Ctrl+Alt+R Back` (most urgent first, plain words)
+- **Tab bar:** `⚠ other-project waiting for you (Ctrl+Alt+I) │ project: 2 working, 1 idle │ 3 sessions outside herdr (F3) │ F1 Navigator · F2 Sessions · F3 Agents · F5 Pane menu · F6 Layout · F9 Settings · Ctrl+Alt+R Back` (most urgent first, plain words)
 - **Sidebar, spaces:** one group per repo. The repo's own checkout comes first (its second
   line shows the branch, e.g. `main`), and the active worktrees are indented under it, named
   after the session working there. `◐2 ○1` counts agents by state (working, idle, …).

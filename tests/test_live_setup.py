@@ -104,7 +104,7 @@ def test_setup_merge_keeps_user_settings_and_uninstalls_cleanly():
     assert doc["ui"]["status_indicators"] == "dots"            # user value kept
     assert doc["keys"]["next_tab"] == ["prefix+m", "ctrl+alt+n"]  # chord added beside it
     cmds = doc["keys"]["command"]
-    assert sum(1 for c in cmds if str(c.get("description", "")).startswith("Navigator:")) == len(setup.POPUPS) + len(setup.SHELLS) + len(setup.ACTIONS)
+    assert sum(1 for c in cmds if str(c.get("description", "")).startswith("Navigator:")) == len(setup.POPUPS) + len(setup.MENUS) + len(setup.SHELLS) + len(setup.ACTIONS)
     assert any(c["command"] == "lazygit" for c in cmds)
     bar = doc["ui"]["tab_bar_right"]
     assert [e["type"] for e in bar] == ["hostname", "command"]
@@ -523,3 +523,31 @@ def test_pane_menu_actions_map_to_herdr_operations(monkeypatch):
     assert calls[:6] == [("swap", "w1:p2", "left"), ("swap", "w1:p2", "right"), ("swap", "w1:p2", "up"),
                          ("swap", "w1:p2", "down"), ("even", "w1:t1"), ("newtab", "w1:p2")]
     assert "NAV_PANE=w1:p2" in calls[6] and "NAV_TAB=panes" in calls[6]
+
+
+def test_pane_menu_split_and_zoom_and_popup_target(monkeypatch):
+    from navigator import paneact
+    calls = []
+    monkeypatch.setattr(paneact, "target", lambda: ("w1:p2", "w1:t1"))
+    monkeypatch.setattr(paneact.panes, "split", lambda p, d: calls.append(("split", p, d)) or "ok")
+    monkeypatch.setattr(paneact.panes, "zoom", lambda p: calls.append(("zoom", p)) or "ok")
+    monkeypatch.setattr("navigator.compact._note_context", lambda ctx: None)
+    for op in ("split-right", "split-down", "zoom"):
+        paneact.run(op)
+    assert calls == [("split", "w1:p2", "right"), ("split", "w1:p2", "down"), ("zoom", "w1:p2")]
+
+
+def test_pane_menu_is_bound_and_lists_every_entry():
+    from navigator import panemenu
+    ops = [op for op, _ in panemenu.ENTRIES if op]
+    assert {"compact", "split-right", "split-down", "zoom", "move-left", "even", "newtab", "arrange",
+            "new-here", "fold"} <= set(ops)
+    keys, mod, width, height, _ = setup.MENUS[0]
+    assert mod == "panemenu" and "f5" in keys and height >= len(panemenu.ENTRIES) + 4
+
+
+def test_tree_rows_use_one_style_for_every_branch():
+    # every connector (├─ └─ │) must look the same: no per-state colour, weight or dim on tree tokens
+    tree = [c for row in setup.AGENT_ROWS + setup.SPACE_ROWS for c in row
+            if isinstance(c, dict) and c.get("token") in ("$line", "$lane", *[f"$s{i}" for i in range(1, 9)])]
+    assert len(tree) == 10 and all(c == {"token": c["token"], **setup.TREE} for c in tree)

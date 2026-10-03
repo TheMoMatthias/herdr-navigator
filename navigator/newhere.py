@@ -1,4 +1,4 @@
-"""herdr workspace menu › "Navigator: new agent session here…": open the Navigator on the
+"""Pane menu (F5) › "New agent session here…": open the Navigator on the
 new-session dialog for that workspace's project (or worktree)."""
 from __future__ import annotations
 

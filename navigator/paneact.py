@@ -1,8 +1,7 @@
-"""Pane layout from herdr's right-click menu on a terminal: move the pane left/right/up/down,
-even out the splits, move it to a new tab, or open the Layout map for it. herdr's own pane menu
-already has Split right/down, Zoom, Swap with focused pane, Rename and Close: these add what it
-lacks. Usage (manifest actions): run.cmd paneact <move-left|move-right|move-up|move-down|even|
-newtab|arrange>."""
+"""Pane layout actions for the pane menu (panemenu.py) and herdr plugin actions: split right/down,
+zoom, move the pane left/right/up/down, even out the splits, move it to a new tab, or open the
+Layout map for it. Usage: run.cmd paneact <split-right|split-down|zoom|move-left|move-right|
+move-up|move-down|even|newtab|arrange>."""
 from __future__ import annotations
 
 import json
@@ -19,7 +18,7 @@ def target() -> tuple[str, str]:
     except ValueError:
         ctx = {}
     snap = herdr.snapshot()
-    pane = (os.environ.get("HERDR_PANE_ID") or ctx.get("pane_id") or (ctx.get("pane") or {}).get("pane_id")
+    pane = (os.environ.get("HERDR_PANE_ID") or os.environ.get("HERDR_ACTIVE_PANE_ID") or ctx.get("pane_id") or (ctx.get("pane") or {}).get("pane_id")
             or snap.get("focused_pane_id", ""))
     tab = os.environ.get("HERDR_TAB_ID") or next(
         (p.get("tab_id", "") for p in snap.get("panes", []) if p.get("pane_id") == pane), "")
@@ -35,6 +34,10 @@ def run(op: str) -> str:
     pane, tab = target()
     if not pane:
         return "✗ no pane here"
+    if op.startswith("split-"):
+        return panes.split(pane, op[6:])
+    if op == "zoom":
+        return panes.zoom(pane)
     if op.startswith("move-"):
         return panes.swap(pane, op[5:])
     if op == "even":
@@ -50,8 +53,9 @@ def run(op: str) -> str:
     return f"✗ unknown pane action {op}"
 
 
-def main() -> None:
-    op = sys.argv[1] if len(sys.argv) > 1 else ""
+def main(argv: list[str] | None = None) -> None:
+    argv = argv if argv is not None else sys.argv[1:]
+    op = argv[0] if argv else ""
     try:
         msg = run(op)
     except herdr.HerdrError as e:

@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from navigator import asks, autostart, projects, settings, startup
+from navigator import asks, autostart, jsonfile, projects, settings, startup
 from navigator.sessions import Session
 
 DAY = 86400
@@ -209,22 +209,77 @@ def test_pending_options_move_to_the_session_once_it_has_an_id(tmp_path):
     assert startup.prefs_of("claude:other") == {}
 
 
-def test_record_panes_keeps_sessions_and_drops_quit_agents(tmp_path, monkeypatch):
+def test_record_panes_survives_a_restart_and_marks_real_quits(tmp_path, monkeypatch):
     from navigator import restore
     from navigator.model import Agent
     p = projects.Project("r", "r")
     a = Agent("claude", "idle", p, name="LEAD", session_id="s1", pane_id="w1:p2")
     world = type("W", (), {"agents": [a]})()
     snap = {"panes": [{"pane_id": "w1:p2", "cwd": "C:/r", "agent": "claude"}, {"pane_id": "w1:p3", "cwd": "C:/r"}]}
+    empty = type("W", (), {"agents": []})()
     restore.record_panes(world, snap)
     assert restore.load_panes()["w1:p2"]["name"] == "LEAD"
-    # the agent was quit in a pane that still exists: forget it
-    restore.record_panes(type("W", (), {"agents": []})(), {"panes": [{"pane_id": "w1:p2", "cwd": "C:/r"}]})
-    assert restore.load_panes() == {}
-    # a pane missing from the snapshot (server restarting) is kept for the resume
+    # herdr just restarted: the pane is back but empty, and this server has not resumed yet.
+    # The 2026-10-03 boot lost every record exactly here.
+    monkeypatch.setattr(restore, "server_id", lambda: "new:1")
+    restore.record_panes(empty, {"panes": [{"pane_id": "w1:p2", "cwd": "C:/r"}]})
+    assert restore.load_panes()["w1:p2"].get("quit") is None
+    # resume ran for this server a while ago: an empty pane now means you quit the agent
+    jsonfile.write(tmp_path / "state" / "panes-resumed-default.json", {"server": "new:1", "at": time.time() - 120})
+    restore.record_panes(empty, {"panes": [{"pane_id": "w1:p2", "cwd": "C:/r"}]})
+    assert restore.load_panes()["w1:p2"]["quit"] == "s1"
+    # the agent comes back: the quit mark goes
     restore.record_panes(world, snap)
-    restore.record_panes(type("W", (), {"agents": []})(), {"panes": []})
-    assert "w1:p2" in restore.load_panes()
+    assert "quit" not in restore.load_panes()["w1:p2"]
+
+
+def _claude_file(tmp_path, sid, conversation=True):
+    f = tmp_path / f"{sid}.jsonl"
+    lines = ['{"type":"custom-title","customTitle":"X"}']
+    if conversation:
+        lines.append('{"type":"user","message":{"content":"hi"}}')
+    f.write_text(chr(10).join(lines), encoding="utf-8")
+    return str(f)
+
+
+def test_resume_panes_uses_herdrs_own_session_and_skips_quit_and_empty(tmp_path, monkeypatch):
+    from navigator import restore
+    from navigator.sessions import Session
+    sess = [Session("claude", "s-ok", str(tmp_path), "LEAD-3", "", "", 1.0, _claude_file(tmp_path, "s-ok"), named=True),
+            Session("claude", "s-empty", str(tmp_path), "LEAD-4", "", "", 1.0,
+                    _claude_file(tmp_path, "s-empty", conversation=False), named=True),
+            Session("claude", "s-quit", str(tmp_path), "OLD", "", "", 1.0, _claude_file(tmp_path, "s-quit"), named=True)]
+    ref = lambda sid: {"agent": "claude", "kind": "id", "value": sid}  # noqa: E731
+    snap = {"panes": [
+        {"pane_id": "wT:p2", "cwd": str(tmp_path), "agent": None, "agent_session": ref("s-ok")},
+        {"pane_id": "w17:p1", "cwd": str(tmp_path), "agent": None, "agent_session": ref("s-empty")},
+        {"pane_id": "w9:p3", "cwd": str(tmp_path), "agent": None, "agent_session": ref("s-quit")},
+        {"pane_id": "w1:pF", "cwd": str(tmp_path), "agent": "claude", "agent_session": ref("live")},
+        {"pane_id": "w6:p1", "cwd": str(tmp_path), "agent": None, "agent_session": None}]}
+    restore.save_panes({"w9:p3": {"cli": "claude", "sid": "s-quit", "name": "OLD", "cwd": str(tmp_path),
+                                  "at": time.time(), "quit": "s-quit"}})
+    ran = []
+    monkeypatch.setattr(restore.herdr, "snapshot", lambda: snap)
+    monkeypatch.setattr(restore.herdr, "pane_run", lambda pane, cmd: ran.append((pane, cmd)))
+    monkeypatch.setattr(restore, "_foreground", lambda pane: [])
+    monkeypatch.setattr(restore, "claude_needs_refresh", lambda: False)
+    monkeypatch.setattr("navigator.sessions.load_sessions", lambda include_hidden=False: sess)
+    monkeypatch.setattr(restore.time, "sleep", lambda s: None)
+    monkeypatch.setattr(restore, "server_id", lambda: "srv:1")
+    assert restore.resume_panes() == "resumed 1 in their panes"
+    assert [p for p, _ in ran] == ["wT:p2"] and "s-ok" in ran[0][1] and "LEAD-3" in ran[0][1]
+    assert restore._resumed_this_server()
+    # running = a live agent only: the restored-but-empty panes are not "already running"
+    assert restore.live_ids(snap) >= {"live"} and not ({"s-ok", "s-empty", "s-quit"} & restore.live_ids(snap))
+
+
+def test_has_conversation(tmp_path):
+    from navigator import restore
+    from navigator.sessions import Session
+    ok = Session("claude", "a", "", "", "", "", 1.0, _claude_file(tmp_path, "a"))
+    empty = Session("claude", "b", "", "", "", "", 1.0, _claude_file(tmp_path, "b", conversation=False))
+    assert restore.has_conversation(ok) and not restore.has_conversation(empty)
+    assert restore.has_conversation(None)
 
 
 def test_decode_project_dir_finds_the_real_folder(tmp_path):
@@ -249,3 +304,26 @@ def test_set_ticks_and_reset(tmp_path, monkeypatch):
     startup.reset_all()
     data = startup.load()
     assert data["projects"] == {} and data["sessions"] == {"claude:a": {"prefs": {"model": "opus"}}}
+
+
+def test_logon_waits_for_this_servers_resume_not_an_old_one(tmp_path, monkeypatch):
+    from navigator import restore
+    monkeypatch.setattr(restore.time, "sleep", lambda s: None)
+    monkeypatch.setattr(restore, "server_id", lambda: "12160:abc")
+    (tmp_path / "state").mkdir(exist_ok=True)
+    jsonfile.write(tmp_path / "state" / "panes-resumed-default.json", {"server": "999:old", "at": time.time()})
+    assert not restore._wait_panes_resumed(timeout=0.05)  # yesterday's server: keep waiting
+    jsonfile.write(tmp_path / "state" / "panes-resumed-default.json", {"server": "12160:abc", "at": time.time()})
+    assert restore._wait_panes_resumed(timeout=0.05)
+
+
+def test_guarantee_names_what_is_not_running(tmp_path, monkeypatch):
+    from navigator import restore
+    s = Session("claude", "s1", str(tmp_path), "LEAD-3", "", "", time.time(), "", named=True)
+    monkeypatch.setattr("navigator.sessions.load_sessions", lambda include_hidden=False: [s])
+    monkeypatch.setattr(restore.startup, "selected", lambda sessions: [startup.Row(s, True, True)])
+    monkeypatch.setattr(restore, "live_ids", lambda snap=None: set())
+    want, missing = restore.guarantee(timeout=0)
+    assert want == {"s1": "LEAD-3"} and missing == ["LEAD-3"]
+    monkeypatch.setattr(restore, "live_ids", lambda snap=None: {"s1"})
+    assert restore.guarantee(timeout=0)[1] == []
