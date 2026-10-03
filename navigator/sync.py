@@ -134,7 +134,7 @@ def agent_tree(agents: list, folded: dict | None = None) -> list[tuple]:
         # herdr indents an entry's 2nd and later rows by two columns: the heading carrier's line is
         # its 2nd row, so every other agent's line (its 1st row) gets the same two-column pad
         line = (PAD * 2 if not head else "") + f"{'└─' if last else '├─'} {SIDE_ICON.get(a.status, '·')} {a.display[:34]}"
-        lane = f"{PAD if last else '│'}{PAD * 4}▹ {a.project.worktree}" if a.project.worktree else ""
+        lane = ""  # no worktree row (setup.AGENT_ROWS); "" clears one sent by an older version
         out.append((a, f"{i:04d}", head, line, lane, False))
     return out
 
@@ -299,7 +299,7 @@ def sync(force: bool = False) -> None:
     except OSError:
         pass
 
-    # herdr's Agents panel, nested by project: heading row, ├/└ branches, the worktree below
+    # herdr's Agents panel, nested by project: heading row, ├/└ branches (one line per session, no worktree row)
     for a, order, head, line, lane, hidden in agent_tree(world.agents, folded):
         _report("pane", a.pane_id, "hide", "1" if hidden else "", old, sent, seq)
         _report("pane", a.pane_id, "order", order, old, sent, seq)

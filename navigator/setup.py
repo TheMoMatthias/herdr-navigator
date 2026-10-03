@@ -102,11 +102,12 @@ SPACE_ROWS = [
     *[[{"token": f"$s{i}", **TREE}] for i in range(1, 9)],
 ]
 # herdr's Agents panel as a tree by project (tokens and order from sync.agent_tree): a heading
-# row on the first agent of each project, then "├─ ◐ NAME · state", then the worktree if any
+# row on the first agent of each project, then one "├─ ◐ NAME · state" line per session. No
+# worktree row: its name (lead-3, data-2) read as a second copy of the session name; the
+# worktree shows in the Spaces panel and in the Navigator.
 AGENT_ROWS = [
     [{"token": "$grp", "bold": True}],
     [{"token": "$line", **TREE}, "state_text", {"token": "$subagents", "dim": True}],
-    [{"token": "$lane", **TREE}, {"token": "$where", "dim": True}],
 ]
 
 

@@ -337,7 +337,7 @@ def test_agent_panel_tree_groups_by_project_most_urgent_first():
     assert rows[0][2].startswith("▾ Alpha  ◐1 ○1") and rows[1][2] == "" and rows[2][2].startswith("▾ Beta")
     assert rows[0][3] == "├─ ◐ A2" and rows[1][3] == sync.PAD * 2 + "└─ ○ A1"
     assert rows[2][3] == "├─ ? B2" and rows[3][3] == sync.PAD * 2 + "└─ ○ B1"
-    assert rows[2][4] == "│" + sync.PAD * 4 + "▹ lead-3" and rows[3][4] == ""
+    assert rows[2][4] == "" and rows[3][4] == ""  # no worktree row: it read as a duplicate name
     assert [r[1] for r in rows] == ["0000", "0001", "0002", "0003"]
     assert all(ch not in "".join(r[2] + r[3] + r[4] for r in rows) for ch in "⏳✔⚠⎇")   # no wide glyphs
     # folded: only who needs you stays, else the first agent carries the heading
@@ -550,4 +550,4 @@ def test_tree_rows_use_one_style_for_every_branch():
     # every connector (├─ └─ │) must look the same: no per-state colour, weight or dim on tree tokens
     tree = [c for row in setup.AGENT_ROWS + setup.SPACE_ROWS for c in row
             if isinstance(c, dict) and c.get("token") in ("$line", "$lane", *[f"$s{i}" for i in range(1, 9)])]
-    assert len(tree) == 10 and all(c == {"token": c["token"], **setup.TREE} for c in tree)
+    assert len(tree) == 9 and all(c == {"token": c["token"], **setup.TREE} for c in tree)
