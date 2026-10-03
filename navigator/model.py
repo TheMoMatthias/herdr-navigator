@@ -325,12 +325,12 @@ def build(with_sessions: bool = True) -> World:
         r, s = run_by_id.get(a.session_id), by_session.get(a.session_id)
         a.transcript = (r.transcript if r else "") or (s.path if s else "")
         a.context = insight.context(a.cli, a.transcript)
-        if a.status == "working":
-            continue
-        a.question = asks.pending(a.cli, a.transcript)  # a pending question means it waits for you
+        # a pending question means it waits for you, whatever herdr says: herdr shows a question
+        # dialog as "done", or "working" while background agents run
+        a.question = asks.pending(a.cli, a.transcript)
         if a.question:
             a.status = "blocked"
-        elif a.status == "idle" and insight.asks_you(insight.last_answer(a.cli, a.transcript, 1200)):
+        elif a.status in ("idle", "done") and insight.asks_you(insight.last_answer(a.cli, a.transcript, 1200)):
             a.status = "reply"
         if a.status in NEEDS_YOU:
             a.waiting_since = insight.last_answer_at(a.cli, a.transcript)

@@ -106,13 +106,13 @@ def main() -> None:
         sys.stdout.reconfigure(encoding="utf-8")
     except (AttributeError, ValueError):
         pass
-    print(line())
-    _maybe_view()
-    try:  # this slow path only runs without a daemon: start one
+    try:  # this slow path only runs without a daemon: start one first, as herdr kills us after 4 s
         from . import daemon
         daemon.start()
     except Exception:
         pass
+    print(line())
+    _maybe_view()
 
 
 def _maybe_view() -> None:

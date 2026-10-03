@@ -122,6 +122,7 @@ class Daemon:
         self.pending_since = 0.0   # first event not yet synced, for the latency in daemon.json
         self.latency = 0.0
         self.stop = False
+        self.restart = False  # exiting for new code: start the successor once the lock is free
         self.log_file = _state("daemon.log")
 
     def log(self, msg: str) -> None:
@@ -234,6 +235,7 @@ class Daemon:
                     last_code = now
                     if _code_stamp() != code:
                         self.log("plugin code changed: exiting so the new code takes over")
+                        self.restart = True
                         break
                 if now - last_view >= VIEW_EVERY:
                     last_view = now
@@ -298,6 +300,9 @@ def main() -> None:
                 pass
         d.log("stopped")
         held.close()
+        # the tab bar's fallback would start one too, but a busy machine times it out (4 s) first
+        if d.restart and start():
+            d.log("started the new code")
 
 
 if __name__ == "__main__":

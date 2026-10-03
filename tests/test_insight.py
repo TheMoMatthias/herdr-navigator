@@ -308,3 +308,28 @@ def test_alerts_cover_agents_that_need_a_reply(tmp_path):
     assert alerts.check_waiting(snap, now=t0, sender=lambda *a: None) == []
     # only the one still idle counts: the other was answered and works again
     assert alerts.check_waiting(snap, now=t0 + 601, sender=lambda *a: None) == ["STORAGE needs a reply"]
+
+
+def test_asks_you_spots_a_hand_back_list():
+    from navigator.insight import asks_you
+    assert asks_you("Your part:\n1. Free the USB stick.\n2. Tell me where Jobradar lives.\n\nNext I'll read the host.")
+    assert asks_you("Two things need your decision before I continue.")
+    assert not asks_you("Committed and pushed; the next run starts at 9.")
+
+
+def test_alerts_cover_open_questions_and_unseen_done(tmp_path):
+    import json as _json
+    cfg = tmp_path / "cfg" / "navigator.toml"
+    cfg.write_text(cfg.read_text() + '\n[alerts]\nntfy_topic = "t"\nblocked_minutes = 10\n', encoding="utf-8")
+    settings.load.cache_clear()
+    (settings.state_dir() / "replies.json").write_text(_json.dumps({
+        "w1:p2": {"name": "LEAD", "workspace_id": "w1", "why": "asks you a question"},
+        "w1:p3": {"name": "DATA", "workspace_id": "w1", "why": "needs a reply"}}), encoding="utf-8")
+    # herdr shows a question dialog as "working" (background agents) or "done"
+    snap = {"workspaces": [{"workspace_id": "w1", "label": "AlgoTrader"}],
+            "agents": [{"pane_id": "w1:p2", "workspace_id": "w1", "agent_status": "working"},
+                       {"pane_id": "w1:p3", "workspace_id": "w1", "agent_status": "done"}]}
+    t0 = time.time()
+    assert alerts.check_waiting(snap, now=t0, sender=lambda *a: None) == []
+    got = alerts.check_waiting(snap, now=t0 + 601, sender=lambda *a: None)
+    assert sorted(got) == ["DATA needs a reply", "LEAD asks you a question"]

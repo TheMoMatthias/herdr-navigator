@@ -128,7 +128,10 @@ def last_answer(cli: str, path: str, limit: int = 8000) -> str:
 
 
 _ASKS = re.compile(r"\b(let me know|should i|shall i|do you want|want me to|would you like|which (one|option)|"
-                   r"your call|please confirm|can you confirm|ok to|okay to|go ahead\?|approve)\b", re.I)
+                   r"your call|please confirm|can you confirm|ok to|okay to|go ahead\?|approve|"
+                   # a hand-back list of things for you to do or answer
+                   r"tell me|send me|give me|your part|needs? your|for you to|you need to|you('ll| will) need to|"
+                   r"your (decision|answer|input|go-ahead))\b", re.I)
 
 
 def asks_you(answer: str) -> bool:

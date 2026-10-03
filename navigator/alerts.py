@@ -192,13 +192,15 @@ def check_waiting(snap: dict, now: float | None = None, sender=send_background) 
         state = {}
     labels = {w["workspace_id"]: w.get("label", "") for w in snap.get("workspaces", [])}
     waiting = {a["pane_id"]: a for a in snap.get("agents", []) if a.get("agent_status") == "blocked"}
-    idle = {a["pane_id"] for a in snap.get("agents", []) if a.get("agent_status") == "idle"}
-    try:  # written by sync: idle agents whose last message asks you something, outside questions
+    # herdr says "done" for a finished turn you have not seen yet, so that waits too
+    idle = {a["pane_id"] for a in snap.get("agents", []) if a.get("agent_status") in ("idle", "done")}
+    try:  # written by sync: agents whose last message asks you something, open questions, outside ones
         replies = json.loads((settings.state_dir() / "replies.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         replies = {}
     for key, r in replies.items():
-        if key in idle or key.startswith("out:"):
+        # an open question dialog counts whatever herdr says (it shows one as "done" or "working")
+        if key in idle or key.startswith("out:") or r.get("why") == "asks you a question":
             waiting.setdefault(key, {"terminal_title_stripped": r.get("name"), "workspace_id": r.get("workspace_id"),
                                      "why": r.get("why", "needs a reply")})
     sent = []

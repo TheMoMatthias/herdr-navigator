@@ -108,6 +108,7 @@ SPACE_ROWS = [
 # The state word carries the colour, one clearly different hue per state: working bright and
 # bold, idle a calm grey that recedes, done green, anything waiting on you orange.
 STATE_TEXT = {"token": "state_text", "fg": MUTED, "rules": [
+    {"contains": "question", "ignore_case": True, "fg": "#fe8019", "bold": True},
     {"contains": "reply", "ignore_case": True, "fg": "#fe8019", "bold": True},
     {"contains": "blocked", "ignore_case": True, "fg": "#fe8019", "bold": True},
     {"contains": "working", "ignore_case": True, "fg": "#fabd2f", "bold": True},

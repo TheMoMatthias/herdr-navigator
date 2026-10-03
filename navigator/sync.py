@@ -272,29 +272,41 @@ def sync(force: bool = False) -> None:
     for a in world.agents:  # herdr's own agent list and pane borders say "needs reply" too
         if not a.in_herdr:
             continue
-        label = "needs reply" if a.status == "reply" else ""
+        # herdr says "done" (or "working") while a question dialog is open, and "done" for a finished
+        # turn you have not looked at yet: label every state the wait can show up as
+        if a.question:
+            label, states = "question", ("idle", "done", "working", "blocked")
+        elif a.status == "reply":
+            label, states = "needs reply", ("idle", "done")
+        else:
+            label, states = "", ()
         k = f"pane:{a.pane_id}:state-label"
         if old.get(k) != label:
-            params = ({"agent": a.cli, "state_labels": {"idle": label}} if label else {"clear_state_labels": True})
+            params = ({"agent": a.cli, "state_labels": {s: label for s in states}} if label
+                      else {"clear_state_labels": True})
             try:
                 herdr.request("pane.report_metadata", {"pane_id": a.pane_id, "source": SOURCE,
                                                        "seq": int(next(_SEQ)), **params}, timeout=6)
             except (herdr.HerdrError, OSError, ValueError):
-                args = ["--agent", a.cli, "--state-label", f"idle={label}"] if label else ["--clear-state-labels"]
+                args = (["--agent", a.cli] + [x for s in states for x in ("--state-label", f"{s}={label}")]
+                        if label else ["--clear-state-labels"])
                 herdr.run("pane", "report-metadata", a.pane_id, "--source", SOURCE, *args, "--seq", next(_SEQ),
                           check=False)
         sent[k] = label
         if (label and before is not None and a.pane_id not in before
                 and settings.load().alerts.get("toast_reply", True)):
-            herdr.run("notification", "show", f"{a.display[:40]} needs a reply", "--body",
-                      f"{a.project.label}: its last message asks you something", "--sound", "request",
-                      check=False)
+            if a.question:
+                title, body = f"{a.display[:40]} asks you a question", a.question.text[:120]
+            else:
+                title, body = f"{a.display[:40]} needs a reply", f"{a.project.label}: its last message asks you something"
+            herdr.run("notification", "show", title, "--body", body, "--sound", "request", check=False)
     try:  # who waits on a reply (or a question in another window): read by alerts.check_waiting
         replies_file.write_text(json.dumps({
             (a.pane_id or f"out:{a.cli}:{a.session_id}"): {
                 "name": a.display, "workspace_id": a.workspace_id,
-                "why": "needs a reply" if a.status == "reply" else "waits for you"}
-            for a in world.agents if a.status == "reply" or (not a.in_herdr and a.status == "blocked")}),
+                "why": "needs a reply" if a.status == "reply"
+                else "asks you a question" if a.question else "waits for you"}
+            for a in world.agents if a.status == "reply" or a.question or (not a.in_herdr and a.status == "blocked")}),
             encoding="utf-8")
     except OSError:
         pass
