@@ -105,9 +105,18 @@ SPACE_ROWS = [
 # row on the first agent of each project, then one "├─ ◐ NAME · state" line per session. No
 # worktree row: its name (lead-3, data-2) read as a second copy of the session name; the
 # worktree shows in the Spaces panel and in the Navigator.
+# The state word carries the colour, one clearly different hue per state: working bright and
+# bold, idle a calm grey that recedes, done green, anything waiting on you orange.
+STATE_TEXT = {"token": "state_text", "fg": MUTED, "rules": [
+    {"contains": "reply", "ignore_case": True, "fg": "#fe8019", "bold": True},
+    {"contains": "blocked", "ignore_case": True, "fg": "#fe8019", "bold": True},
+    {"contains": "working", "ignore_case": True, "fg": "#fabd2f", "bold": True},
+    {"contains": "done", "ignore_case": True, "fg": "#b8bb26"},
+    {"contains": "idle", "ignore_case": True, "fg": "#7c6f64"},
+]}
 AGENT_ROWS = [
     [{"token": "$grp", "bold": True}],
-    [{"token": "$line", **TREE}, "state_text", {"token": "$subagents", "dim": True}],
+    [{"token": "$line", **TREE}, STATE_TEXT, {"token": "$subagents", "dim": True}],
 ]
 
 

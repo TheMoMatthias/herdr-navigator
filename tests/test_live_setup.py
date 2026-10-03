@@ -551,3 +551,10 @@ def test_tree_rows_use_one_style_for_every_branch():
     tree = [c for row in setup.AGENT_ROWS + setup.SPACE_ROWS for c in row
             if isinstance(c, dict) and c.get("token") in ("$line", "$lane", *[f"$s{i}" for i in range(1, 9)])]
     assert len(tree) == 9 and all(c == {"token": c["token"], **setup.TREE} for c in tree)
+
+
+def test_state_words_have_distinct_colours():
+    rules = setup.STATE_TEXT["rules"]
+    fg = {r["contains"]: r["fg"] for r in rules}
+    assert len({fg["working"], fg["idle"], fg["done"], fg["reply"]}) == 4
+    assert [r["contains"] for r in rules].index("reply") < [r["contains"] for r in rules].index("working")
