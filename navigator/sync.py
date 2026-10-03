@@ -306,7 +306,8 @@ def sync(force: bool = False) -> None:
         _report("pane", a.pane_id, "grp", head, old, sent, seq)
         _report("pane", a.pane_id, "line", line, old, sent, seq)
         _report("pane", a.pane_id, "lane", lane, old, sent, seq)
-    ensure_view()
+    if force:  # otherwise the daemon checks every VIEW_EVERY: each probe redraws herdr's UI
+        ensure_view()
 
     for a in world.agents:
         if a.in_herdr:  # mirror panes report their own tokens
