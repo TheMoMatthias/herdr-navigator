@@ -260,16 +260,6 @@ def test_preview_drops_the_cli_input_box_and_status_line():
     assert conversation_lines("just text") == ["just text"]
 
 
-def test_asks_you_spots_a_question_at_the_end():
-    from navigator.insight import asks_you
-    assert asks_you("Done.\n\nShould I also push it?")
-    assert asks_you("All set. Let me know which option you prefer.")
-    assert asks_you("- **Memory:** upgrade to 64 GB?\n\nThe handover is updated.")
-    assert not asks_you("Done. Tests pass and the branch is pushed.")
-    assert not asks_you("```\nwhy?\n```\nFixed it.")
-    assert not asks_you("")
-
-
 def test_prompt_options_reads_a_permission_prompt():
     from navigator.app import prompt_options
     raw = "\n".join(["Bash command", "  rm -rf build", "Do you want to proceed?",
@@ -308,13 +298,6 @@ def test_alerts_cover_agents_that_need_a_reply(tmp_path):
     assert alerts.check_waiting(snap, now=t0, sender=lambda *a: None) == []
     # only the one still idle counts: the other was answered and works again
     assert alerts.check_waiting(snap, now=t0 + 601, sender=lambda *a: None) == ["STORAGE needs a reply"]
-
-
-def test_asks_you_spots_a_hand_back_list():
-    from navigator.insight import asks_you
-    assert asks_you("Your part:\n1. Free the USB stick.\n2. Tell me where Jobradar lives.\n\nNext I'll read the host.")
-    assert asks_you("Two things need your decision before I continue.")
-    assert not asks_you("Committed and pushed; the next run starts at 9.")
 
 
 def test_alerts_cover_open_questions_and_unseen_done(tmp_path):

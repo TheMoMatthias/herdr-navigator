@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from . import asks, herdr, insight, jsonfile, live, projects, settings
 from .sessions import Session, is_listed, load_sessions
 
-# "reply" is the Navigator's own: idle in herdr, but its last message asks you something.
+# "reply" is no longer produced: only an open question (or herdr's own "blocked") waits on you.
 STATE_ORDER = {"blocked": 0, "reply": 1, "done": 2, "working": 3, "idle": 4, "unknown": 5}
 STATE_ICON = {"blocked": "⚠", "reply": "⏳", "done": "✔", "working": "◐", "idle": "○", "unknown": "?"}
 NEEDS_YOU = ("blocked", "reply", "done")
@@ -330,8 +330,6 @@ def build(with_sessions: bool = True) -> World:
         a.question = asks.pending(a.cli, a.transcript)
         if a.question:
             a.status = "blocked"
-        elif a.status in ("idle", "done") and insight.asks_you(insight.last_answer(a.cli, a.transcript, 1200)):
-            a.status = "reply"
         if a.status in NEEDS_YOU:
             a.waiting_since = insight.last_answer_at(a.cli, a.transcript)
 

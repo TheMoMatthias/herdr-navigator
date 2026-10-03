@@ -93,7 +93,7 @@ HELP = {
     "agents": ("Agents: everything running now",
                "Every agent, inside herdr or in another window (↗), nested under its project. ← → or ▾ folds a project\n"
                "(a folded one still shows who needs you). Those that need you come first, longest wait first:\n"
-               "⚠ waits for an approval or answers a question · ⏳ its last message asks you something · ✔ finished.\n"
+               "⚠ waits for an approval or has a question open · ✔ finished.\n"
                "○ Parked = idle, nothing asked. Waits = how long it has been waiting. Ctx = context fill.\n\n"
                "⚑ Next (g) selects the next one that needs you and puts you in the message box.\n"
                "Answer: when it shows numbered options (a question or a permission prompt), click one.\n"

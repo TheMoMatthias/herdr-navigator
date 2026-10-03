@@ -194,7 +194,7 @@ def check_waiting(snap: dict, now: float | None = None, sender=send_background) 
     waiting = {a["pane_id"]: a for a in snap.get("agents", []) if a.get("agent_status") == "blocked"}
     # herdr says "done" for a finished turn you have not seen yet, so that waits too
     idle = {a["pane_id"] for a in snap.get("agents", []) if a.get("agent_status") in ("idle", "done")}
-    try:  # written by sync: agents whose last message asks you something, open questions, outside ones
+    try:  # written by sync: agents with an open question, here or in another window
         replies = json.loads((settings.state_dir() / "replies.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         replies = {}

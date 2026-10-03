@@ -269,15 +269,13 @@ def sync(force: bool = False) -> None:
         before = json.loads(replies_file.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         before = None
-    for a in world.agents:  # herdr's own agent list and pane borders say "needs reply" too
+    for a in world.agents:  # herdr's own agent list and pane borders say "question" too
         if not a.in_herdr:
             continue
-        # herdr says "done" (or "working") while a question dialog is open, and "done" for a finished
-        # turn you have not looked at yet: label every state the wait can show up as
+        # only an open question dialog counts (never a guess from a message's wording); herdr says
+        # "done" (or "working") while one is open, so every state is labelled
         if a.question:
             label, states = "question", ("idle", "done", "working", "blocked")
-        elif a.status == "reply":
-            label, states = "needs reply", ("idle", "done")
         else:
             label, states = "", ()
         k = f"pane:{a.pane_id}:state-label"
@@ -295,18 +293,14 @@ def sync(force: bool = False) -> None:
         sent[k] = label
         if (label and before is not None and a.pane_id not in before
                 and settings.load().alerts.get("toast_reply", True)):
-            if a.question:
-                title, body = f"{a.display[:40]} asks you a question", a.question.text[:120]
-            else:
-                title, body = f"{a.display[:40]} needs a reply", f"{a.project.label}: its last message asks you something"
+            title, body = f"{a.display[:40]} asks you a question", a.question.text[:120]
             herdr.run("notification", "show", title, "--body", body, "--sound", "request", check=False)
-    try:  # who waits on a reply (or a question in another window): read by alerts.check_waiting
+    try:  # who has a question open (here or in another window): read by alerts.check_waiting
         replies_file.write_text(json.dumps({
             (a.pane_id or f"out:{a.cli}:{a.session_id}"): {
                 "name": a.display, "workspace_id": a.workspace_id,
-                "why": "needs a reply" if a.status == "reply"
-                else "asks you a question" if a.question else "waits for you"}
-            for a in world.agents if a.status == "reply" or a.question or (not a.in_herdr and a.status == "blocked")}),
+                "why": "asks you a question" if a.question else "waits for you"}
+            for a in world.agents if a.question or (not a.in_herdr and a.status == "blocked")}),
             encoding="utf-8")
     except OSError:
         pass

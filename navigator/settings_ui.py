@@ -304,7 +304,7 @@ class SettingsPane(Horizontal):
             yield Field(str(c.get("blocked_minutes", 10)), id="al-min", classes="num")
             yield Static("minutes (0 = never)", classes="unit")
         yield Tick("Also send the logon restore's result", bool(c.get("on_restore", True)), id="al-restore")
-        yield Tick("Toast in herdr when an agent asks you something",
+        yield Tick("Toast in herdr when an agent opens a question",
                    bool(c.get("toast_reply", True)), id="al-toast")
         with Horizontal(classes="bar"):
             yield Btn("Send test", id="al-test", variant="primary", tooltip="A test message to every channel set up")

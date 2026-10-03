@@ -7,8 +7,8 @@ everything your coding agents are doing:
   their repo and show up as indented children in the sidebar, and every session inside a
   Space gets its own indented row under it (`├ ⏳ STORAGE`), tabs included. herdr's Agents panel is
   nested the same way: a heading per project (`▾ AlgoTrader ⏳1 ○5`), its agents below as
-  `├─ ? STORAGE · needs reply`, one line per session (the worktree shows in Spaces), the project with
-  what is running first, then whoever needs you (`!` waits on you, `?` needs a reply), then the
+  `├─ ! STORAGE · question`, one line per session (the worktree shows in Spaces), the project with
+  what is running first, then whoever needs you (`!` waits on you), then the
   most recently active. Spaces follow the same order (a repo moves with its worktree Spaces;
   ⚙ Settings › General turns that off). Fold a project with `F10` / `Ctrl+B › F` (the focused
   pane's project) or `Ctrl+B › Shift+F` (every project), or the pane menu (`F5`). herdr's
@@ -221,9 +221,9 @@ presses ⏎ / Esc / ^C, in every ticked agent at once.
 ### Working with many agents
 
 - **Who needs you.** Agents puts first the agents that need you, longest wait first, with a
-  `Waits` column: `⚠` waits for an approval or a question, `⏳` finished with a message that
-  asks you something (a question at its end, "should I…", "let me know…"), `✔` finished and
-  not yet seen. The rest is `○ Parked`. The top bar counts them (`⏳ 2 need a reply`).
+  `Waits` column: `⚠` waits for an approval or has a question dialog open (read from the
+  session's transcript, never guessed from its wording), `✔` finished and not yet seen. The rest
+  is `○ Parked`.
 - **Answer without leaving.** `⚑ Next` (`g`) selects the next agent that needs you and
   puts you in the message box, its last words in the preview. When it shows numbered choices
   (a permission prompt or a question), **Answer: [1 Yes] [2 …] [3 No]** buttons press that number.
@@ -236,8 +236,9 @@ presses ⏎ / Esc / ^C, in every ticked agent at once.
   which turns Hand off into a plan → review pipeline. Watched agents carry 🔔 / ⛓ after their
   name; right-click again to stop. In Layout, `🚨 Watch for errors` tells you when a test or
   server pane prints `FAILED`, a traceback or `Error:` (new output only).
-- **Needs a reply, in herdr too.** herdr's own agent list and pane borders say `needs reply`, and
-  a toast with sound appears when an agent starts asking you something (Settings › Phone alerts).
+- **Open questions, in herdr too.** herdr shows an open question dialog as "done" (or "working"
+  while background agents run), so the Navigator labels the pane `question` in herdr's agent list
+  and pane borders, and a toast with sound appears when one opens (Settings › Phone alerts).
 - **New agent from a workspace.** Click the Space, press `F5` › *New agent session here…*, or
   right-click a project heading in the Navigator's Agents tab.
 

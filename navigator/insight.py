@@ -8,7 +8,6 @@ Codex: `token_count` events carry the last turn's usage and the model's context 
 from __future__ import annotations
 
 import json
-import re
 import os
 from dataclasses import dataclass
 
@@ -125,25 +124,6 @@ def last_answer(cli: str, path: str, limit: int = 8000) -> str:
         if t:
             return t[-limit:]
     return ""
-
-
-_ASKS = re.compile(r"\b(let me know|should i|shall i|do you want|want me to|would you like|which (one|option)|"
-                   r"your call|please confirm|can you confirm|ok to|okay to|go ahead\?|approve|"
-                   # a hand-back list of things for you to do or answer
-                   r"tell me|send me|give me|your part|needs? your|for you to|you need to|you('ll| will) need to|"
-                   r"your (decision|answer|input|go-ahead))\b", re.I)
-
-
-def asks_you(answer: str) -> bool:
-    """Does this last message end by asking you something? A question mark in its last lines, or
-    a typical hand-back phrase near its end. Code blocks don't count."""
-    text = re.sub(r"```.*?```", "", answer or "", flags=re.S).strip()
-    if not text:
-        return False
-    tail_lines = [ln.strip() for ln in text.splitlines() if ln.strip()][-3:]
-    if any(ln.rstrip("*_ )").endswith("?") for ln in tail_lines):
-        return True
-    return bool(_ASKS.search(text[-400:]))
 
 
 def last_answer_at(cli: str, path: str) -> float:
