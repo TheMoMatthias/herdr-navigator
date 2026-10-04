@@ -210,7 +210,7 @@ def install(doc, added: dict) -> list[str]:
     for e in keep:
         bar.append(e)
     bar.append(_inline({"type": "command", "command": status_command(),
-                        "interval_seconds": 3, "timeout_seconds": 4}))
+                        "interval_seconds": 3, "timeout_seconds": 10}))  # a busy machine needs >4 s
     bar.multiline(True)
     added["status"] = True
 

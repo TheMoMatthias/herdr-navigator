@@ -17,8 +17,80 @@ def herdr_bin() -> str:
     return os.environ.get("HERDR_BIN_PATH") or shutil.which("herdr") or "herdr"
 
 
+def _opts(rest: list[str], flags: dict[str, str]) -> tuple[list[str], dict] | None:
+    """Split CLI words into positionals and the known --options (None: an option we don't map)."""
+    pos, out, i = [], {}, 0
+    while i < len(rest):
+        w = rest[i]
+        if w.startswith("--"):
+            if w[2:] not in flags or i + 1 >= len(rest):
+                return None
+            out[flags[w[2:]]] = rest[i + 1]
+            i += 2
+        else:
+            pos.append(w)
+            i += 1
+    return pos, out
+
+
+def _read_result(res: dict) -> dict:
+    return {"raw": ((res.get("read") or {}).get("text") or "").strip()}  # as the CLI's stdout
+
+
+def _to_api(args: tuple[str, ...]):
+    """The socket request for a CLI command, or None to use the CLI: (method, params, convert).
+    Starting the CLI costs a process (0.2 s idle, seconds on a loaded machine); the socket ~2 ms."""
+    if len(args) < 2:
+        return None
+    cmd, rest = (args[0], args[1]), list(args[2:])
+    ident = lambda r: r  # noqa: E731
+    if cmd in (("agent", "read"), ("pane", "read")):
+        o = _opts(rest, {"source": "source", "lines": "lines"})
+        if not o or len(o[0]) != 1:
+            return None
+        key = "target" if cmd[0] == "agent" else "pane_id"
+        p = {key: o[0][0], "source": o[1].get("source", "recent").replace("-", "_")}
+        if "lines" in o[1]:
+            p["lines"] = int(o[1]["lines"])
+        return f"{cmd[0]}.read", p, _read_result
+    if cmd in (("agent", "get"), ("agent", "focus")) and len(rest) == 1:
+        return f"agent.{cmd[1]}", {"target": rest[0]}, ident
+    if cmd == ("agent", "prompt") and len(rest) == 2:
+        return "agent.prompt", {"target": rest[0], "text": rest[1]}, ident
+    if cmd == ("agent", "send-keys") and len(rest) >= 2:
+        return "agent.send_keys", {"target": rest[0], "keys": rest[1:]}, ident
+    if cmd == ("pane", "process-info"):
+        o = _opts(rest, {"pane": "pane_id"})
+        return ("pane.process_info", o[1], ident) if o and not o[0] else None
+    if cmd == ("pane", "list"):
+        o = _opts(rest, {"workspace": "workspace_id"})
+        return ("pane.list", o[1], ident) if o and not o[0] else None
+    if cmd in (("pane", "close"), ("tab", "close"), ("tab", "focus"), ("workspace", "focus")) and len(rest) == 1:
+        return f"{cmd[0]}.{cmd[1]}", {f"{cmd[0]}_id": rest[0]}, ident
+    if cmd in (("pane", "rename"), ("tab", "rename"), ("workspace", "rename")) and len(rest) >= 2:
+        return f"{cmd[0]}.rename", {f"{cmd[0]}_id": rest[0], "label": " ".join(rest[1:])}, ident
+    if cmd == ("notification", "show"):
+        o = _opts(rest, {"body": "body", "sound": "sound"})
+        if not o or len(o[0]) != 1:
+            return None
+        return "notification.show", {"title": o[0][0], **o[1]}, ident
+    return None
+
+
 def run(*args: str, timeout: float = 10.0, check: bool = True) -> dict:
-    """Run `herdr <args>` and return the parsed JSON `result` object."""
+    """Run `herdr <args>` and return the parsed JSON `result` object: over the socket when the
+    command has a request (see _to_api), else by starting the CLI."""
+    api = None if os.environ.get("NAV_HERDR_CLI") else _to_api(args)
+    if api:
+        method, params, convert = api
+        try:
+            return convert(request(method, params, timeout=min(timeout, 30.0)))
+        except HerdrError as e:
+            if "did not answer" in str(e):  # it may have acted: never send it twice
+                if check:
+                    raise
+                return {}
+            # refused (it did nothing) or no socket: the CLI decides
     proc = subprocess.run(
         [herdr_bin(), *args],
         capture_output=True,

@@ -1,7 +1,7 @@
 """Recent places: every pane you focus, most recent first, across tabs, workspaces and projects.
 
-Fed by the plugin's `pane.focused` event hook (`run history record`). Kept small and
-stdlib-only: the hook fires on every focus change.
+Fed by the daemon from herdr's `pane.focused` events (no hook process per focus change);
+`run history record` still records one by hand. Kept small and stdlib-only.
 """
 from __future__ import annotations
 

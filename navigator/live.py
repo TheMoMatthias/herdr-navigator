@@ -138,15 +138,13 @@ def activity(path: str) -> str:
 def claude_subagents(transcript: str, now: float) -> list[SubAgent]:
     d = Path(transcript).with_suffix("") / "subagents"
     out = []
-    try:
-        files = list(d.glob("agent-*.jsonl"))
+    try:  # scandir: on Windows the listing carries the times, no stat call per sub-agent file
+        with os.scandir(d) as it:
+            files = [(Path(e.path), e.stat().st_mtime) for e in it
+                     if e.name.startswith("agent-") and e.name.endswith(".jsonl")]
     except OSError:
         return out
-    for f in files:
-        try:
-            m = f.stat().st_mtime
-        except OSError:
-            continue
+    for f, m in files:
         if now - m > ACTIVE_SECONDS:
             continue
         meta = {}

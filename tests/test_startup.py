@@ -327,3 +327,18 @@ def test_guarantee_names_what_is_not_running(tmp_path, monkeypatch):
     assert want == {"s1": "LEAD-3"} and missing == ["LEAD-3"]
     monkeypatch.setattr(restore, "live_ids", lambda snap=None: {"s1"})
     assert restore.guarantee(timeout=0)[1] == []
+
+
+def test_guarantee_says_when_a_session_waits_on_the_folder_trust_question(monkeypatch):
+    from navigator import restore
+    snap = {"tabs": [{"tab_id": "w1:t2", "label": "RAM-UPGRADE"}],
+            "panes": [{"pane_id": "w1:p2", "tab_id": "w1:t2"}, {"pane_id": "w1:p1", "tab_id": "w1:t1", "agent": "claude"}]}
+    monkeypatch.setattr(restore.herdr, "snapshot", lambda: snap)
+    monkeypatch.setattr(restore.herdr, "run", lambda *a, **k: {"raw": "Do you trust the files in this folder?\n 1. Yes"})
+    assert restore._trust_waits() == ["RAM-UPGRADE"]
+    monkeypatch.setattr(restore, "live_ids", lambda *a: set())
+    monkeypatch.setattr(restore, "load_panes", lambda: {"w1:p2": {"sid": "s1", "name": "RAM-UPGRADE", "resumed_at": time.time()}})
+    monkeypatch.setattr(restore.startup, "selected", lambda rows: [])
+    monkeypatch.setattr("navigator.sessions.load_sessions", lambda *a, **k: [])
+    want, missing = restore.guarantee(timeout=0)
+    assert missing == ["RAM-UPGRADE (waits for you to trust its folder)"]

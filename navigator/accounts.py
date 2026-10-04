@@ -25,7 +25,27 @@ _DETACHED = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CR
 
 @functools.lru_cache(maxsize=None)
 def _which(exe: str) -> bool:
-    return bool(shutil.which(exe))  # a PATH scan: ~0.1 s each on Windows, asked while drawing
+    """Is this program installed? A PATH scan costs ~0.1 s each on Windows and is asked while the
+    Navigator draws, so answers are kept for a day (and dropped when PATH changes)."""
+    from . import jsonfile
+    f = settings.state_dir() / "which-cache.json"
+    import zlib  # hash() of a str differs per process
+    key = f"{zlib.crc32(os.environ.get('PATH', '').encode()):x}|{exe}"
+    try:
+        cache = jsonfile.read(f, {}) or {}
+    except (OSError, ValueError):
+        cache = {}
+    hit = cache.get(key)
+    if hit and time.time() - hit[1] < 86400:
+        return bool(hit[0])
+    found = bool(shutil.which(exe))
+    cache = {k: v for k, v in cache.items() if time.time() - v[1] < 86400}
+    cache[key] = [found, time.time()]
+    try:
+        jsonfile.write(f, cache)
+    except OSError:
+        pass
+    return found
 
 
 def clis() -> dict[str, dict]:

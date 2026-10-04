@@ -15,6 +15,7 @@ pane, so the layout stays. Used after signing in to an account, and from the men
 from __future__ import annotations
 
 import json
+import re
 import os
 import shutil
 import signal
@@ -613,9 +614,38 @@ def guarantee(timeout: float = 120) -> tuple[dict[str, str], list[str]]:
         if not missing or time.time() >= end:
             break
         time.sleep(5)
+    if missing:
+        # Claude asks whether to trust a folder before it starts: say so instead of "not running"
+        waits = _trust_waits()
+        missing = [n + (" (waits for you to trust its folder)"
+                        if any(lbl and (n.startswith(lbl) or lbl.startswith(n[:20])) for lbl in waits) else "")
+                   for n in missing]
     for name in missing:
         log(f"NOT RUNNING after restore: {name}")
     return want, missing
+
+
+_TRUST = re.compile(r"trust (the files in )?this folder|do you trust|one you trust", re.I)
+
+
+def _trust_waits() -> list[str]:
+    """Tab labels of agent-less panes that show a CLI's folder-trust question (never answered here)."""
+    try:
+        snap = herdr.snapshot()
+    except Exception:
+        return []
+    tabs = {t.get("tab_id"): t.get("label", "") for t in snap.get("tabs", [])}
+    out = []
+    for p in snap.get("panes", []):
+        if p.get("agent"):
+            continue
+        try:
+            raw = herdr.run("pane", "read", p["pane_id"], "--source", "recent", "--lines", "40").get("raw", "")
+        except Exception:
+            continue
+        if _TRUST.search(raw):
+            out.append(tabs.get(p.get("tab_id"), "") or p.get("terminal_title_stripped", ""))
+    return out
 
 
 def main() -> None:

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 import tomllib
 from dataclasses import dataclass
@@ -61,6 +62,32 @@ def config_path() -> Path:
 
 
 def _defaults() -> dict[str, list[str]]:
+    """herdr's built-in keys. Asking herdr costs a process (0.2 s idle, seconds when the machine
+    is busy) on every Navigator open, so the answer is kept until the herdr binary changes."""
+    from . import jsonfile, settings
+    exe = shutil.which(herdr.herdr_bin()) or herdr.herdr_bin()
+    try:
+        st = os.stat(exe)
+        stamp = f"{exe}|{st.st_size}|{st.st_mtime_ns}"
+    except OSError:
+        stamp = ""
+    cache = settings.state_dir() / "herdr-default-keys.json"
+    try:
+        hit = jsonfile.read(cache, {}) or {}
+    except (OSError, ValueError):
+        hit = {}
+    if stamp and hit.get("stamp") == stamp and hit.get("keys"):
+        return hit["keys"]
+    out = _ask_defaults()
+    if stamp and out:
+        try:
+            jsonfile.write(cache, {"stamp": stamp, "keys": out})
+        except OSError:
+            pass
+    return out
+
+
+def _ask_defaults() -> dict[str, list[str]]:
     try:
         text = subprocess.run([herdr.herdr_bin(), "--default-config"], capture_output=True, text=True,
                               encoding="utf-8", timeout=5,

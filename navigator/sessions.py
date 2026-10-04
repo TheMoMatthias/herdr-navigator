@@ -189,18 +189,28 @@ def _parse_claude(path: Path) -> Session | None:
     )
 
 
+# stat results the listing already has: on Windows a directory listing carries size and times, so
+# reusing them saves one system call per transcript (~1,600 a scan) in load_sessions
+_LISTED: dict[str, os.stat_result] = {}
+
+
 def _claude_files(cutoff: float) -> list[Path]:
     root = _claude_root()
     out = []
-    if not root.is_dir():
+    try:
+        projs = [e for e in os.scandir(root) if e.is_dir()]
+    except OSError:
         return out
-    for proj in root.iterdir():
-        if not proj.is_dir():
-            continue
+    for proj in projs:
         try:
-            for f in proj.glob("*.jsonl"):
-                if f.stat().st_mtime >= cutoff:
-                    out.append(f)
+            with os.scandir(proj.path) as it:
+                for e in it:
+                    if not e.name.endswith(".jsonl") or not e.is_file():
+                        continue
+                    st = e.stat()
+                    if st.st_mtime >= cutoff:
+                        _LISTED[e.path] = st
+                        out.append(Path(e.path))
         except OSError:
             continue
     return out
@@ -620,11 +630,11 @@ def load_sessions(include_hidden: bool = False) -> list[Session]:
     codex_names = _codex_names()
     for cli, (files, parse) in PROVIDERS.items():
         for f in files(cutoff):
+            k = str(f)
             try:
-                st = f.stat()
+                st = _LISTED.pop(k, None) or f.stat()
             except OSError:
                 continue
-            k = str(f)
             ent = entries.get(k)
             if ent and ent["m"] == st.st_mtime and ent["s"] == st.st_size:
                 rec = ent["r"]

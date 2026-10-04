@@ -46,16 +46,6 @@ platforms = ["linux", "macos"]
 command = ["sh", "run.sh", "hook"]
 
 [[events]]
-on = "pane.agent_status_changed"
-platforms = ["windows"]
-command = ["cmd.exe", "/d", "/c", "run.cmd", "hook"]
-
-[[events]]
-on = "pane.agent_status_changed"
-platforms = ["linux", "macos"]
-command = ["sh", "run.sh", "hook"]
-
-[[events]]
 on = "pane.closed"
 platforms = ["windows"]
 command = ["cmd.exe", "/d", "/c", "run.cmd", "hook"]
@@ -194,17 +184,8 @@ placement = "tab"
 platforms = ["linux", "macos"]
 command = ["sh", "run.sh", "mirror"]
 
-# Recent places: remember every pane you focus.
-[[events]]
-on = "pane.focused"
-platforms = ["windows"]
-command = ["cmd.exe", "/d", "/c", "run.cmd", "history", "record"]
-
-[[events]]
-on = "pane.focused"
-platforms = ["linux", "macos"]
-command = ["sh", "run.sh", "history", "record"]
-
+# Recent places (every pane you focus) and agent status changes reach the daemon over its event
+# subscription: no hook process per focus or status change.
 [[actions]]
 id = "next-attention"
 title = "Navigator: jump to the next agent that needs you"

@@ -250,3 +250,47 @@ def test_qwen_gemini_copilot_hermes_sessions(tmp_path):
     assert by["copilot"].title == "Copilot named" and by["copilot"].branch == "main"
     assert by["hermes"].last_prompt == "hermes ask"
     assert by["hermes"].resume_command() == "hermes --resume H1"
+
+
+def test_cli_commands_go_over_the_socket_and_fall_back_to_the_cli(monkeypatch):
+    from navigator import herdr
+    assert herdr._to_api(("agent", "read", "w1:p1", "--source", "recent-unwrapped", "--lines", "40"))[:2] == (
+        "agent.read", {"target": "w1:p1", "source": "recent_unwrapped", "lines": 40})
+    assert herdr._to_api(("pane", "process-info", "--pane", "w1:p2"))[:2] == ("pane.process_info", {"pane_id": "w1:p2"})
+    assert herdr._to_api(("tab", "rename", "w1:t1", "my", "tab"))[:2] == ("tab.rename", {"tab_id": "w1:t1", "label": "my tab"})
+    assert herdr._to_api(("notification", "show", "T", "--body", "B", "--sound", "request"))[:2] == (
+        "notification.show", {"title": "T", "body": "B", "sound": "request"})
+    assert herdr._to_api(("agent", "send-keys", "w1:p1", "Enter"))[:2] == ("agent.send_keys", {"target": "w1:p1", "keys": ["Enter"]})
+    assert herdr._to_api(("pane", "move", "w1:p1", "--tab", "w1:t2")) is None      # layout moves: the CLI
+    assert herdr._to_api(("pane", "list", "--bogus", "x")) is None                 # an unmapped option: the CLI
+    calls = []
+    monkeypatch.setattr(herdr, "request", lambda m, p, timeout=10: {"read": {"text": "\nhello\n"}})
+    assert herdr.run("pane", "read", "w1:p1", "--source", "recent") == {"raw": "hello"}
+
+    def refused(m, p, timeout=10):
+        raise herdr.HerdrError('{"code": "invalid_request"}')
+    monkeypatch.setattr(herdr, "request", refused)
+    monkeypatch.setattr(herdr.subprocess, "run", lambda a, **k: calls.append(a) or
+                        type("P", (), {"returncode": 0, "stdout": '{"result": {"ok": 1}}', "stderr": ""})())
+    assert herdr.run("agent", "get", "w1:p1") == {"ok": 1} and calls      # refused: the CLI decides
+
+    def silent(m, p, timeout=10):
+        raise herdr.HerdrError("herdr did not answer agent.prompt within 10s")
+    calls.clear()
+    monkeypatch.setattr(herdr, "request", silent)
+    assert herdr.run("agent", "prompt", "w1:p1", "hi", check=False) == {} and not calls  # may have acted: never twice
+
+
+def test_herdr_default_keys_are_asked_once_per_binary(tmp_path, monkeypatch):
+    from navigator import keys
+    exe = tmp_path / "herdr.exe"
+    exe.write_bytes(b"x")
+    monkeypatch.setattr(keys.herdr, "herdr_bin", lambda: str(exe))
+    asked = []
+    monkeypatch.setattr(keys, "_ask_defaults", lambda: asked.append(1) or {"goto": ["prefix+g"]})
+    assert keys._defaults() == {"goto": ["prefix+g"]}
+    assert keys._defaults() == {"goto": ["prefix+g"]}
+    assert len(asked) == 1
+    exe.write_bytes(b"xy")  # herdr updated: ask again
+    keys._defaults()
+    assert len(asked) == 2

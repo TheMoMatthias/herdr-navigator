@@ -327,7 +327,10 @@ It is built to look after itself: one instance per server (an OS lock that dies 
 process), a heartbeat (`daemon.json`) that the event hooks check, which start a new daemon and
 do the sync themselves when it is stale, re-subscription on any stream error or lost events
 (followed by a full resync), and an exit when herdr has been gone for 5 minutes or the plugin
-was updated (the next hook starts the new code). Its log is `daemon.log` in the plugin's state
+was updated (it then starts the new code itself). herdr's agent status changes reach it over its
+event subscription only: no process is started per status change. Reads, focus, prompts, keys,
+renames, closes and notifications go over herdr's socket API (~2 ms), not through the `herdr` CLI
+(a new process each time: 0.2 s idle, seconds on a busy machine); layout moves still use the CLI. Its log is `daemon.log` in the plugin's state
 directory. State files are written in one step and an unreadable one is kept aside, never
 overwritten.
 
