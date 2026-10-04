@@ -386,3 +386,17 @@ def test_relaunch_after_a_forced_stop_uses_a_fresh_pane(monkeypatch):
     assert restore.relaunch_in_place("w1:p1", "claude", "S1", "X") == "↻ X"
     assert st["killed"] == [7]
     assert st["closed"] == ["w1:p1"] and st["ran"] == ["w1:p9"]
+
+
+def test_relaunch_leaves_sessions_already_on_the_current_sign_in(monkeypatch):
+    from navigator import accounts, restore
+    from types import SimpleNamespace as NS
+    agents = [NS(cli="claude", session_id="a", pane_id="w1:p1", in_herdr=True, status="idle", display="OLD"),
+              NS(cli="claude", session_id="b", pane_id="w1:p2", in_herdr=True, status="idle", display="NEW")]
+    monkeypatch.setattr(accounts, "stamp", lambda cli: 1000.0)
+    monkeypatch.setattr(restore, "_foreground", lambda pane: [{"pid": 1 if pane == "w1:p1" else 2}])
+    monkeypatch.setattr(restore, "_started_at", lambda pid: 900.0 if pid == 1 else 1100.0)
+    t = restore.relaunch_targets("", NS(agents=agents))
+    assert [a.display for a in t["restart"]] == ["OLD"] and [a.display for a in t["current"]] == ["NEW"]
+    # one agent picked by hand is relaunched whatever its login
+    assert [a.display for a in restore.relaunch_targets("", NS(agents=agents), ["w1:p2"])["restart"]] == ["NEW"]

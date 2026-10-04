@@ -89,6 +89,152 @@ LEGEND = Text.assemble(
     ("▾ ▸", "bold"), " fold   ", ("▾", ""), " opens a menu")
 
 
+class RelaunchSheet(ModalScreen):
+    """The one way sessions are relaunched, from every place that offers it (Agents and Sessions
+    tabs, an agent's menu, F5, after a sign-in): choose, see what restarts, follow it, acknowledge.
+    The relaunch itself runs detached, so closing this (or the Navigator) never stops it halfway."""
+
+    DEFAULT_CSS = """
+    RelaunchSheet { align: center middle; background: $background 50%; }
+    #rls { width: 110; max-width: 96%; height: auto; max-height: 90%; border: round $warning;
+           background: $panel; padding: 1 2; }
+    #rls-body { height: auto; max-height: 24; margin: 1 0; }
+    #rls .bar { margin: 0; }
+    """
+    BINDINGS = [("escape", "close", "Close")]
+    MARK = {"waiting": ("·", "dim"), "running": ("⏳", "bold"), "ok": ("✔", "bold green"),
+            "unsure": ("⚠", "bold #fe8019"), "failed": ("✗", "bold red")}
+
+    def __init__(self, world, cli: str = "", panes: list[str] | None = None) -> None:
+        super().__init__()
+        self.world, self.cli, self.panes = world, cli, panes
+        self.busy = False
+        self.started = 0.0
+        self.finished = False
+        self.clis = sorted({a.cli for a in world.agents if a.in_herdr and a.session_id})
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="rls"):
+            yield Static(id="rls-head")
+            with Horizontal(classes="bar", id="rls-filter"):
+                if not self.panes and len(self.clis) > 1:
+                    yield Btn("Every CLI", id="rls-cli-")
+                    for c in self.clis:
+                        yield Btn(c, id=f"rls-cli-{c}")
+                yield Btn("☐ Include busy ones", id="rls-busy",
+                          tooltip="Also restart sessions that are working right now (it interrupts them)")
+            yield Static(id="rls-body")
+            with Horizontal(classes="bar"):
+                yield Btn("↻ Relaunch", id="rls-go", variant="primary")
+                yield Btn("Cancel", id="rls-cancel")
+                yield Btn("✔ Acknowledge", id="rls-ack", variant="success")
+
+    def on_mount(self) -> None:
+        self.query_one("#rls-ack").display = False
+        self.show_plan()
+        self.query_one("#rls-go").focus()
+
+    def targets(self) -> dict:
+        return restore.relaunch_targets(self.cli, self.world, self.panes)
+
+    def show_plan(self) -> None:
+        t = self.targets()
+        go = t["restart"] + (t["busy"] if self.busy else [])
+        what = "this agent" if self.panes else (self.cli or "every CLI")
+        self.query_one("#rls-head", Static).update(Text.assemble(
+            ("↻ Relaunch ", "bold"), (what, "bold"),
+            ("  ·  each session restarts in its own pane, under the account you are signed in with now; "
+             "its name and Remote Control are kept", "dim")))
+        body = Text()
+        for a in go:
+            body.append("  ↻ ", style="bold")
+            body.append(f"{a.display[:40]:<41}", style="bold")
+            body.append(f"{a.project.label[:30]:<31}{'working' if a.status == 'working' else a.status}\n", style="dim")
+        if t["busy"] and not self.busy:
+            body.append(f"  ◐ left alone, working: {', '.join(a.display for a in t['busy'])[:200]}\n", style="dim")
+        if t["current"]:
+            body.append(f"  ✔ already on the current sign-in: {', '.join(a.display for a in t['current'])[:200]}\n",
+                        style="dim")
+        if t["elsewhere"]:
+            body.append(f"  ↗ in other terminals, restart them there: "
+                        f"{', '.join(a.display for a in t['elsewhere'])[:200]}\n", style="dim")
+        if not go:
+            body.append("  Nothing to relaunch here.", style="dim")
+        self.query_one("#rls-body", Static).update(body)
+        b = self.query_one("#rls-go", Button)
+        b.label = f"↻ Relaunch {len(go)}"
+        b.disabled = not go
+        busy = self.query_one("#rls-busy", Button)
+        busy.label = ("☑" if self.busy else "☐") + f" Include busy ones ({len(t['busy'])})"
+        busy.display = bool(t["busy"])
+        for c in [""] + self.clis:
+            try:
+                self.query_one(f"#rls-cli-{c}", Button).variant = "primary" if c == self.cli else "default"
+            except Exception:
+                pass
+
+    def start(self) -> None:
+        args = ["navigator.restore", "relaunch", self.cli]
+        if self.busy:
+            args.append("--busy")
+        if self.panes:
+            args.append("--panes=" + ",".join(self.panes))
+        self.started = time.time()
+        background(*args)
+        self.query_one("#rls-filter").display = False
+        self.query_one("#rls-go").display = False
+        self.query_one("#rls-cancel").display = False
+        ack = self.query_one("#rls-ack", Button)
+        ack.display = True
+        ack.label = "Close (it keeps going)"
+        ack.focus()
+        self.set_interval(1.0, self.poll)
+
+    def poll(self) -> None:
+        from . import jsonfile
+        try:
+            prog = jsonfile.read(restore.progress_file(), {}) or {}
+        except (OSError, ValueError):
+            return
+        if prog.get("at", 0) < self.started - 2 or self.finished:
+            return  # not this run's yet
+        body = Text()
+        for it in prog.get("items", []):
+            mark, style = self.MARK.get(it.get("state"), ("·", "dim"))
+            body.append(f"  {mark} ", style=style)
+            body.append(f"{it.get('name', '')[:40]:<41}", style="bold")
+            msg = it.get("msg", "")
+            body.append((msg[2:] if msg[:1] in "↻✗⚠" else msg)[:60] + "\n", style="dim")
+        if prog.get("done"):
+            self.finished = True
+            body.append(f"\n  {prog.get('summary', '')}", style="bold")
+            ack = self.query_one("#rls-ack", Button)
+            ack.label = "✔ Acknowledge"
+            ack.focus()
+            try:
+                self.app.load_world()
+            except Exception:
+                pass
+        self.query_one("#rls-body", Static).update(body)
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+    @on(Button.Pressed)
+    def _press(self, ev: Button.Pressed) -> None:
+        bid = ev.button.id or ""
+        if bid.startswith("rls-cli-"):
+            self.cli = bid[8:]
+            self.show_plan()
+        elif bid == "rls-busy":
+            self.busy = not self.busy
+            self.show_plan()
+        elif bid == "rls-go":
+            self.start()
+        elif bid in ("rls-cancel", "rls-ack"):
+            self.dismiss(None)
+
+
 class HelpScreen(ModalScreen):
     """What the current tab is for and how to work it."""
 
@@ -287,10 +433,6 @@ class StartTable(DataTable):
 class StartupPane(Vertical):
     DEFAULT_CSS = """
     #start-sum { width: 1fr; color: $text-muted; padding: 0 0 0 1; }
-    #relaunch-box { height: auto; display: none; border: round $warning 60%; padding: 0 1; margin: 0 1 1 1; }
-    #relaunch-box.show { display: block; }
-    #relaunch-box .bar { margin: 1 0 0 0; padding: 0; }
-    #relaunch-text { height: auto; }
     #start-table { height: 1fr; }
     #st-search { width: 1fr; min-width: 16; }
     #st-cli { width: 16; margin: 0 1; }
@@ -303,7 +445,6 @@ class StartupPane(Vertical):
         self.rows_by_key: dict[str, startup.Row] = {}
         self.full: set[str] = set()          # projects showing every session, not just the recent ones
         self.open_now: dict[str, bool] = {}  # which project rows are unfolded in the current view
-        self.relaunch_cli: str | None = None
 
     def compose(self) -> ComposeResult:
         with Horizontal(classes="bar"):
@@ -314,16 +455,11 @@ class StartupPane(Vertical):
             yield Btn("▶ Open ticked", id="st-open", variant="primary",
                       tooltip="Open every ticked session that is not running yet, now")
             yield Btn("☑ Logon list ▾", id="st-ticks", tooltip="Choose many at once what reopens at logon")
-            yield Btn("↻ Relaunch ▾", id="st-relaunch", tooltip="Restart open sessions in place (after a sign-in)")
+            yield Btn("↻ Relaunch…", id="st-relaunch",
+                      tooltip="After switching account: restart open sessions in their panes, under the new account")
             yield Btn("⏻ Logon: off", id="st-autostart",
                       tooltip="Reopen the ticked sessions every time you log on (⚙ Settings › Logon for more)")
             yield Static("", id="start-sum")
-        with Vertical(id="relaunch-box"):
-            yield Static("", id="relaunch-text")
-            with Horizontal(classes="bar"):
-                yield Btn("↻ Relaunch", id="rl-go", variant="primary")
-                yield Btn("Include busy ones", id="rl-busy", tooltip="Also restart sessions that are working right now")
-                yield Btn("Cancel", id="rl-cancel")
         yield StartTable(id="start-table")
 
     def on_mount(self) -> None:
@@ -507,15 +643,6 @@ class StartupPane(Vertical):
             startup.set_ticks({startup.skey(r.session): False for r in rows})
         self.refresh_rows()
 
-    def relaunch_menu(self, widget) -> None:
-        if not self.world:
-            return
-        clis = sorted({a.cli for a in self.world.agents if a.in_herdr})
-        items = [("", "↻ Every CLI")] + [(c, f"↻ Only {c}") for c in clis]
-        items = [(f"r:{c}", label) for c, label in items]
-        r = widget.region
-        self.app.push_screen(ContextMenu(items, (r.x, r.y + 1)), lambda c: c and self.open_relaunch(c[2:]))
-
     def sync_cli_filter(self, world) -> None:
         clis = sorted({s.cli for s in world.sessions})
         sel = self.query_one("#st-cli", Select)
@@ -560,24 +687,6 @@ class StartupPane(Vertical):
             pane.show_logon_status()
         except Exception:
             pass
-
-    # ---- relaunch sheet -----------------------------------------------------------------------
-    def open_relaunch(self, cli: str = "") -> None:
-        self.relaunch_cli = cli
-        t = restore.relaunch_targets(cli, self.world)
-        what = cli or "every CLI"
-        txt = Text.assemble(("Relaunch ", "bold"), (what, "bold"), "  —  restarts each session in its own pane, so it runs under the account you are "
-                            "signed in with now (name and Remote Control kept)\n")
-        txt.append(f"  ↻ {len(t['restart'])} restart: ", style="bold")
-        txt.append(", ".join(a.display for a in t["restart"])[:300] or "none")
-        if t["busy"]:
-            txt.append(f"\n  ◐ {len(t['busy'])} working, left alone unless you include busy: ", style="dim")
-            txt.append(", ".join(a.display for a in t["busy"])[:200])
-        if t["elsewhere"]:
-            txt.append(f"\n  ↗ {len(t['elsewhere'])} in other terminals, restart them there: ", style="dim")
-            txt.append(", ".join(a.display for a in t["elsewhere"])[:200])
-        self.query_one("#relaunch-text", Static).update(txt)
-        self.query_one("#relaunch-box").add_class("show")
 
     # ---- actions ------------------------------------------------------------------------------
     def current(self) -> str:
@@ -624,7 +733,7 @@ class StartupPane(Vertical):
         live = self.world.live_sessions.get(r.session.id) if self.world else None
         items = []
         if live and live.in_herdr:
-            items += [("s-goto", "→ Go to it"), ("s-relaunch", "↻ Relaunch it (restart in place)")]
+            items += [("s-goto", "→ Go to it"), ("s-relaunch", "↻ Relaunch it…")]
         elif not live:
             items += [("s-open", "▶ Open it now")]
         items += [("s-tick", "☐ Untick" if r.ticked else "☑ Tick for logon")]
@@ -693,7 +802,7 @@ class StartupPane(Vertical):
             self.app.finish(lambda: (model.herdr.focus_agent(a.pane_id), f"→ {a.pane_id}")[1], jump=True)
         elif choice == "s-relaunch":
             a = self.world.live_sessions.get(s.id)
-            self.relaunch_one(a.pane_id, s.cli, s.id, a.display)
+            self.app.open_relaunch(s.cli, [a.pane_id])
         elif choice == "s-tick":
             startup.set_tick(key[2:], not r.ticked)
             self.refresh_rows()
@@ -714,11 +823,6 @@ class StartupPane(Vertical):
         startup.set_prefs(key[2:], prefs)
         self.app.notify("Used the next time it is opened or relaunched.", title="Launch options saved")
         self.refresh_rows()
-
-    @work(thread=True, group="relaunch")
-    def relaunch_one(self, pane: str, cli: str, sid: str, name: str) -> None:
-        msg = restore.relaunch_in_place(pane, cli, sid, name)
-        self.app.call_from_thread(self.app.notify, msg, severity="warning" if msg.startswith("✗") else "information")
 
     def open_ticked(self) -> None:
         if self.world:
@@ -773,21 +877,11 @@ class StartupPane(Vertical):
         elif bid == "st-open":
             self.open_ticked()
         elif bid == "st-relaunch":
-            self.relaunch_menu(ev.button)
+            self.app.open_relaunch()
         elif bid == "st-ticks":
             self.ticks_menu(ev.button)
         elif bid == "st-fold":
             self.fold_all()
-        elif bid == "rl-go" or bid == "rl-busy":
-            args = ["navigator.restore", "relaunch", self.relaunch_cli or ""]
-            if bid == "rl-busy":
-                args.append("--busy")
-            background(*args)
-            self.query_one("#relaunch-box").remove_class("show")
-            self.app.notify("↻ relaunching in the background", timeout=6)
-            self.app.set_timer(8, self.app.load_world)
-        elif bid == "rl-cancel":
-            self.query_one("#relaunch-box").remove_class("show")
 
 
 class NewSession(ModalScreen):
@@ -936,13 +1030,16 @@ class FinishWorktree(ModalScreen):
 
 
 class Digest(ModalScreen):
-    """While you were away. Pick an entry to jump to it; Esc closes."""
+    """While you were away. Picking an entry shows that agent in the Navigator (it stays open);
+    ✔ Acknowledge marks it all seen; Esc keeps it for the next time the Navigator opens.
+    Returns {"ack": True, "pane": pane or None}, or None."""
 
     DEFAULT_CSS = """
     Digest { align: center middle; background: $background 50%; }
     #dg { width: 110; max-width: 96%; height: auto; max-height: 90%; border: round $primary;
           background: $panel; padding: 1 2; }
     #dg OptionList { height: auto; max-height: 24; border: none; background: $panel; }
+    #dg .bar { margin: 1 0 0 0; padding: 0; }
     """
     BINDINGS = [("escape", "dismiss(None)", "Close")]
     ICON = {"asks": ("❓ asks", "bold #fe8019"), "finished": ("✔ done", "bold"), "ended": ("■ ended", "dim")}
@@ -961,8 +1058,12 @@ class Digest(ModalScreen):
             opts.append(Option(t, id=str(i)))
         with Vertical(id="dg"):
             yield Static(Text.assemble(("While you were away", "bold"), (f"  ·  last look {self.away} ago", "dim"),
-                                       ("    Enter jumps there · Esc closes", "dim")))
+                                       ("    Enter or click: show it here · Esc: later", "dim")))
             yield OptionList(*opts)
+            with Horizontal(classes="bar"):
+                yield Btn("✔ Acknowledge", id="dg-ack", variant="success",
+                          tooltip="Mark all of this seen and go on in the Navigator")
+                yield Btn("Later", id="dg-later", tooltip="Close it; it shows again the next time")
 
     def on_mount(self) -> None:
         self.query_one(OptionList).focus()
@@ -970,7 +1071,15 @@ class Digest(ModalScreen):
     @on(OptionList.OptionSelected)
     def _pick(self, ev: OptionList.OptionSelected) -> None:
         e = self.entries[int(ev.option.id)]
-        self.dismiss(e.pane_id or None)
+        self.dismiss({"ack": True, "pane": e.pane_id or None})
+
+    @on(Button.Pressed, "#dg-ack")
+    def _ack(self) -> None:
+        self.dismiss({"ack": True, "pane": None})
+
+    @on(Button.Pressed, "#dg-later")
+    def _later(self) -> None:
+        self.dismiss(None)
 
 
 class UsagePane(Vertical):

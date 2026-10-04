@@ -609,7 +609,7 @@ class Navigator(App):
                         yield Btn(label, id=f"flt-{f or 'all'}")
                     yield Static("", classes="grow")
                     yield Btn("⇅ Running", id="agent-sort", tooltip="Sort: running, then who needs you, then most recent; or where you were last")
-                    yield Btn("↻ Relaunch all", id="btn-relaunch-all",
+                    yield Btn("↻ Relaunch…", id="btn-relaunch-all",
                               tooltip="After switching account: restart every open session in its pane, so it runs "
                                       "under the account you are signed in with now (Remote Control included)")
                     yield Btn("⚑ Next", id="btn-attention", variant="warning",
@@ -760,7 +760,7 @@ class Navigator(App):
             self.pane_selected = nav_pane
         relaunch = os.environ.pop("NAV_RELAUNCH", None)  # after a sign-in: offer the relaunch once
         if relaunch is not None:
-            pane.open_relaunch(relaunch)
+            self.open_relaunch(relaunch)
             self.digest_checked = True
         new_ws = os.environ.pop("NAV_NEW", None)  # herdr workspace menu › New agent here
         if new_ws:
@@ -1526,7 +1526,7 @@ class Navigator(App):
         if a.in_herdr:
             items += [("msg", "✉ Message it…"), ("enter", "⏎ Press Enter (accept)"), ("esc", "Esc (cancel)"),
                       ("stop", "^C Stop it"), ("compact", "⇣ Compact its context"), ("handoff", "⇢ Hand off its answer…"),
-                      ("relaunch", "↻ Relaunch it (restart in place)"),
+                      ("relaunch", "↻ Relaunch it…"),
                       ("mark", "☐ Untick for Send" if a.pane_id in self.marked else "☑ Tick for Send to many"),
                       ("w-done", "🔔 Tell me when it finishes"),
                       ("w-chain", "⛓ When it finishes, hand its answer to…")]
@@ -1557,7 +1557,7 @@ class Navigator(App):
         elif choice == "handoff":
             self.handoff_menu(self.query_one("#act-handoff", Button))
         elif choice == "relaunch":
-            self.run_relaunch(a.pane_id, a.cli, a.session_id, a.display)
+            self.open_relaunch(a.cli, [a.pane_id])
         elif choice == "w-done":
             from . import watch
             self.notify(watch.start("done", a.pane_id, a.display), timeout=4)
@@ -1604,11 +1604,12 @@ class Navigator(App):
         if dialog:
             self.action_new_dialog()
 
-    @work(thread=True, group="relaunch")
-    def run_relaunch(self, pane: str, cli: str, sid: str, name: str) -> None:
-        from . import restore
-        msg = restore.relaunch_in_place(pane, cli, sid, name)
-        self.call_from_thread(self.notify, msg, severity="warning" if msg.startswith("✗") else "information")
+    def open_relaunch(self, cli: str = "", panes: list[str] | None = None) -> None:
+        """Every relaunch (all, one CLI, one agent) goes through the same dialog."""
+        if self.world is None:
+            return
+        from .startup_ui import RelaunchSheet
+        self.push_screen(RelaunchSheet(self.world, cli, panes))
 
     def action_help(self) -> None:
         from .startup_ui import HelpScreen
@@ -1959,13 +1960,34 @@ class Navigator(App):
         if self.digest_checked:
             return
         self.digest_checked = True
-        digest.mark_seen()
-        if not digest.due(self.seen_before):
+        entries = digest.items(world, self.seen_before) if digest.due(self.seen_before) else []
+        if not entries:
+            digest.mark_seen()
             return
-        entries = digest.items(world, self.seen_before)
-        if entries:
-            self.push_screen(Digest(entries, age(self.seen_before).strip()),
-                             lambda pane: pane and self.finish(lambda: panes.focus(pane), jump=True))
+
+        def done(r) -> None:  # seen once acknowledged; "later" keeps it for the next open
+            if not r:
+                return
+            digest.mark_seen()
+            if r.get("pane"):
+                self.show_agent(r["pane"])
+        self.push_screen(Digest(entries, age(self.seen_before).strip()), done)
+
+    def show_agent(self, pane: str) -> None:
+        """Select this agent in the Agents tab (its preview below); Enter there jumps to it."""
+        self.action_tab("agents")
+        if self.agent_filter:
+            self.agent_filter = ""
+            self.fill_agents()
+        t = self.query_one("#agent-table", DataTable)
+        for i in range(t.row_count):
+            a, sub = self.agent_rows.get(t.coordinate_to_cell_key((i, 0)).row_key.value, (None, -1))
+            if a and sub < 0 and a.pane_id == pane:
+                t.move_cursor(row=i)
+                break
+        else:
+            self.notify("That agent is no longer open.", timeout=4)
+        t.focus()
 
     def action_new_dialog(self) -> None:
         v, wt = self.selected()
@@ -2154,8 +2176,7 @@ class Navigator(App):
         elif bid == "btn-attention":
             self.action_attention()
         elif bid == "btn-relaunch-all":
-            self.action_tab("sessions")
-            self.query_one(StartupPane).open_relaunch("")
+            self.open_relaunch()
         elif bid == "agent-sort":
             self.agent_sort = "needs" if self.agent_sort == "recent" else "recent"
             self.fill_agents()

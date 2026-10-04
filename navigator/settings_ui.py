@@ -259,8 +259,7 @@ class SettingsPane(Horizontal):
         self.app.notify(msg, severity="error" if msg.startswith("✗") else "information", timeout=8)
         if msg.startswith("⇄"):
             self.load_accounts()
-            self.app.action_tab("sessions")
-            self.app.query_one("StartupPane").open_relaunch(cli)
+            self.app.open_relaunch(cli)
 
     # ---- alerts -------------------------------------------------------------------------------
     def _alerts(self) -> ComposeResult:

@@ -157,7 +157,7 @@ back when you log on.
 
 - **☑ Ticks ▾** changes many at once: tick everything running now, keep only what runs now,
   untick everything, or put everything back to automatic.
-- **↻ Relaunch ▾** picks every CLI or one of them, then shows what will restart.
+- **↻ Relaunch…** opens the Relaunch dialog (see below).
 - In **Agents**, right-click an agent to tick its session for logon (or untick it), relaunch it,
   compact it or hand off its answer.
 
@@ -183,15 +183,22 @@ back when you log on.
 - **⚙ Settings › Accounts** shows who is signed in to each CLI. To add a second account: 💾 *Save current
   login* first (so you can switch back), then 🔑 *Sign in with another account*. Sign out too (Claude, Codex,
   OpenCode and Gemini by default; add any CLI under `[login.<cli>]`). Sign-in opens in a new tab.
-  When the CLI has saved the new credentials, the Navigator comes back with **↻ Relaunch**.
+  When the CLI has saved the new credentials, the Navigator comes back with the Relaunch dialog.
   **Profiles** switch accounts without signing out. 💾 saves the current login as a named profile,
   and ⇄ switches to another. History stays shared, because only the login files are swapped
   (`[login.<cli>] files` and `json_keys`). The active profile's refreshed tokens are saved back
   before every switch. Profiles are stored in the plugin's state directory on this machine. On
   macOS, Claude keeps its login in the Keychain, so Claude profiles there are not supported yet.
-- **↻ Relaunch** restarts open sessions in their own panes, so the layout stays: it stops the
-  agent process and resumes the same conversation there. Sessions that are working right now are
-  left alone unless you include them. Sessions in other terminal windows are listed, never killed.
+- **Relaunch, one way everywhere.** *↻ Relaunch…* on the Agents and Sessions tabs, *Relaunch it…*
+  in an agent's or a session's menu, *Relaunch all sessions* in the F5 pane menu, and the offer
+  after a sign-in all open the same dialog: pick every CLI or one, see what restarts, include busy
+  ones if you want, then follow each session (⏳ → ✔, ⚠ not running yet, ✗ failed) and close with
+  **✔ Acknowledge**. Each session restarts in its own pane, so the layout stays, with its name and
+  Remote Control, under the account you are signed in with now. It stops the CLI its own way
+  (Ctrl+C twice), so the pane stays usable; only if that fails is it killed and resumed in a fresh
+  pane in the same place. Sessions that started after the last sign-in are listed as already on it
+  and left alone; working ones only when you include them; ones in other terminal windows are
+  listed, never killed. The relaunch runs on its own, so closing the dialog does not stop it.
 - Coming from the *session-restore* tool? `python -m navigator.startup import <sessions-registry.json>`
   copies over its ticks, switched-off projects and Claude launch options.
 
@@ -257,7 +264,8 @@ presses ⏎ / Esc / ^C, in every ticked agent at once.
   running. The branch is always kept.
 - **While you were away.** If the Navigator was closed for more than 10 minutes, it opens with
   what changed: agents that ask something, agents that finished (each with the first line of its
-  answer), and sessions that ended. Enter jumps there.
+  answer), and sessions that ended. Enter or a click shows that agent in the Agents tab (the
+  Navigator stays open); **✔ Acknowledge** marks it all seen; *Later* (Esc) keeps it for next time.
 - **Phone alerts** (⚙ Settings › Phone alerts). You get a message when an agent has waited on you
   for `blocked_minutes`, and the result of the logon restore. Any mix of channels works:
   **Telegram** (create a bot with @BotFather and paste its token: the Navigator checks it, opens

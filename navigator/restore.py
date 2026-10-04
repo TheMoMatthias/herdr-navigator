@@ -456,6 +456,44 @@ def _children(pid: int) -> list[tuple[int, str]]:
     return [(int(a), b) for a, _, b in (ln.partition(" ") for ln in r.stdout.splitlines()) if a.isdigit()]
 
 
+def _started_at(pid: int) -> float:
+    """When a process started (epoch seconds), 0 if unknown."""
+    if not pid:
+        return 0.0
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+        k32 = ctypes.windll.kernel32
+        k32.OpenProcess.restype = wintypes.HANDLE
+        h = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not h:
+            return 0.0
+        try:
+            t = [wintypes.FILETIME() for _ in range(4)]
+            if not k32.GetProcessTimes(h, *[ctypes.byref(x) for x in t]):
+                return 0.0
+            ticks = (t[0].dwHighDateTime << 32) | t[0].dwLowDateTime  # 100 ns since 1601
+            return ticks / 1e7 - 11644473600
+        finally:
+            k32.CloseHandle(h)
+    try:
+        return os.stat(f"/proc/{pid}").st_mtime  # Linux; elsewhere unknown
+    except OSError:
+        return 0.0
+
+
+def _on_current_login(pane_id: str, cli: str) -> bool:
+    """Did the agent in this pane start after its CLI last wrote its credentials? Then it already
+    runs on the current sign-in. A token refresh rewrites them too, which only errs towards a
+    restart that was not needed, never towards leaving an old login running."""
+    from . import accounts
+    since = accounts.stamp(cli)
+    if not since:
+        return False
+    started = [_started_at(int(p["pid"])) for p in _foreground(pane_id) if p.get("pid")]
+    return bool(started) and min(started) > since
+
+
 def _foreground(pane_id: str) -> list[dict]:
     """What runs in the pane besides its shell: herdr's view plus the shell's own children
     (on Windows herdr only reports recognised agents as foreground)."""
@@ -556,15 +594,18 @@ def _agent_up(pane_id: str, timeout: float = 30) -> bool:
     return False
 
 
-def relaunch_targets(cli: str = "", world: model.World | None = None) -> dict:
-    """Sessions a relaunch would touch: herdr panes split by busy/idle, plus other terminals."""
+def relaunch_targets(cli: str = "", world: model.World | None = None, panes: list[str] | None = None) -> dict:
+    """Sessions a relaunch would touch: herdr panes split by busy/idle, plus other terminals.
+    `panes` limits it to those panes (relaunching one agent goes the same way as all of them)."""
     world = world or model.build(with_sessions=False)
-    out = {"restart": [], "busy": [], "elsewhere": []}
+    out = {"restart": [], "busy": [], "elsewhere": [], "current": []}
     for a in world.agents:
-        if cli and a.cli != cli or not a.session_id:
+        if cli and a.cli != cli or not a.session_id or (panes and a.pane_id not in panes):
             continue
         if not a.in_herdr:
             out["elsewhere"].append(a)
+        elif not panes and _on_current_login(a.pane_id, a.cli):
+            out["current"].append(a)  # started after the last sign-in: nothing to do
         elif a.status == "working":
             out["busy"].append(a)
         else:
@@ -572,23 +613,50 @@ def relaunch_targets(cli: str = "", world: model.World | None = None) -> dict:
     return out
 
 
-def relaunch_all(cli: str = "", include_busy: bool = False) -> str:
-    t = relaunch_targets(cli)
+def progress_file() -> Path:
+    """What a running relaunch has done so far, read by the Navigator's Relaunch dialog."""
+    return settings.state_dir() / "relaunch-progress.json"
+
+
+def relaunch_all(cli: str = "", include_busy: bool = False, panes: list[str] | None = None) -> str:
+    t = relaunch_targets(cli, panes=panes)
+    todo_ = t["restart"] + (t["busy"] if include_busy else [])
+    prog = {"at": time.time(), "done": False, "summary": "",
+            "items": [{"name": a.display, "pane": a.pane_id, "state": "waiting", "msg": ""} for a in todo_]}
+
+    def save() -> None:
+        try:
+            jsonfile.write(progress_file(), prog)
+        except OSError:
+            pass
+    save()
     done, bad, unsure = 0, [], []
-    for a in t["restart"] + (t["busy"] if include_busy else []):
-        msg = relaunch_in_place(a.pane_id, a.cli, a.session_id, a.display)
+    for i, a in enumerate(todo_):
+        prog["items"][i]["state"] = "running"
+        save()
+        try:
+            msg = relaunch_in_place(a.pane_id, a.cli, a.session_id, a.display)
+        except Exception as e:  # one session never stops the rest
+            msg = f"✗ {a.display}: {e}"
         if msg.startswith("✗"):
             bad.append(msg)
+            state = "failed"
         elif msg.startswith("⚠"):
             unsure.append(a.display)
+            state = "unsure"
         else:
             done += 1
+            state = "ok"
+        prog["items"][i].update(state=state, msg=msg)
+        save()
         time.sleep(float(settings.load().restore.get("gap_seconds", 1.5)))
     summary = f"relaunched {done}" + (f", {len(t['busy'])} busy left alone" if t["busy"] and not include_busy else "")
     if unsure:
         summary += f", {len(unsure)} started but not running yet: {', '.join(unsure)[:120]}"
     if bad:
         summary += f", {len(bad)} failed: " + "; ".join(bad)[:200]
+    prog.update(done=True, summary=summary)
+    save()
     log(summary)
     return summary
 
@@ -749,7 +817,8 @@ def main() -> None:
     elif cmd == "relaunch":
         rest = sys.argv[2:]
         cli = next((a for a in rest if a and not a.startswith("--")), "")
-        summary = relaunch_all(cli, include_busy="--busy" in rest)
+        panes = next((a[8:].split(",") for a in rest if a.startswith("--panes=")), None)
+        summary = relaunch_all(cli, include_busy="--busy" in rest, panes=panes)
         notify("Relaunch", summary)
         print(summary)
     else:

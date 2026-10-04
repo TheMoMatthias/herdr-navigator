@@ -160,7 +160,8 @@ def offer_relaunch(cli: str) -> None:
     n = len(t["restart"]) + len(t["busy"])
     if not n:
         herdr.run("notification", "show", f"Signed in to {cli}" if cli else "Relaunch", "--body",
-                  "No open sessions to relaunch.", check=False)
+                  "Every open session already runs on the current sign-in." if t.get("current")
+                  else "No open sessions to relaunch.", check=False)
         return
     entry = "navigator" if os.name == "nt" else "navigator-unix"
     herdr.run("plugin", "pane", "open", "--plugin", settings.PLUGIN_ID, "--entrypoint", entry,
