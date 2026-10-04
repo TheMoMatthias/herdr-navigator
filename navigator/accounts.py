@@ -153,14 +153,14 @@ def watch(cli: str, before: float, timeout: float = 600) -> bool:
 
 
 def offer_relaunch(cli: str) -> None:
-    """Open the Navigator in a new tab, on Startup, with the relaunch sheet for `cli`."""
+    """Open the Navigator in a new tab, on Startup, with the relaunch sheet for `cli` ("" = every CLI)."""
     from . import restore
     world = model.build(with_sessions=False)
     t = restore.relaunch_targets(cli, world)
     n = len(t["restart"]) + len(t["busy"])
     if not n:
-        herdr.run("notification", "show", f"Signed in to {cli}", "--body",
-                  "No open sessions of it to relaunch.", check=False)
+        herdr.run("notification", "show", f"Signed in to {cli}" if cli else "Relaunch", "--body",
+                  "No open sessions to relaunch.", check=False)
         return
     entry = "navigator" if os.name == "nt" else "navigator-unix"
     herdr.run("plugin", "pane", "open", "--plugin", settings.PLUGIN_ID, "--entrypoint", entry,
@@ -171,6 +171,8 @@ def offer_relaunch(cli: str) -> None:
 if __name__ == "__main__":
     if len(sys.argv) > 3 and sys.argv[1] == "watch":
         watch(sys.argv[2], float(sys.argv[3]))
+    elif len(sys.argv) > 1 and sys.argv[1] == "offer":  # run accounts offer [cli]: the relaunch sheet
+        offer_relaunch(sys.argv[2] if len(sys.argv) > 2 else "")
     elif len(sys.argv) > 2 and sys.argv[1] in ("in", "out", "status"):
         fn = {"in": sign_in, "out": sign_out, "status": status}[sys.argv[1]]
         print(fn(sys.argv[2]))

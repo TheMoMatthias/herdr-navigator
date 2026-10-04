@@ -609,6 +609,9 @@ class Navigator(App):
                         yield Btn(label, id=f"flt-{f or 'all'}")
                     yield Static("", classes="grow")
                     yield Btn("⇅ Running", id="agent-sort", tooltip="Sort: running, then who needs you, then most recent; or where you were last")
+                    yield Btn("↻ Relaunch all", id="btn-relaunch-all",
+                              tooltip="After switching account: restart every open session in its pane, so it runs "
+                                      "under the account you are signed in with now (Remote Control included)")
                     yield Btn("⚑ Next", id="btn-attention", variant="warning",
                               tooltip="Select the next agent that needs you and type your answer (g)")
                 yield Static("", id="agent-empty", classes="empty-note")
@@ -2150,6 +2153,9 @@ class Navigator(App):
             self.fill_agents()
         elif bid == "btn-attention":
             self.action_attention()
+        elif bid == "btn-relaunch-all":
+            self.action_tab("sessions")
+            self.query_one(StartupPane).open_relaunch("")
         elif bid == "agent-sort":
             self.agent_sort = "needs" if self.agent_sort == "recent" else "recent"
             self.fill_agents()

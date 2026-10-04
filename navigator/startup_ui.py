@@ -566,7 +566,8 @@ class StartupPane(Vertical):
         self.relaunch_cli = cli
         t = restore.relaunch_targets(cli, self.world)
         what = cli or "every CLI"
-        txt = Text.assemble(("Relaunch ", "bold"), (what, "bold"), "  —  restarts each session in its own pane\n")
+        txt = Text.assemble(("Relaunch ", "bold"), (what, "bold"), "  —  restarts each session in its own pane, so it runs under the account you are "
+                            "signed in with now (name and Remote Control kept)\n")
         txt.append(f"  ↻ {len(t['restart'])} restart: ", style="bold")
         txt.append(", ".join(a.display for a in t["restart"])[:300] or "none")
         if t["busy"]:

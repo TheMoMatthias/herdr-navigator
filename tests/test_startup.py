@@ -342,3 +342,47 @@ def test_guarantee_says_when_a_session_waits_on_the_folder_trust_question(monkey
     monkeypatch.setattr("navigator.sessions.load_sessions", lambda *a, **k: [])
     want, missing = restore.guarantee(timeout=0)
     assert missing == ["RAM-UPGRADE (waits for you to trust its folder)"]
+
+
+def _relaunch_env(monkeypatch, *, exits_on_ctrl_c, prompt_line="PS C:/> "):
+    from navigator import restore
+    state = {"running": True, "keys": [], "ran": [], "closed": [], "killed": []}
+    monkeypatch.setattr(restore.startup, "launch_command", lambda *a: "claude --resume S1 -n X --remote-control X")
+    monkeypatch.setattr(restore.startup, "prefs_of", lambda k: {})
+    monkeypatch.setattr(restore, "_foreground", lambda pane: [{"pid": 7, "name": "claude.exe"}] if state["running"] and pane == "w1:p1" else [])
+
+    def request(method, params, timeout=10):
+        if method == "pane.send_keys":
+            state["keys"] += params["keys"]
+            if exits_on_ctrl_c and state["keys"].count("ctrl+c") >= 2:
+                state["running"] = False
+            return {}
+        if method == "pane.split":
+            return {"pane": {"pane_id": "w1:p9"}}
+        if method == "pane.close":
+            state["closed"].append(params["pane_id"])
+            return {}
+        raise AssertionError(method)
+    monkeypatch.setattr(restore.herdr, "request", request)
+    monkeypatch.setattr(restore.herdr, "snapshot", lambda: {"panes": [{"pane_id": p, "agent": "claude", "cwd": "C:/x"}
+                                                                      for p in ("w1:p1", "w1:p9")]})
+    monkeypatch.setattr(restore.herdr, "run", lambda *a, **k: {"raw": prompt_line})
+    monkeypatch.setattr(restore.herdr, "pane_run", lambda pane, cmd: state["ran"].append(pane))
+    monkeypatch.setattr(restore, "_kill", lambda pid: state.__setitem__("running", False) or state["killed"].append(pid))
+    monkeypatch.setattr(restore.time, "sleep", lambda s: None)
+    return restore, state
+
+
+def test_relaunch_stops_the_cli_its_own_way_and_resumes_in_the_same_pane(monkeypatch):
+    restore, st = _relaunch_env(monkeypatch, exits_on_ctrl_c=True)
+    assert restore.relaunch_in_place("w1:p1", "claude", "S1", "X") == "↻ X"
+    assert st["keys"] == ["ctrl+c", "ctrl+c"] and not st["killed"]
+    assert st["ran"] == ["w1:p1"] and not st["closed"]
+
+
+def test_relaunch_after_a_forced_stop_uses_a_fresh_pane(monkeypatch):
+    # a killed CLI leaves the pane's keys encoded ([13u for Enter): the old pane can't run the command
+    restore, st = _relaunch_env(monkeypatch, exits_on_ctrl_c=False, prompt_line="PS C:/> [27u")
+    assert restore.relaunch_in_place("w1:p1", "claude", "S1", "X") == "↻ X"
+    assert st["killed"] == [7]
+    assert st["closed"] == ["w1:p1"] and st["ran"] == ["w1:p9"]

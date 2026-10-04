@@ -62,7 +62,7 @@ POPUPS = [
 
 # Small popups: (keys, launcher module, width, height, description)
 MENUS = [
-    (["prefix+period", "f5"], "panemenu", 48, 23, "Navigator: pane menu (compact, split, move, arrange)"),
+    (["prefix+period", "f5"], "panemenu", 52, 25, "Navigator: pane menu (compact, split, move, arrange)"),
 ]
 
 # Detached commands (no window): (keys, launcher args, description)

@@ -30,6 +30,8 @@ ENTRIES = [
     (None, None),
     ("new-here", "＋ New agent session here…"),
     ("fold", "▸ Fold / unfold this project"),
+    (None, None),
+    ("relaunch", "↻ Relaunch all sessions (after an account switch)…"),
 ]
 
 
@@ -97,6 +99,9 @@ def main() -> None:
     elif app.choice == "fold":
         from . import fold
         fold.main()
+    elif app.choice == "relaunch":  # the Navigator opens on the relaunch sheet: you confirm there
+        from . import accounts
+        accounts.offer_relaunch("")
     else:
         from . import paneact
         paneact.main([app.choice])

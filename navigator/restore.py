@@ -475,18 +475,85 @@ def relaunch_in_place(pane_id: str, cli: str, sid: str, name: str = "") -> str:
     cmd = startup.launch_command(cli, sid, name, startup.prefs_of(f"{cli}:{sid}"))
     if not cmd:
         return f"✗ no resume command for {cli}"
-    procs = _foreground(pane_id)
-    for p in procs:
-        _kill(int(p["pid"]))
-    end = time.time() + 10
-    while _foreground(pane_id) and time.time() < end:
-        time.sleep(0.4)
-    if _foreground(pane_id):
-        return f"✗ '{name or sid[:8]}' did not stop: not relaunched (two copies would fork it)"
+    label = name or sid[:8]
+    forced = False
+    if _foreground(pane_id) and not _stop_gracefully(pane_id):
+        # A killed CLI leaves herdr's terminal in its keyboard and paste modes: the shell in that
+        # pane then gets every key as an escape code (Enter included), so it can't run anything.
+        forced = True
+        for p in _foreground(pane_id):
+            _kill(int(p["pid"]))
+        end = time.time() + 10
+        while _foreground(pane_id) and time.time() < end:
+            time.sleep(0.4)
+        if _foreground(pane_id):
+            return f"✗ '{label}' did not stop: not relaunched (two copies would fork it)"
+    if forced or _keys_broken(pane_id):
+        new = _fresh_pane(pane_id)
+        if not new:
+            return f"✗ '{label}' stopped, but its pane can't take input and no new pane opened"
+        log(f"{pane_id}: terminal left in the CLI's key mode, resuming in a fresh pane {new}")
+        pane_id = new
     time.sleep(0.6)  # let the shell print its prompt
     herdr.pane_run(pane_id, cmd)
     log(f"relaunched {cli} {sid} in {pane_id}")
-    return f"↻ {name or sid[:8]}"
+    if not _agent_up(pane_id, timeout=30):
+        return f"⚠ {label}: started in {pane_id}, not running yet (check the pane)"
+    return f"↻ {label}"
+
+
+def _stop_gracefully(pane_id: str, rounds: int = 3) -> bool:
+    """Ctrl+C twice, the CLI's own way out: it switches its keyboard and paste modes off as it
+    exits. A busy agent takes a first pair to stop its turn, so up to `rounds` pairs."""
+    for _ in range(rounds):
+        try:
+            for _ in range(2):
+                herdr.request("pane.send_keys", {"pane_id": pane_id, "keys": ["ctrl+c"]}, timeout=5)
+                time.sleep(0.3)
+        except (herdr.HerdrError, OSError):
+            return False
+        end = time.time() + 4
+        while time.time() < end:
+            if not _foreground(pane_id):
+                return True
+            time.sleep(0.4)
+    return False
+
+
+def _keys_broken(pane_id: str) -> bool:
+    """The shell prompt shows a CLI's key codes (`[27u`, `[13u`): the pane can't take a command."""
+    try:
+        raw = herdr.run("pane", "read", pane_id, "--source", "recent", "--lines", "3").get("raw", "")
+    except herdr.HerdrError:
+        return False
+    return bool(re.search(r"\[\d+(;\d+)*u", raw.splitlines()[-1] if raw.strip() else ""))
+
+
+def _fresh_pane(pane_id: str) -> str:
+    """A new pane in the old one's place (same tab and folder); the old one is closed."""
+    try:
+        cwd = next((p.get("cwd") for p in herdr.snapshot().get("panes", []) if p.get("pane_id") == pane_id), None)
+        res = herdr.request("pane.split", {"target_pane_id": pane_id, "direction": "right", "focus": False,
+                                           **({"cwd": cwd} if cwd else {})}, timeout=10)
+        new = (res.get("pane") or {}).get("pane_id", "")
+        if new:
+            herdr.request("pane.close", {"pane_id": pane_id}, timeout=10)
+            time.sleep(1.5)  # the new shell starts
+        return new
+    except (herdr.HerdrError, OSError, ValueError):
+        return ""
+
+
+def _agent_up(pane_id: str, timeout: float = 30) -> bool:
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            if any(p.get("pane_id") == pane_id and p.get("agent") for p in herdr.snapshot().get("panes", [])):
+                return True
+        except Exception:
+            pass
+        time.sleep(1)
+    return False
 
 
 def relaunch_targets(cli: str = "", world: model.World | None = None) -> dict:
@@ -507,17 +574,21 @@ def relaunch_targets(cli: str = "", world: model.World | None = None) -> dict:
 
 def relaunch_all(cli: str = "", include_busy: bool = False) -> str:
     t = relaunch_targets(cli)
-    done, bad = 0, []
+    done, bad, unsure = 0, [], []
     for a in t["restart"] + (t["busy"] if include_busy else []):
         msg = relaunch_in_place(a.pane_id, a.cli, a.session_id, a.display)
         if msg.startswith("✗"):
             bad.append(msg)
+        elif msg.startswith("⚠"):
+            unsure.append(a.display)
         else:
             done += 1
         time.sleep(float(settings.load().restore.get("gap_seconds", 1.5)))
     summary = f"relaunched {done}" + (f", {len(t['busy'])} busy left alone" if t["busy"] and not include_busy else "")
+    if unsure:
+        summary += f", {len(unsure)} started but not running yet: {', '.join(unsure)[:120]}"
     if bad:
-        summary += f", {len(bad)} failed"
+        summary += f", {len(bad)} failed: " + "; ".join(bad)[:200]
     log(summary)
     return summary
 
