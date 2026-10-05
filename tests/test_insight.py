@@ -338,3 +338,36 @@ def test_sidebar_marks_full_context():
     assert ctx_mark(NS(context=Context(100_000, 1_000_000))) == ""
     assert ctx_mark(NS(context=Context(300_000, 1_000_000))) == " ◔"
     assert ctx_mark(NS(context=Context(800_000, 1_000_000))) == " ◕"
+
+
+def test_idle_for_an_hour_is_inactive(tmp_path, monkeypatch):
+    import os, time
+    from navigator import model
+    old, new = tmp_path / "old.jsonl", tmp_path / "new.jsonl"
+    old.write_text("{}"); new.write_text("{}")
+    os.utime(old, (time.time() - 7200, time.time() - 7200))
+    monkeypatch.setattr(model, "cfg_inactive_after", lambda: 3600.0)
+    assert time.time() - model._mtime(str(old)) > model.cfg_inactive_after()
+    assert time.time() - model._mtime(str(new)) < model.cfg_inactive_after()
+    assert model.RANK_ORDER["inactive"] > model.RANK_ORDER["idle"]
+    assert model.summarize(model.Counter({"idle": 1, "inactive": 2})) == "○1 ◌2"
+
+
+def test_sync_labels_inactive_without_question(tmp_path, monkeypatch):
+    """An inactive agent gets herdr's "inactive" state label, and no question toast (it has no question)."""
+    from navigator import herdr, model, settings, sync
+    monkeypatch.setattr(settings, "state_dir", lambda: tmp_path)
+    (tmp_path / "replies.json").write_text("{}")
+    from types import SimpleNamespace as NS
+    proj = NS(root=str(tmp_path), name="p", label="p", worktree="")
+    a = model.Agent(cli="claude", status="inactive", project=proj, pane_id="w1:p1", workspace_id="w1", name="S")
+    world = model.World([], [a], [], [], {}, "", {}, "", {})
+    monkeypatch.setattr(model, "build", lambda *k, **kw: world)
+    calls = []
+    monkeypatch.setattr(herdr, "request", lambda m, p, **kw: calls.append((m, p)) or {})
+    monkeypatch.setattr(herdr, "run", lambda *args, **kw: calls.append(args) or {})
+    monkeypatch.setattr(sync, "agent_tree", lambda agents, folded=None: [])
+    sync.sync(force=True)
+    labels = [p for m, p in calls if m == "pane.report_metadata" and "state_labels" in p]
+    assert labels and labels[0]["state_labels"] == {"idle": "inactive"}
+    assert not any(c and c[0] == "notification" for c in calls)

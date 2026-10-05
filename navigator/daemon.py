@@ -29,6 +29,7 @@ STALE = 10.0          # a heartbeat older than this means the daemon is gone
 DEBOUNCE = 0.3        # quiet time after the last event before syncing
 MIN_GAP = 1.0         # at most one sync per second
 STATUS_EVERY = 15.0   # status line refresh without events (outside sessions, phone alerts)
+STATUS_GAP = 2.0      # at most one event-driven status refresh per 2 s (busy agents retitle constantly)
 HEAL_EVERY = 300.0    # a sync even without events (events cover changes; this heals the rest)
 VIEW_EVERY = 20.0     # is herdr's Agents view still ours? (~5 ms; re-applied when dropped)
 CODE_EVERY = 10.0     # has the plugin been updated? (exit, so the new code takes over)
@@ -266,7 +267,7 @@ class Daemon:
                     last_sync = time.time()
                     self.herdr_ok_at = last_sync
                     self.want_status = True
-                if (self.want_status and quiet) or now - last_status >= STATUS_EVERY:
+                if (self.want_status and quiet and now - last_status >= STATUS_GAP)                         or now - last_status >= STATUS_EVERY:
                     self.want_status = False
                     last_status = now
                     text = status.line()

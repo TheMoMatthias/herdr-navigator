@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import functools
 import json
 import os
 import time
@@ -17,6 +18,7 @@ from pathlib import Path
 
 from . import projects
 from .sessions import Session, _claude_root, _loads
+from .filememo import by_file
 
 ACTIVE_SECONDS = 150        # a transcript written this recently is "running"
 TAIL = 64 * 1024
@@ -50,14 +52,22 @@ class Running:
         return projects.resolve(self.cwd)
 
 
+@functools.lru_cache(maxsize=1)
+def _kernel32():
+    import ctypes
+    from ctypes import wintypes
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.OpenProcess.restype = wintypes.HANDLE
+    return k32
+
+
 def pid_alive(pid: int) -> bool:
     if pid <= 0:
         return False
     if os.name == "nt":
         import ctypes
         from ctypes import wintypes
-        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        k32.OpenProcess.restype = wintypes.HANDLE
+        k32 = _kernel32()
         h = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
         if not h:
             return False
@@ -111,6 +121,7 @@ def _describe_tool(name: str, args) -> str:
     return name
 
 
+@by_file
 def activity(path: str) -> str:
     """The most recent thing the agent did, from the transcript tail."""
     for d in reversed(_tail_records(path)):

@@ -114,6 +114,7 @@ STATE_TEXT = {"token": "state_text", "fg": MUTED, "rules": [
     {"contains": "working", "ignore_case": True, "fg": "#fabd2f", "bold": True},
     {"contains": "done", "ignore_case": True, "fg": "#b8bb26"},
     {"contains": "idle", "ignore_case": True, "fg": "#7c6f64"},
+    {"contains": "inactive", "ignore_case": True, "fg": "#504945"},
 ]}
 AGENT_ROWS = [
     [{"token": "$grp", "bold": True}],

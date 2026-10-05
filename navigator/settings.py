@@ -48,6 +48,10 @@ mirror_outside = true
 # Keep herdr's Spaces sorted like the Agents panel: who needs you first, then what runs, then
 # the most recently active. A repo moves together with its worktree Spaces. Off = your own order.
 sort_spaces = true
+# An idle session with nothing new in its transcript for this long shows as ◌ inactive (sorted
+# below idle), so a pause of a few minutes and a session nobody touched for hours look different.
+# 0 = off.
+inactive_after_minutes = 60
 
 [launch]
 # Commands used by "new agent" and "resume". {id} is the session id.
@@ -190,6 +194,7 @@ class Settings:
     open_active_worktrees: bool = True
     mirror_outside: bool = True
     sort_spaces: bool = True
+    inactive_after_minutes: int = 60
     launch: dict[str, str] = field(default_factory=dict)
     restore: dict = field(default_factory=dict)
     context: dict = field(default_factory=dict)
@@ -270,6 +275,7 @@ def load() -> Settings:
         open_active_worktrees=bool(raw.get("sidebar", {}).get("open_active_worktrees", True)),
         mirror_outside=bool(raw.get("sidebar", {}).get("mirror_outside", True)),
         sort_spaces=bool(raw.get("sidebar", {}).get("sort_spaces", True)),
+        inactive_after_minutes=int(raw.get("sidebar", {}).get("inactive_after_minutes", 60) or 0),
         launch=launch,
         restore={**defaults["restore"], **raw.get("restore", {})},
         context={**defaults["context"], **raw.get("context", {})},

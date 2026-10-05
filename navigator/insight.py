@@ -12,6 +12,7 @@ import os
 from dataclasses import dataclass
 
 from . import settings
+from .filememo import by_file
 
 TAIL = 600_000
 
@@ -73,6 +74,7 @@ def _window_for(model: str) -> int:
     return best
 
 
+@by_file
 def context(cli: str, path: str) -> Context | None:
     if not path:
         return None
@@ -149,6 +151,7 @@ def last_answer(cli: str, path: str, limit: int = 8000) -> str:
     return ""
 
 
+@by_file
 def last_answer_at(cli: str, path: str) -> float:
     """When the agent last said something (epoch seconds), 0 if unknown."""
     from datetime import datetime

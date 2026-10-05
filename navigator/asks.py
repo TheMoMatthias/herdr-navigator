@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, field
+from .filememo import by_file
 
 TAIL = 400_000
 
@@ -94,6 +95,7 @@ def _codex(lines: list[str]) -> Question | None:
     return Question(str(q.get("question") or q.get("prompt") or "").strip(), opts, False, len(qs) - 1)
 
 
+@by_file
 def pending(cli: str, transcript: str) -> Question | None:
     if not transcript:
         return None

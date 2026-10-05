@@ -24,7 +24,7 @@ SOURCE = f"plugin:{settings.PLUGIN_ID}"
 
 
 _SEQ = (str(n) for n in itertools.count(int(time.time() * 1000) * 1000))
-RESEND_SECONDS = 60  # hooks run concurrently; a periodic full resend heals any lost report
+RESEND_SECONDS = 300  # a periodic full resend heals any lost report (the daemon's heal pass, too)
 
 
 def _load_sent() -> dict:
@@ -78,13 +78,15 @@ def _flush(sent: dict) -> None:
 
 
 SESSION_ROWS = 8
-SIDE_ICON = {"blocked": "!", "reply": "?", "done": "●", "working": "◐", "idle": "○", "unknown": "·"}
+SIDE_ICON = {"blocked": "!", "reply": "?", "done": "●", "working": "◐", "idle": "○", "inactive": "◌",
+             "unknown": "·"}
 PAD = "\u2800"  # braille blank: looks like a space, but herdr trims real spaces off token values
 
 
 def side_counts(agents: list) -> str:
     c = Counter(a.status for a in agents)
-    return " ".join(f"{SIDE_ICON[s]}{c[s]}" for s in ("blocked", "reply", "done", "working", "idle") if c.get(s))
+    return " ".join(f"{SIDE_ICON[s]}{c[s]}" for s in ("blocked", "reply", "done", "working", "idle", "inactive")
+                    if c.get(s))
 
 
 def ctx_mark(a) -> str:
@@ -225,7 +227,7 @@ def sync(force: bool = False) -> None:
     world = model.build()
     try:  # which session runs in which pane, so a server restart can bring them back named
         from . import restore
-        restore.record_panes(world, herdr.snapshot())
+        restore.record_panes(world, world.snapshot or herdr.snapshot())
     except Exception as e:
         print(f"navigator: recording panes failed: {e}")
     cfg = settings.load()
@@ -247,18 +249,19 @@ def sync(force: bool = False) -> None:
         if cfg.auto_name and not w.linked_worktree:
             if w.label == os.path.basename(w.cwd.rstrip("\\/")) and p.label != w.label:
                 herdr.run("workspace", "rename", w.id, p.label, check=False)
-        inside = Counter(a.status for a in world.agents if a.workspace_id == w.id)
+        here = [a for a in world.agents if a.workspace_id == w.id]
         v = world.view(p.root)
         # sessions in other windows belong to the workspace of their worktree, else the primary
         open_wts = {x.project.worktree for x in world.workspaces if x.project and x.project.root == p.root}
         mine = [a for a in (v.agents if v else []) if (
             a.project.worktree == p.worktree if p.worktree else a.project.worktree not in open_wts - {""})]
         outside = [a for a in mine if not a.in_herdr and not a.mirror_pane]
-        _report("workspace", w.id, "agents", side_counts([a for a in world.agents if a.workspace_id == w.id]),
-                old, sent, seq)
+        lines = session_lines(w.label, here + outside, folded.get(p.root, False))
+        # a Space named after its only session shows no session row: its context mark goes on the counts
+        marks = set() if lines else {ctx_mark(a) for a in here}
+        mark = " ◕" if " ◕" in marks else " ◔" if " ◔" in marks else ""
+        _report("workspace", w.id, "agents", side_counts(here) + mark, old, sent, seq)
         _report("workspace", w.id, "outside", "", old, sent, seq)  # now part of the session rows
-        lines = session_lines(w.label, [a for a in world.agents if a.workspace_id == w.id] + outside,
-                              folded.get(p.root, False))
         for i in range(SESSION_ROWS):
             _report("workspace", w.id, f"s{i + 1}", lines[i] if i < len(lines) else "", old, sent, seq)
         # a worktree workspace is named after the session(s) working in it, as your CLI shows them
@@ -282,6 +285,8 @@ def sync(force: bool = False) -> None:
         # "done" (or "working") while one is open, so every state is labelled
         if a.question:
             label, states = "question", ("idle", "done", "working", "blocked")
+        elif a.status == "inactive":  # herdr says idle; its Agents panel and pane border say inactive
+            label, states = "inactive", ("idle",)
         else:
             label, states = "", ()
         k = f"pane:{a.pane_id}:state-label"
@@ -297,19 +302,19 @@ def sync(force: bool = False) -> None:
                 herdr.run("pane", "report-metadata", a.pane_id, "--source", SOURCE, *args, "--seq", next(_SEQ),
                           check=False)
         sent[k] = label
-        if (label and before is not None and a.pane_id not in before
+        if (a.question and before is not None and a.pane_id not in before
                 and settings.load().alerts.get("toast_reply", True)):
             title, body = f"{a.display[:40]} asks you a question", a.question.text[:120]
             herdr.run("notification", "show", title, "--body", body, "--sound", "request", check=False)
-    try:  # who has a question open (here or in another window): read by alerts.check_waiting
-        replies_file.write_text(json.dumps({
-            (a.pane_id or f"out:{a.cli}:{a.session_id}"): {
-                "name": a.display, "workspace_id": a.workspace_id,
-                "why": "asks you a question" if a.question else "waits for you"}
-            for a in world.agents if a.question or (not a.in_herdr and a.status == "blocked")}),
-            encoding="utf-8")
-    except OSError:
-        pass
+    replies = {(a.pane_id or f"out:{a.cli}:{a.session_id}"): {
+                   "name": a.display, "workspace_id": a.workspace_id,
+                   "why": "asks you a question" if a.question else "waits for you"}
+               for a in world.agents if a.question or (not a.in_herdr and a.status == "blocked")}
+    if replies != before:  # who has a question open (here or in another window): read by alerts.check_waiting
+        try:
+            replies_file.write_text(json.dumps(replies), encoding="utf-8")
+        except OSError:
+            pass
 
     # herdr's Agents panel, nested by project: heading row, ├/└ branches (one line per session, no worktree row)
     for a, order, head, line, lane, hidden in agent_tree(world.agents, folded):

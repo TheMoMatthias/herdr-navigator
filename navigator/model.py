@@ -12,8 +12,10 @@ from . import asks, herdr, insight, jsonfile, live, projects, settings
 from .sessions import Session, is_listed, load_sessions
 
 # "reply" is no longer produced: only an open question (or herdr's own "blocked") waits on you.
-STATE_ORDER = {"blocked": 0, "reply": 1, "done": 2, "working": 3, "idle": 4, "unknown": 5}
-STATE_ICON = {"blocked": "⚠", "reply": "⏳", "done": "✔", "working": "◐", "idle": "○", "unknown": "?"}
+# "inactive" is the Navigator's own: idle with nothing new for an hour ([sidebar] inactive_after_minutes).
+STATE_ORDER = {"blocked": 0, "reply": 1, "done": 2, "working": 3, "idle": 4, "inactive": 5, "unknown": 6}
+STATE_ICON = {"blocked": "⚠", "reply": "⏳", "done": "✔", "working": "◐", "idle": "○", "inactive": "◌",
+              "unknown": "?"}
 NEEDS_YOU = ("blocked", "reply", "done")
 # Claude's registry: busy (thinking), shell (running a command), idle; Codex (inferred): active
 EXTERNAL_STATUS = {"busy": "working", "shell": "working", "active": "working", "idle": "idle",
@@ -107,7 +109,7 @@ class ProjectView:
 
     def attention(self) -> int:
         c = self.counts()
-        return (c["blocked"] + c["reply"]) * 1000 + c["done"] * 100 + c["working"] * 10 + c["idle"]
+        return (c["blocked"] + c["reply"]) * 1000 + c["done"] * 100 + c["working"] * 10 + c["idle"] + c["inactive"]
 
     def active_worktrees(self) -> list[Worktree]:
         return [w for w in self.worktrees.values() if w.agents]
@@ -123,6 +125,7 @@ class World:
     focused_workspace: str
     tab_labels: dict[str, str]
     error: str = ""
+    snapshot: dict = field(default_factory=dict)  # the herdr snapshot this was built from
 
     def project_of_workspace(self, ws_id: str) -> projects.Project | None:
         for w in self.workspaces:
@@ -169,7 +172,8 @@ def mirror_panes() -> dict[str, str]:
 
 
 def summarize(counts: Counter) -> str:
-    parts = [f"{STATE_ICON[s]}{counts[s]}" for s in ("blocked", "reply", "done", "working", "idle") if counts.get(s)]
+    parts = [f"{STATE_ICON[s]}{counts[s]}" for s in ("blocked", "reply", "done", "working", "idle", "inactive")
+             if counts.get(s)]
     return " ".join(parts)
 
 
@@ -193,8 +197,12 @@ def save_selection(roots: set[str]) -> None:
 
 # --- live state ----------------------------------------------------------------------------
 
+_SNAP: dict = {}
+
+
 def live_state() -> tuple[list[LiveWorkspace], list[dict], dict[str, str], str]:
-    snap = herdr.snapshot()
+    global _SNAP
+    snap = _SNAP = herdr.snapshot()
     panes = snap.get("panes", [])
     first_cwd: dict[str, str] = {}
     for p in panes:
@@ -242,7 +250,8 @@ def forget_sessions() -> None:
 
 
 def build(with_sessions: bool = True) -> World:
-    err = ""
+    global _SNAP
+    err, _SNAP = "", {}
     try:
         workspaces, herdr_agents, tab_labels, focused_ws = live_state()
     except (herdr.HerdrError, OSError, ValueError) as e:  # server unreachable: still show history
@@ -319,6 +328,7 @@ def build(with_sessions: bool = True) -> World:
     for v in views.values():
         v.in_sidebar = v.live if selection is None else (v.project.root in selection)
 
+    inactive_after, now = cfg_inactive_after(), time.time()
     for a in agents:
         if not a.session_id:
             continue
@@ -332,18 +342,32 @@ def build(with_sessions: bool = True) -> World:
             a.status = "blocked"
         if a.status in NEEDS_YOU:
             a.waiting_since = insight.last_answer_at(a.cli, a.transcript)
+        elif a.status == "idle" and inactive_after and not a.focused                 and now - _mtime(a.transcript) > inactive_after:
+            a.status = "inactive"
 
     live_sessions = {a.session_id: a for a in agents if a.session_id}
     ordered = sorted(
         views.values(),
         key=lambda v: (not v.in_sidebar, -v.attention(), not v.pinned, -v.last_activity, v.project.name.lower()),
     )
-    return World(ordered, agents, workspaces, sessions, live_sessions, focused_ws, tab_labels, err)
+    return World(ordered, agents, workspaces, sessions, live_sessions, focused_ws, tab_labels, err, _SNAP)
 
 
 # What runs now is always on top, then who waits on you, then what ran last: within each group
 # the most recent state change (herdr's state_change_seq) first.
-RANK_ORDER = {"working": 0, "blocked": 1, "reply": 2, "done": 3, "idle": 4, "unknown": 5}
+RANK_ORDER = {"working": 0, "blocked": 1, "reply": 2, "done": 3, "idle": 4, "inactive": 5, "unknown": 6}
+
+
+def cfg_inactive_after() -> float:
+    """Seconds without anything new before an idle session counts as inactive (0 = never)."""
+    return 60.0 * settings.load().inactive_after_minutes
+
+
+def _mtime(path: str) -> float:
+    try:
+        return os.path.getmtime(path) if path else 0.0
+    except OSError:
+        return 0.0
 
 
 def rank(a: Agent) -> tuple:

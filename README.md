@@ -230,7 +230,9 @@ presses ⏎ / Esc / ^C, in every ticked agent at once.
 - **Who needs you.** Agents puts first the agents that need you, longest wait first, with a
   `Waits` column: `⚠` waits for an approval or has a question dialog open (read from the
   session's transcript, never guessed from its wording), `✔` finished and not yet seen. The rest
-  is `○ Parked`.
+  is `○ Parked`, or `◌ inactive` once nothing new has happened in it for an hour (sorted last,
+  and herdr's own agent list says "inactive"; `inactive_after_minutes` in `[sidebar]`, 0 = off).
+  So a session that just paused and one nobody has touched for hours look different.
 - **Answer without leaving.** `⚑ Next` (`g`) selects the next agent that needs you and
   puts you in the message box, its last words in the preview. When it shows numbered choices
   (a permission prompt or a question), **Answer: [1 Yes] [2 …] [3 No]** buttons press that number.

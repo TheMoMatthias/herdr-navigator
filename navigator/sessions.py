@@ -657,10 +657,11 @@ def load_sessions(include_hidden: bool = False) -> list[Session]:
     for s in db_sessions + _hermes_sessions(cutoff):
         if include_hidden or is_listed(s):
             out.append(s)
-    try:
-        _cache_path().write_text(json.dumps({"v": CACHE_VERSION, "files": fresh}), encoding="utf-8")
-    except OSError:
-        pass
+    if fresh != entries:  # unchanged (the usual case): no rewrite of the whole cache
+        try:
+            _cache_path().write_text(json.dumps({"v": CACHE_VERSION, "files": fresh}), encoding="utf-8")
+        except OSError:
+            pass
     # one row per (cli, id): Codex can write several rollout files for one thread
     best: dict[tuple[str, str], Session] = {}
     for s in out:

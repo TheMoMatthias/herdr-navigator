@@ -14,7 +14,7 @@ from . import herdr, live, projects
 from .model import STATE_ICON
 
 
-STATE_WORD = {"blocked": "waiting", "done": "done", "working": "working", "idle": "idle"}
+STATE_WORD = {"blocked": "waiting", "done": "done", "working": "working", "idle": "idle", "inactive": "inactive"}
 
 
 def _plain(counts: Counter) -> str:

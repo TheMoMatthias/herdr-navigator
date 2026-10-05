@@ -1,6 +1,7 @@
 """Thin wrapper over the herdr CLI. The CLI is the plugin API (herdr docs: Plugins)."""
 from __future__ import annotations
 
+import functools
 import json
 import os
 import shutil
@@ -14,7 +15,12 @@ class HerdrError(RuntimeError):
 
 
 def herdr_bin() -> str:
-    return os.environ.get("HERDR_BIN_PATH") or shutil.which("herdr") or "herdr"
+    return os.environ.get("HERDR_BIN_PATH") or _which_herdr()
+
+
+@functools.lru_cache(maxsize=1)
+def _which_herdr() -> str:
+    return shutil.which("herdr") or "herdr"
 
 
 def _opts(rest: list[str], flags: dict[str, str]) -> tuple[list[str], dict] | None:

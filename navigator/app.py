@@ -32,7 +32,7 @@ from . import ui
 from .ui import Btn, Field
 
 STATE_STYLE = {"blocked": "bold #fe8019", "reply": "bold #fe8019", "done": "bold", "working": "dim", "idle": "dim",
-               "unknown": "dim"}
+               "inactive": "dim italic", "unknown": "dim"}
 NEEDS_YOU = model.NEEDS_YOU
 CLI_STYLE = {
     "claude": "#d97757", "codex": "#10a37f", "pi": "#7aa2f7", "opencode": "#e5c07b", "kilo": "#f8f675",
@@ -94,7 +94,7 @@ HELP = {
                "Every agent, inside herdr or in another window (↗), nested under its project. ← → or ▾ folds a project\n"
                "(a folded one still shows who needs you). Those that need you come first, longest wait first:\n"
                "⚠ waits for an approval or has a question open · ✔ finished.\n"
-               "○ Parked = idle, nothing asked. Waits = how long it has been waiting. Ctx = context in use: green, orange from 200K, red from 700K (time to compact).\n\n"
+               "○ Parked = idle, nothing asked. Waits = how long it has been waiting. ◌ Inactive = parked with nothing new for an hour. Ctx = context in use: green, orange from 200K, red from 700K (time to compact).\n\n"
                "⚑ Next (g) selects the next one that needs you and puts you in the message box.\n"
                "Answer: when it shows numbered options (a question or a permission prompt), click one.\n"
                "Enter or a second click jumps to the agent's pane. Tick ☐ several to send to all of them.\n"
@@ -199,7 +199,8 @@ class TopBar(Static):
 
 
 STATE_WORDS = (("blocked", "waiting on you", "bold #fe8019"), ("reply", "need a reply", "bold #fe8019"),
-               ("done", "done", "bold"), ("working", "working", "dim"), ("idle", "parked", "dim"))
+               ("done", "done", "bold"), ("working", "working", "dim"), ("idle", "parked", "dim"),
+               ("inactive", "inactive", "dim italic"))
 
 
 def counts_text(counts) -> Text:
@@ -1024,7 +1025,7 @@ class Navigator(App):
         if a.question and sub < 0:
             opts = [(str(i), o) for i, o in enumerate(a.question.options[:6], 1)]
         word = {"blocked": "waiting on you", "reply": "needs a reply", "done": "finished",
-                "idle": "parked"}.get(a.status, a.status)
+                "idle": "parked", "inactive": "inactive (nothing new for an hour)"}.get(a.status, a.status)
         head = f"{a.display}  ·  {a.cli}  ·  {word}  ·  {a.project.label}"
         if a.context:
             head += f"  ·  context {a.context.short} of {a.context.window // 1000}K ({a.context.pct}%)"
@@ -1649,6 +1650,9 @@ class Navigator(App):
             elif self.agent_filter == "needs":
                 if a.status not in NEEDS_YOU:
                     continue
+            elif self.agent_filter == "idle":  # Parked: idle, and inactive (idle for an hour)
+                if a.status not in ("idle", "inactive"):
+                    continue
             elif self.agent_filter and a.status != self.agent_filter:
                 continue
             rows.append(a)
@@ -1730,6 +1734,7 @@ class Navigator(App):
         sort_btn.label = "⇅ Recent" if self.agent_sort == "recent" else "⇅ Running"
         counts = model.Counter(a.status for a in self.world.agents)
         counts["needs"] = sum(counts.get(x, 0) for x in NEEDS_YOU)
+        counts["idle"] = counts.get("idle", 0) + counts.get("inactive", 0)
         counts["outside"] = sum(1 for a in self.world.agents if not a.in_herdr)
         counts["all"] = len(self.world.agents)
         names = {f or "all": label for label, f in AGENT_FILTERS}
