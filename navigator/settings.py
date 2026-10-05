@@ -37,6 +37,9 @@ patterns = [
 [workspaces]
 # Rename auto-named herdr workspaces to their project name (never touches names you set).
 auto_name = true
+# A second plain Space on a folder that already has one (herdr's sidebar "new") joins that
+# Space as a tab, so a repo's sessions stay together. Linked worktrees are never touched.
+merge_duplicates = true
 
 [sidebar]
 # Projects shown in herdr's sidebar are the ones you tick in the Navigator (Space / "Sidebar"
@@ -191,6 +194,7 @@ class Settings:
     hide_subagents: bool = True
     hidden_patterns: list[str] = field(default_factory=list)
     auto_name: bool = True
+    merge_duplicates: bool = True
     open_active_worktrees: bool = True
     mirror_outside: bool = True
     sort_spaces: bool = True
@@ -288,6 +292,7 @@ def load() -> Settings:
         hide_subagents=bool(sess["hide_subagents"]),
         hidden_patterns=list(raw.get("hide", defaults["hide"]).get("patterns", [])),
         auto_name=bool(raw.get("workspaces", {}).get("auto_name", True)),
+        merge_duplicates=bool(raw.get("workspaces", {}).get("merge_duplicates", True)),
         open_active_worktrees=bool(raw.get("sidebar", {}).get("open_active_worktrees", True)),
         mirror_outside=bool(raw.get("sidebar", {}).get("mirror_outside", True)),
         sort_spaces=bool(raw.get("sidebar", {}).get("sort_spaces", True)),

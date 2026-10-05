@@ -294,3 +294,38 @@ def test_herdr_default_keys_are_asked_once_per_binary(tmp_path, monkeypatch):
     exe.write_bytes(b"xy")  # herdr updated: ask again
     keys._defaults()
     assert len(asked) == 2
+
+
+def test_duplicate_plain_spaces_join_the_git_space():
+    from types import SimpleNamespace as NS
+    from navigator import merge
+    repo = NS(id="w6", label="AlgoTrader", number=2, cwd="C:/Repo", linked_worktree=False, git=True, tabs=[])
+    dup = NS(id="w1F", label="AlgoTrader", number=3, cwd="c:/repo/", linked_worktree=False, git=False, tabs=[])
+    wt = NS(id="wT", label="LEAD", number=4, cwd="C:/Repo/.claude/worktrees/x", linked_worktree=True, git=True, tabs=[])
+    home = NS(id="w1", label="home", number=1, cwd="C:/Users", linked_worktree=False, git=False, tabs=[])
+    pairs = merge.duplicates(NS(workspaces=[home, dup, repo, wt]))
+    assert [(d.id, k.id) for d, k in pairs] == [("w1F", "w6")]
+    assert merge.duplicates(NS(workspaces=[home, repo, wt])) == []
+
+
+def test_merge_moves_each_tab_and_closes_the_duplicate(monkeypatch):
+    from types import SimpleNamespace as NS
+    from navigator import herdr, merge
+    repo = NS(id="w6", label="A", number=2, cwd="C:/Repo", linked_worktree=False, git=True, focused=False, tabs=[])
+    dup = NS(id="w9", label="A", number=3, cwd="C:/Repo", linked_worktree=False, git=False, focused=True,
+             tabs=[{"tab_id": "w9:t1", "label": "one"}, {"tab_id": "w9:t2", "label": "two"}])
+    snap = {"panes": [{"pane_id": "w9:p1", "tab_id": "w9:t1", "workspace_id": "w9"},
+                      {"pane_id": "w9:p2", "tab_id": "w9:t2", "workspace_id": "w9"},
+                      {"pane_id": "w9:p3", "tab_id": "w9:t2", "workspace_id": "w9"}]}
+    calls = []
+
+    def req(method, params, timeout=0):
+        calls.append((method, params))
+        return {"pane": {"tab_id": "w6:t9"}} if method == "pane.get" else {}
+    monkeypatch.setattr(herdr, "request", req)
+    monkeypatch.setattr(herdr, "snapshot", lambda: {"panes": []})
+    done = merge.merge(NS(workspaces=[repo, dup], snapshot=snap))
+    moves = [(p["pane_id"], p["destination"]) for m, p in calls if m == "pane.move"]
+    assert moves[0] == ("w9:p1", {"type": "new_tab", "workspace_id": "w6", "label": "one"})
+    assert moves[2] == ("w9:p3", {"type": "tab", "tab_id": "w6:t9", "split": "right"})
+    assert ("workspace.close", {"workspace_id": "w9"}) in calls and len(done) == 1

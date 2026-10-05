@@ -289,6 +289,9 @@ Always visible in herdr:
 - **Sidebar, spaces:** one group per repo. The repo's own checkout comes first (its second
   line shows the branch, e.g. `main`), and the active worktrees are indented under it, named
   after the session working there. `◐2 ○1` counts agents by state (working, idle, …).
+  One Space per folder: a second Space opened on a folder that has one (herdr's sidebar
+  `new` does that) joins it as a tab, running sessions included (`merge_duplicates` in
+  `[workspaces]`, on by default).
   `↗ NAME` lists sessions in other windows that have no mirror (only when mirrors are off).
 - **Sidebar, agents:** the session name, its state, running sub-agents (`↳2`) and, on the
   second line, `project ⎇ worktree` and the CLI. `↗ other window` marks a mirror.

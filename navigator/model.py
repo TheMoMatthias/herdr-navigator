@@ -70,6 +70,7 @@ class LiveWorkspace:
     project: projects.Project | None
     linked_worktree: bool = False
     tabs: list[dict] = field(default_factory=list)
+    git: bool = False  # herdr knows it as a git checkout (repo Space or worktree)
 
 
 @dataclass
@@ -223,6 +224,7 @@ def live_state() -> tuple[list[LiveWorkspace], list[dict], dict[str, str], str]:
             project=projects.resolve(cwd) if cwd else None,
             linked_worktree=bool(wt.get("is_linked_worktree")),
             tabs=tabs_by_ws.get(w["workspace_id"], []),
+            git=bool(wt),
         ))
     return workspaces, snap.get("agents", []), tab_labels, snap.get("focused_workspace_id", "")
 

@@ -247,6 +247,16 @@ def _named(ws: str | None = None, label: str | None = None) -> dict:
 def sync(force: bool = False) -> None:
     started = time.time()
     world = model.build()
+    if settings.load().merge_duplicates:  # one Space per folder (merge.py)
+        from . import merge
+        try:
+            done = merge.merge(world) if merge.duplicates(world) else []
+        except Exception as e:
+            done = []
+            print(f"navigator: merging Spaces failed: {e}")
+        if done:
+            herdr.run("notification", "show", "Space joined", "--body", "; ".join(done)[:200], check=False)
+            world = model.build()
     try:  # which session runs in which pane, so a server restart can bring them back named
         from . import restore
         restore.record_panes(world, world.snapshot or herdr.snapshot())
