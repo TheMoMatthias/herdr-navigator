@@ -212,9 +212,20 @@ def _dirs_file() -> Path:
     return Path(__file__).resolve().parent.parent / ".herdr-dirs.json"
 
 
+_REMEMBERED: dict[tuple, str | None] = {}
+
+
 def _remembered(kind: str) -> str | None:
     """Keybinding popups don't get HERDR_PLUGIN_* env, so every run under herdr's plugin env
-    records the dirs herdr assigned, and later runs without that env reuse them."""
+    records the dirs herdr assigned, and later runs without that env reuse them. Asked dozens of
+    times per refresh: the answer is kept per process (for the same env)."""
+    key = (kind, os.environ.get(f"HERDR_PLUGIN_{kind}_DIR"), os.environ.get("HERDR_PLUGIN_ID"))
+    if key not in _REMEMBERED:
+        _REMEMBERED[key] = _look_up(kind)
+    return _REMEMBERED[key]
+
+
+def _look_up(kind: str) -> str | None:
     env = os.environ.get(f"HERDR_PLUGIN_{kind}_DIR")
     if env and os.environ.get("HERDR_PLUGIN_ID") != PLUGIN_ID:
         return env  # an override (tests, dev), not herdr's assignment: use it, don't remember it
@@ -242,8 +253,13 @@ def config_dir() -> Path:
 def state_dir() -> Path:
     d = _remembered("STATE")
     p = Path(d) if d else Path.home() / ".cache" / "herdr-navigator"
-    p.mkdir(parents=True, exist_ok=True)
+    if p not in _MADE:
+        p.mkdir(parents=True, exist_ok=True)
+        _MADE.add(p)
     return p
+
+
+_MADE: set[Path] = set()
 
 
 def settings_path() -> Path:

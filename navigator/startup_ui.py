@@ -626,9 +626,7 @@ class StartupPane(Vertical):
         live = self.world.live_sessions
         rows = [r for g in self.groups for r in g.rows]
         if choice == "t-rules":
-            from .settings_ui import SettingsPane
-            self.app.action_tab("settings")
-            self.app.query_one(SettingsPane).show_section("logon")
+            self.app.run_worker(self.app.open_settings("logon"))
             return
         if choice == "t-auto":
             startup.reset_all()

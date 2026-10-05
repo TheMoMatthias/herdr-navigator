@@ -78,14 +78,22 @@ def context(cli: str, path: str) -> Context | None:
         return None
     lines = _tail(path)
     if cli == "claude":
+        compacted = 0  # a /compact (or auto-compact) after the last answer: its postTokens is the context now
         for ln in reversed(lines):
-            if '"usage"' not in ln or '"assistant"' not in ln:
+            boundary = '"compact_boundary"' in ln
+            if not boundary and ('"usage"' not in ln or '"assistant"' not in ln):
                 continue
             try:
                 rec = json.loads(ln)
             except ValueError:
                 continue
-            if rec.get("isSidechain") or rec.get("type") != "assistant":
+            if rec.get("isSidechain"):
+                continue
+            if boundary and rec.get("subtype") == "compact_boundary":
+                if not compacted:
+                    compacted = int((rec.get("compactMetadata") or {}).get("postTokens") or 1)
+                continue
+            if rec.get("type") != "assistant":
                 continue
             msg = rec.get("message") or {}
             u = msg.get("usage") or {}
@@ -96,8 +104,8 @@ def context(cli: str, path: str) -> Context | None:
             window = _window_for(str(msg.get("model", "")))
             if used > window:
                 window = max(window, 1_000_000)
-            return Context(used, window)
-        return None
+            return Context(compacted or used, window)  # the model (window) from the last answer
+        return Context(compacted, _window_for("")) if compacted else None
     if cli == "codex":
         for ln in reversed(lines):
             if '"token_count"' not in ln:
@@ -123,6 +131,7 @@ def _text(content) -> str:
     return ""
 
 
+@by_file
 def last_answer(cli: str, path: str, limit: int = 8000) -> str:
     """The newest thing the agent said to you (text only, no tool calls)."""
     for ln in reversed(_tail(path)):

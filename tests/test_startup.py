@@ -400,3 +400,35 @@ def test_relaunch_leaves_sessions_already_on_the_current_sign_in(monkeypatch):
     assert [a.display for a in t["restart"]] == ["OLD"] and [a.display for a in t["current"]] == ["NEW"]
     # one agent picked by hand is relaunched whatever its login
     assert [a.display for a in restore.relaunch_targets("", NS(agents=agents), ["w1:p2"])["restart"]] == ["NEW"]
+
+
+def test_usage_and_settings_tabs_are_built_on_first_open():
+    """The popup composes Usage and Settings only when opened (faster first frame), and the
+    Settings › Keys text still renders then. Skipped without a running herdr."""
+    import asyncio
+    import pytest
+    from navigator import herdr
+    try:
+        herdr.snapshot()
+    except Exception:
+        pytest.skip("herdr not running")
+    import navigator.app as A
+    from navigator.settings_ui import SettingsPane
+    from navigator.startup_ui import UsagePane
+
+    async def run():
+        app = A.Navigator("projects")
+        async with app.run_test(size=(160, 45)) as pilot:
+            await pilot.pause()
+            assert not app.query(SettingsPane) and not app.query(UsagePane)
+            app.action_tab("usage")
+            await pilot.pause()
+            assert app.query(UsagePane)
+            await app.open_settings("alerts")
+            await pilot.pause()
+            assert app.query_one(SettingsPane).section == "alerts" and app.active_tab() == "settings"
+            assert "Prefix" in str(app.query_one("#keys-body").render())
+            await app.open_settings("logon")
+            assert len(app.query(SettingsPane)) == 1 and app.query_one(SettingsPane).section == "logon"
+
+    asyncio.run(run())

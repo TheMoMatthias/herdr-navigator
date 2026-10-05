@@ -95,6 +95,7 @@ class SettingsPane(Horizontal):
                 yield Static(id="keys-body")
 
     def on_mount(self) -> None:
+        self.app.render_keys()  # built on first opening: fill Settings › Keys now
         nav = self.query_one("#set-nav", OptionList)
         nav.highlighted = [k for k, _ in SECTIONS].index(self.section)
         self.show_logon_status()

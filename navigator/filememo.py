@@ -12,12 +12,12 @@ import os
 
 
 def by_file(fn):
-    """Cache fn(..., path) by its arguments and the last argument's (mtime, size)."""
+    """Cache fn(path, ...) or fn(cli, path, ...) by its arguments and the file's (mtime, size)."""
     memo: dict[tuple, tuple] = {}
 
     @functools.wraps(fn)
     def wrapper(*args):
-        path = args[-1] if args else ""
+        path = args[1] if len(args) > 1 else args[0] if args else ""
         try:
             st = os.stat(path) if path else None
         except OSError:

@@ -383,3 +383,18 @@ def test_flush_splits_reports_at_herdrs_token_limit(monkeypatch):
     sent = {}
     sync._flush(sent)
     assert calls == [16, 3] and len(sent) == 19
+
+
+def test_context_after_compact_uses_post_tokens(tmp_path):
+    import json
+    from navigator import insight
+    f = tmp_path / "t.jsonl"
+    ans = {"type": "assistant", "message": {"model": "claude-opus-5-5", "usage": {
+        "input_tokens": 10, "cache_read_input_tokens": 800_000, "cache_creation_input_tokens": 0}}}
+    cut = {"type": "system", "subtype": "compact_boundary", "compactMetadata": {"preTokens": 800_010, "postTokens": 21_000}}
+    f.write_text(json.dumps(ans) + "\n" + json.dumps(cut) + "\n", encoding="utf-8")
+    c = insight.context("claude", str(f))
+    assert c.used == 21_000 and c.window == 1_000_000 and c.level == "ok"
+    later = dict(ans, message=dict(ans["message"], usage={"input_tokens": 5, "cache_read_input_tokens": 30_000}))
+    f.write_text(f.read_text(encoding="utf-8") + json.dumps(later) + "\n", encoding="utf-8")
+    assert insight.context("claude", str(f)).used == 30_005   # the next answer's usage wins again

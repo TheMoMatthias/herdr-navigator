@@ -683,13 +683,14 @@ class Navigator(App):
                         yield Btn("🚨 Watch for errors", id="pane-watch",
                                   tooltip="Tell me (toast + phone) when this pane prints FAILED, a traceback, Error: …")
                         yield Btn("✕ Close pane    Del", id="pop-close", variant="error")
-            with TabPane("5 Usage", id="usage"):
-                yield UsagePane(id="usage-pane")
-            with TabPane("6 ⚙ Settings", id="settings"):
-                yield SettingsPane(self.settings_section, id="settings-pane")
+            # Usage and Settings are built the first time they are opened (ensure_tab): together
+            # ~130 widgets that every popup would otherwise compose and style before its first frame
+            yield TabPane("5 Usage", id="usage")
+            yield TabPane("6 ⚙ Settings", id="settings")
         yield Footer(compact=True)
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
+        await self.ensure_tab(self.start_tab)  # opened straight on Usage or Settings
         self.query_one("#proj-table", DataTable).add_columns("", "Side", "Project", "Agents", "Last")
         self.query_one("#agent-table", DataTable).add_columns("Send", "State", "CLI", "Agent", "Waits", "Ctx", "Project",
                                                               "Doing")
@@ -757,7 +758,7 @@ class Navigator(App):
         self.fill_agents()
         pane = self.query_one(StartupPane)
         pane.show(world)
-        if self.active_tab() == "usage":
+        if self.active_tab() == "usage" and self.query(UsagePane):
             self.query_one(UsagePane).load(world)
         nav_pane = os.environ.pop("NAV_PANE", None)  # right-click › Arrange panes: this pane selected
         if nav_pane:
@@ -1776,6 +1777,9 @@ class Navigator(App):
 
     # ---- keys -----------------------------------------------------------------------------
     def render_keys(self) -> None:
+        """Settings › Keys (only once the Settings tab has been built: it renders itself then)."""
+        if not self.query("#keys-body"):
+            return
         prefix, groups, custom = keymap.effective()
         out = Text()
         out.append(f"Prefix {keymap.pretty(prefix, prefix)}", style="bold")
@@ -1839,8 +1843,25 @@ class Navigator(App):
     def set_hint(self) -> None:
         pass  # the footer shows the keys that work on the current tab; tooltips explain buttons
 
+    async def ensure_tab(self, tab: str) -> None:
+        """Build the Usage or Settings tab on its first opening."""
+        if tab == "usage" and not self.query(UsagePane):
+            await self.query_one("#usage", TabPane).mount(UsagePane(id="usage-pane"))
+        elif tab == "settings" and not self.query(SettingsPane):
+            await self.query_one("#settings", TabPane).mount(SettingsPane(self.settings_section, id="settings-pane"))
+
+    async def open_settings(self, section: str) -> None:
+        """Settings, at one section (built first if it was never opened)."""
+        self.settings_section = section
+        built = bool(self.query(SettingsPane))
+        self.action_tab("settings")
+        await self.ensure_tab("settings")
+        if built:
+            self.query_one(SettingsPane).show_section(section)
+
     @on(TabbedContent.TabActivated)
-    def _tab_changed(self) -> None:
+    async def _tab_changed(self) -> None:
+        await self.ensure_tab(self.active_tab())
         self.set_hint()
         self.focus_table()
         self.refresh_bindings()
