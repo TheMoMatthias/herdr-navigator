@@ -249,8 +249,10 @@ presses ⏎ / Esc / ^C, in every ticked agent at once.
 - **New agent from a workspace.** Click the Space, press `F5` › *New agent session here…*, or
   right-click a project heading in the Navigator's Agents tab.
 
-- **Context gauge.** Agents has a `Ctx` column that shows how full each session's context is
-  (yellow from 70%, red from 85%), and the top bar warns when one is nearly full. `⇣` sends
+- **Context gauge.** Agents has a `Ctx` column with a small circle filling with each session's
+  context window and the tokens in use (`◔ 312K`): green while roomy, orange from 200K, red from 700K (or from
+  70% / 85% of a smaller window; `warn_at` / `full_at` in `[context]`). herdr's sidebar marks those
+  sessions with a small ◔ / ◕, and the top bar names the full ones. `⇣` sends
   `/compact` to the ticked agents, or to the selected one. Windows come from `[context]` (by model
   name); Codex reports its own.
 - **Saved prompts.** `☰ Prompts ▾` sends a saved prompt in one click (Status, Compact, Wrap up,

@@ -87,6 +87,12 @@ def side_counts(agents: list) -> str:
     return " ".join(f"{SIDE_ICON[s]}{c[s]}" for s in ("blocked", "reply", "done", "working", "idle") if c.get(s))
 
 
+def ctx_mark(a) -> str:
+    """A small ◔ / ◕ after a session whose context is filling up / full (insight.Context.level)."""
+    c = getattr(a, "context", None)
+    return {"warn": " ◔", "full": " ◕"}.get(c.level, "") if c else ""
+
+
 def session_lines(label: str, agents: list, folded: bool = False) -> list[str]:
     """The indented lines a Space shows under itself: one per session, urgent first. A worktree
     Space already named after its only session shows none (it would just repeat the name). A
@@ -95,7 +101,7 @@ def session_lines(label: str, agents: list, folded: bool = False) -> list[str]:
     if len(agents) == 1 and agents[0].display.strip().lower() == label.strip().lower():
         return []
     hidden = [a for a in agents if a.status not in model.NEEDS_YOU] if folded else []
-    lines = [f"{'↗' if not a.in_herdr else SIDE_ICON.get(a.status, '·')} {a.display[:30]}"
+    lines = [f"{'↗' if not a.in_herdr else SIDE_ICON.get(a.status, '·')} {a.display[:30]}{ctx_mark(a)}"
              for a in agents if a not in hidden]
     if hidden:
         lines.append(f"+{len(hidden)} folded")
@@ -133,7 +139,7 @@ def agent_tree(agents: list, folded: dict | None = None) -> list[tuple]:
                     + (f"  +{more} folded" if more else ""))
         # herdr indents an entry's 2nd and later rows by two columns: the heading carrier's line is
         # its 2nd row, so every other agent's line (its 1st row) gets the same two-column pad
-        line = (PAD * 2 if not head else "") + f"{'└─' if last else '├─'} {SIDE_ICON.get(a.status, '·')} {a.display[:34]}"
+        line = (PAD * 2 if not head else "") + f"{'└─' if last else '├─'} {SIDE_ICON.get(a.status, '·')} {a.display[:34]}{ctx_mark(a)}"
         lane = ""  # no worktree row (setup.AGENT_ROWS); "" clears one sent by an older version
         out.append((a, f"{i:04d}", head, line, lane, False))
     return out

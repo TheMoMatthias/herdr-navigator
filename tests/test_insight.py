@@ -316,3 +316,25 @@ def test_alerts_cover_open_questions_and_unseen_done(tmp_path):
     assert alerts.check_waiting(snap, now=t0, sender=lambda *a: None) == []
     got = alerts.check_waiting(snap, now=t0 + 601, sender=lambda *a: None)
     assert sorted(got) == ["DATA needs a reply", "LEAD asks you a question"]
+
+
+def test_context_levels_by_tokens_and_fill():
+    from navigator.insight import Context
+    assert Context(150_000, 1_000_000).level == "ok"
+    assert Context(250_000, 1_000_000).level == "warn"
+    assert Context(720_000, 1_000_000).level == "full"
+    assert Context(150_000, 200_000).level == "warn"   # 75% of a small window
+    assert Context(180_000, 200_000).level == "full"   # 90%
+    assert Context(312_000, 1_000_000).dot == "◑" and Context(1_000, 1_000_000).dot == "◔"
+    assert Context(990_000, 1_000_000).dot == "●"
+    assert Context(312_000, 1_000_000).short == "312K" and Context(1_200_000, 2_000_000).short == "1.2M"
+
+
+def test_sidebar_marks_full_context():
+    from types import SimpleNamespace as NS
+    from navigator.insight import Context
+    from navigator.sync import ctx_mark
+    assert ctx_mark(NS(context=None)) == ""
+    assert ctx_mark(NS(context=Context(100_000, 1_000_000))) == ""
+    assert ctx_mark(NS(context=Context(300_000, 1_000_000))) == " ◔"
+    assert ctx_mark(NS(context=Context(800_000, 1_000_000))) == " ◕"

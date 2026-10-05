@@ -25,6 +25,29 @@ class Context:
     def pct(self) -> int:
         return min(100, round(100 * self.used / self.window)) if self.window else 0
 
+    @property
+    def level(self) -> str:
+        """"ok", "warn" (orange) or "full" (red): by tokens in use (`warn_at` / `full_at` in
+        `[context]`, 200K / 700K by default), and by fill for a small window (70% / 85%)."""
+        cfg = settings.load().context
+        if self.used >= int(cfg.get("full_at", 700_000)) or self.pct >= 85:
+            return "full"
+        if self.used >= int(cfg.get("warn_at", 200_000)) or self.pct >= 70:
+            return "warn"
+        return "ok"
+
+    @property
+    def dot(self) -> str:
+        """One small circle that fills with the window: ○ ◔ ◑ ◕ ●."""
+        if not self.window or not self.used:
+            return "○"
+        return "◔◑◕●"[min(3, int(4 * self.used / self.window))]
+
+    @property
+    def short(self) -> str:
+        """312K, 1.2M."""
+        return f"{self.used / 1e6:.1f}M" if self.used >= 1_000_000 else f"{round(self.used / 1000)}K"
+
 
 def _tail(path: str, size: int = TAIL) -> list[str]:
     try:
@@ -43,7 +66,7 @@ def _window_for(model: str) -> int:
     windows = settings.load().context
     best, best_len = int(windows.get("default", 200_000)), -1
     for key, val in windows.items():
-        if key != "default" and key.lower() in model.lower() and len(key) > best_len:
+        if key not in ("default", "warn_at", "full_at") and key.lower() in model.lower() and len(key) > best_len:
             best, best_len = int(val), len(key)
     if "[1m]" in model.lower():
         best = max(best, 1_000_000)

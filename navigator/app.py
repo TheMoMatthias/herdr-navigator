@@ -94,7 +94,7 @@ HELP = {
                "Every agent, inside herdr or in another window (↗), nested under its project. ← → or ▾ folds a project\n"
                "(a folded one still shows who needs you). Those that need you come first, longest wait first:\n"
                "⚠ waits for an approval or has a question open · ✔ finished.\n"
-               "○ Parked = idle, nothing asked. Waits = how long it has been waiting. Ctx = context fill.\n\n"
+               "○ Parked = idle, nothing asked. Waits = how long it has been waiting. Ctx = context in use: green, orange from 200K, red from 700K (time to compact).\n\n"
                "⚑ Next (g) selects the next one that needs you and puts you in the message box.\n"
                "Answer: when it shows numbered options (a question or a permission prompt), click one.\n"
                "Enter or a second click jumps to the agent's pane. Tick ☐ several to send to all of them.\n"
@@ -124,13 +124,16 @@ HELP = {
 }
 
 
+CTX_STYLE = {"ok": "#b8bb26", "warn": "bold #fe8019", "full": "bold #fb4934"}
+
+
 def ctx_text(a) -> Text:
-    """Context fill: dim when roomy, yellow from 70%, red from 85% (time to /compact)."""
+    """Context gauge: a small circle filling with the window and the tokens in use; green while roomy, orange from
+    200K, red from 700K (`[context] warn_at / full_at`): time to /compact."""
     c = getattr(a, "context", None)
     if not c:
         return Text("")
-    style = "bold #fe8019" if c.pct >= 85 else "bold" if c.pct >= 70 else "dim"
-    return Text(f"{c.pct:>3}%", style=style)
+    return Text(f"{c.dot}{c.short:>5}", style=CTX_STYLE[c.level])
 
 
 AGENT_FILTERS = (("All", ""), ("⏳ Needs you", "needs"), ("◐ Working", "working"), ("○ Parked", "idle"),
@@ -787,11 +790,15 @@ class Navigator(App):
             bar.append(f" · ↗ {outside} in other windows", style="dim")
         if subs:
             bar.append(f" · ↳ {subs} sub-agents", style="dim")
-        full = [a for a in world.agents if a.context and a.context.pct >= 85]
+        full = [a for a in world.agents if a.context and a.context.level == "full"]
+        warn = [a for a in world.agents if a.context and a.context.level == "warn"]
         if full:
             bar.append("   │   ", style="dim")
-            bar.append(f"▲ context almost full: {', '.join(a.display[:18] for a in full[:2])}"
-                       + (f" +{len(full) - 2}" if len(full) > 2 else ""), style="bold #fe8019")
+            bar.append(f"▲ context full: {', '.join(a.display[:18] for a in full[:2])}"
+                       + (f" +{len(full) - 2}" if len(full) > 2 else ""), style=CTX_STYLE["full"])
+        if warn:
+            bar.append("   │   ", style="dim")
+            bar.append(f"◑ {len(warn)} filling up", style=CTX_STYLE["warn"])
         if world.error:
             bar.append(f"    herdr unreachable", style="red")
         self.query_one("#topbar", Static).update(bar)
@@ -1020,7 +1027,7 @@ class Navigator(App):
                 "idle": "parked"}.get(a.status, a.status)
         head = f"{a.display}  ·  {a.cli}  ·  {word}  ·  {a.project.label}"
         if a.context:
-            head += f"  ·  context {a.context.pct}% of {a.context.window // 1000}k"
+            head += f"  ·  context {a.context.short} of {a.context.window // 1000}K ({a.context.pct}%)"
         out.append(head + "\n", style="bold")
         if a.in_herdr and sub < 0:
             from . import watch
