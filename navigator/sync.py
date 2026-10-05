@@ -94,14 +94,23 @@ def side_counts(agents: list) -> str:
                     if c.get(s))
 
 
-# context filling up / full: a small bar (not a circle, which is the state glyph), in its own
-# token so herdr colours it orange / red (setup.CTX_TOKEN)
-CTX_MARK = {"warn": "▃", "full": "▆"}
+# Context in use: a 4-cell bar (▰▰▱▱) of the window after every session, in its own token so
+# herdr colours it (setup.CTX_TOKEN): green, yellow from 200K, red from 700K. herdr colours by
+# the text, so the level rides along as trailing braille blanks (invisible) the rules match.
+CTX_LEVEL = {"ok": "", "warn": PAD, "full": PAD * 2}
 
 
 def ctx_mark(a) -> str:
     c = getattr(a, "context", None)
-    return CTX_MARK.get(c.level, "") if c else ""
+    return c.bar() + CTX_LEVEL[c.level] if c else ""
+
+
+def _worst_mark(agents: list) -> str:
+    """The mark of the fullest context among these agents ("" when none is known)."""
+    known = [a for a in agents if getattr(a, "context", None)]
+    order = {"ok": 0, "warn": 1, "full": 2}
+    top = max(known, key=lambda a: (order[a.context.level], a.context.used), default=None)
+    return ctx_mark(top) if top else ""
 
 
 def session_lines(label: str, agents: list, folded: bool = False) -> list[str]:
@@ -272,10 +281,8 @@ def sync(force: bool = False) -> None:
         rows = session_rows(w.label, here + outside, folded.get(p.root, False))
         lines = [t for t, _ in rows]
         # a Space named after its only session shows no session row: its context mark goes on the heading
-        marks = set() if rows else {ctx_mark(a) for a in here}
         _report("workspace", w.id, "agents", side_counts(here), old, sent, seq)
-        _report("workspace", w.id, "ctx", CTX_MARK["full"] if CTX_MARK["full"] in marks
-                else CTX_MARK["warn"] if CTX_MARK["warn"] in marks else "", old, sent, seq)
+        _report("workspace", w.id, "ctx", "" if rows else _worst_mark(here), old, sent, seq)
         for i in range(SESSION_ROWS):
             _report("workspace", w.id, f"c{i + 1}", rows[i][1] if i < len(rows) else "", old, sent, seq)
         _report("workspace", w.id, "outside", "", old, sent, seq)  # now part of the session rows

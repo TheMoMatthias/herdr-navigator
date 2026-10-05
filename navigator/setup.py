@@ -95,10 +95,11 @@ UI = {
 MUTED = "#a89984"
 TREE = {"fg": MUTED}
 
-# A session's context filling up / full (sync.CTX_MARK): a small bar, orange / red.
+# A session's context (sync.ctx_mark): a 4-cell bar, green; the level's invisible braille
+# blanks turn it yellow (one) or red (two).
 def CTX_TOKEN(name: str) -> dict:
-    return {"token": name, "rules": [{"contains": "▆", "fg": "#fb4934", "bold": True},
-                                     {"contains": "▃", "fg": "#fe8019"}]}
+    return {"token": name, "fg": "#b8bb26", "rules": [{"contains": "⠀⠀", "fg": "#fb4934", "bold": True},
+                                                      {"contains": "⠀", "fg": "#fabd2f"}]}
 
 
 # one row per session inside the Space ($s1..$s8 from sync.py, its context mark $c1..$c8);

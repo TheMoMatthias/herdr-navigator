@@ -37,12 +37,10 @@ class Context:
             return "warn"
         return "ok"
 
-    @property
-    def gauge(self) -> str:
-        """One small bar that grows with the window: ▁ ▂ ▃ ▄ ▅ ▆ ▇ █ (no circle: those are states)."""
-        if not self.window or not self.used:
-            return "▁"
-        return "▁▂▃▄▅▆▇█"[min(7, int(8 * self.used / self.window))]
+    def bar(self, cells: int = 4) -> str:
+        """A horizontal bar of the window, ▰▰▱▱ (one cell at least while anything is in use)."""
+        n = min(cells, max(1, round(cells * self.used / self.window))) if self.window and self.used else 0
+        return "▰" * n + "▱" * (cells - n)
 
     @property
     def short(self) -> str:

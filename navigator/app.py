@@ -94,7 +94,7 @@ HELP = {
                "Every agent, inside herdr or in another window (↗), nested under its project. ← → or ▾ folds a project\n"
                "(a folded one still shows who needs you). Those that need you come first, longest wait first:\n"
                "⚠ waits for an approval or has a question open · ✔ finished.\n"
-               "○ Parked = idle, nothing asked. Waits = how long it has been waiting. ◌ Inactive = parked with nothing new for an hour. Ctx = context in use: green, orange from 200K, red from 700K (time to compact).\n\n"
+               "○ Parked = idle, nothing asked. Waits = how long it has been waiting. ◌ Inactive = parked with nothing new for an hour. Ctx = context in use (▰▰▱▱): green, yellow from 200K, red from 700K (time to compact).\n\n"
                "⚑ Next (g) selects the next one that needs you and puts you in the message box.\n"
                "Answer: when it shows numbered options (a question or a permission prompt), click one.\n"
                "Enter or a second click jumps to the agent's pane. Tick ☐ several to send to all of them.\n"
@@ -124,16 +124,16 @@ HELP = {
 }
 
 
-CTX_STYLE = {"ok": "#b8bb26", "warn": "bold #fe8019", "full": "bold #fb4934"}
+CTX_STYLE = {"ok": "#b8bb26", "warn": "#fabd2f", "full": "bold #fb4934"}
 
 
 def ctx_text(a) -> Text:
-    """Context gauge: a small bar growing with the window and the tokens in use; green while roomy, orange from
+    """Context gauge: a 4-cell bar of the window and the tokens in use; green while roomy, yellow from
     200K, red from 700K (`[context] warn_at / full_at`): time to /compact."""
     c = getattr(a, "context", None)
     if not c:
         return Text("")
-    return Text(f"{c.gauge}{c.short:>5}", style=CTX_STYLE[c.level])
+    return Text(f"{c.bar()} {c.short:>5}", style=CTX_STYLE[c.level])
 
 
 AGENT_FILTERS = (("All", ""), ("⏳ Needs you", "needs"), ("◐ Working", "working"), ("○ Parked", "idle"),
@@ -799,7 +799,7 @@ class Navigator(App):
                        + (f" +{len(full) - 2}" if len(full) > 2 else ""), style=CTX_STYLE["full"])
         if warn:
             bar.append("   │   ", style="dim")
-            bar.append(f"◑ {len(warn)} filling up", style=CTX_STYLE["warn"])
+            bar.append(f"▰▰▱▱ {len(warn)} filling up", style=CTX_STYLE["warn"])
         if world.error:
             bar.append(f"    herdr unreachable", style="red")
         self.query_one("#topbar", Static).update(bar)
