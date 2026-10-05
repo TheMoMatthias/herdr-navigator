@@ -38,11 +38,11 @@ class Context:
         return "ok"
 
     @property
-    def dot(self) -> str:
-        """One small circle that fills with the window: ○ ◔ ◑ ◕ ●."""
+    def gauge(self) -> str:
+        """One small bar that grows with the window: ▁ ▂ ▃ ▄ ▅ ▆ ▇ █ (no circle: those are states)."""
         if not self.window or not self.used:
-            return "○"
-        return "◔◑◕●"[min(3, int(4 * self.used / self.window))]
+            return "▁"
+        return "▁▂▃▄▅▆▇█"[min(7, int(8 * self.used / self.window))]
 
     @property
     def short(self) -> str:

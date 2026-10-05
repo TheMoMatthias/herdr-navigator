@@ -95,11 +95,18 @@ UI = {
 MUTED = "#a89984"
 TREE = {"fg": MUTED}
 
-# one row per session inside the Space ($s1..$s8 from sync.py); empty rows disappear
+# A session's context filling up / full (sync.CTX_MARK): a small bar, orange / red.
+def CTX_TOKEN(name: str) -> dict:
+    return {"token": name, "rules": [{"contains": "▆", "fg": "#fb4934", "bold": True},
+                                     {"contains": "▃", "fg": "#fe8019"}]}
+
+
+# one row per session inside the Space ($s1..$s8 from sync.py, its context mark $c1..$c8);
+# empty rows disappear
 SPACE_ROWS = [
-    ["state_icon", "workspace", {"token": "$agents", "dim": True}],
+    ["state_icon", "workspace", {"token": "$agents", "dim": True}, CTX_TOKEN("$ctx")],
     ["branch", "git_status"],
-    *[[{"token": f"$s{i}", **TREE}] for i in range(1, 9)],
+    *[[{"token": f"$s{i}", **TREE}, CTX_TOKEN(f"$c{i}")] for i in range(1, 9)],
 ]
 # herdr's Agents panel as a tree by project (tokens and order from sync.agent_tree): a heading
 # row on the first agent of each project, then one "├─ ◐ NAME · state" line per session. No
@@ -118,7 +125,7 @@ STATE_TEXT = {"token": "state_text", "fg": MUTED, "rules": [
 ]}
 AGENT_ROWS = [
     [{"token": "$grp", "bold": True}],
-    [{"token": "$line", **TREE}, STATE_TEXT, {"token": "$subagents", "dim": True}],
+    [{"token": "$line", **TREE}, CTX_TOKEN("$ctx"), STATE_TEXT, {"token": "$subagents", "dim": True}],
 ]
 
 

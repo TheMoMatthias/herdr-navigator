@@ -59,8 +59,13 @@ def _report(kind: str, target: str, name: str, value: str, old: dict, sent: dict
 _PENDING: dict[tuple[str, str], list[tuple[str, str, str]]] = {}
 
 
+MAX_TOKENS = 16  # herdr: "a metadata report may update at most 16 tokens"
+
+
 def _flush(sent: dict) -> None:
-    for (kind, target), items in list(_PENDING.items()):
+    batches = [(kind, target, all_items[i:i + MAX_TOKENS]) for (kind, target), all_items in _PENDING.items()
+               for i in range(0, len(all_items), MAX_TOKENS)]
+    for kind, target, items in batches:
         try:  # the socket: one in-process call per target (the CLI costs a process each)
             herdr.report_metadata(kind, target, SOURCE, {name: (value or None) for _, name, value in items},
                                   int(next(_SEQ)))
@@ -89,13 +94,21 @@ def side_counts(agents: list) -> str:
                     if c.get(s))
 
 
+# context filling up / full: a small bar (not a circle, which is the state glyph), in its own
+# token so herdr colours it orange / red (setup.CTX_TOKEN)
+CTX_MARK = {"warn": "▃", "full": "▆"}
+
+
 def ctx_mark(a) -> str:
-    """A small ◔ / ◕ after a session whose context is filling up / full (insight.Context.level)."""
     c = getattr(a, "context", None)
-    return {"warn": " ◔", "full": " ◕"}.get(c.level, "") if c else ""
+    return CTX_MARK.get(c.level, "") if c else ""
 
 
 def session_lines(label: str, agents: list, folded: bool = False) -> list[str]:
+    return [t for t, _ in session_rows(label, agents, folded)]
+
+
+def session_rows(label: str, agents: list, folded: bool = False) -> list[tuple[str, str]]:
     """The indented lines a Space shows under itself: one per session, urgent first. A worktree
     Space already named after its only session shows none (it would just repeat the name). A
     folded project keeps only the sessions that need you, plus a "+N folded" line."""
@@ -103,13 +116,13 @@ def session_lines(label: str, agents: list, folded: bool = False) -> list[str]:
     if len(agents) == 1 and agents[0].display.strip().lower() == label.strip().lower():
         return []
     hidden = [a for a in agents if a.status not in model.NEEDS_YOU] if folded else []
-    lines = [f"{'↗' if not a.in_herdr else SIDE_ICON.get(a.status, '·')} {a.display[:30]}{ctx_mark(a)}"
+    lines = [(f"{'↗' if not a.in_herdr else SIDE_ICON.get(a.status, '·')} {a.display[:30]}", ctx_mark(a))
              for a in agents if a not in hidden]
     if hidden:
-        lines.append(f"+{len(hidden)} folded")
+        lines.append((f"+{len(hidden)} folded", ""))
     if len(lines) > SESSION_ROWS:
-        lines = lines[:SESSION_ROWS - 1] + [f"+{len(lines) - SESSION_ROWS + 1} more"]
-    return [("└─ " if i == len(lines) - 1 else "├─ ") + ln for i, ln in enumerate(lines)]
+        lines = lines[:SESSION_ROWS - 1] + [(f"+{len(lines) - SESSION_ROWS + 1} more", "")]
+    return [(("└─ " if i == len(lines) - 1 else "├─ ") + t, m) for i, (t, m) in enumerate(lines)]
 
 
 def agent_tree(agents: list, folded: dict | None = None) -> list[tuple]:
@@ -141,7 +154,7 @@ def agent_tree(agents: list, folded: dict | None = None) -> list[tuple]:
                     + (f"  +{more} folded" if more else ""))
         # herdr indents an entry's 2nd and later rows by two columns: the heading carrier's line is
         # its 2nd row, so every other agent's line (its 1st row) gets the same two-column pad
-        line = (PAD * 2 if not head else "") + f"{'└─' if last else '├─'} {SIDE_ICON.get(a.status, '·')} {a.display[:34]}{ctx_mark(a)}"
+        line = (PAD * 2 if not head else "") + f"{'└─' if last else '├─'} {SIDE_ICON.get(a.status, '·')} {a.display[:34]}"
         lane = ""  # no worktree row (setup.AGENT_ROWS); "" clears one sent by an older version
         out.append((a, f"{i:04d}", head, line, lane, False))
     return out
@@ -256,11 +269,15 @@ def sync(force: bool = False) -> None:
         mine = [a for a in (v.agents if v else []) if (
             a.project.worktree == p.worktree if p.worktree else a.project.worktree not in open_wts - {""})]
         outside = [a for a in mine if not a.in_herdr and not a.mirror_pane]
-        lines = session_lines(w.label, here + outside, folded.get(p.root, False))
-        # a Space named after its only session shows no session row: its context mark goes on the counts
-        marks = set() if lines else {ctx_mark(a) for a in here}
-        mark = " ◕" if " ◕" in marks else " ◔" if " ◔" in marks else ""
-        _report("workspace", w.id, "agents", side_counts(here) + mark, old, sent, seq)
+        rows = session_rows(w.label, here + outside, folded.get(p.root, False))
+        lines = [t for t, _ in rows]
+        # a Space named after its only session shows no session row: its context mark goes on the heading
+        marks = set() if rows else {ctx_mark(a) for a in here}
+        _report("workspace", w.id, "agents", side_counts(here), old, sent, seq)
+        _report("workspace", w.id, "ctx", CTX_MARK["full"] if CTX_MARK["full"] in marks
+                else CTX_MARK["warn"] if CTX_MARK["warn"] in marks else "", old, sent, seq)
+        for i in range(SESSION_ROWS):
+            _report("workspace", w.id, f"c{i + 1}", rows[i][1] if i < len(rows) else "", old, sent, seq)
         _report("workspace", w.id, "outside", "", old, sent, seq)  # now part of the session rows
         for i in range(SESSION_ROWS):
             _report("workspace", w.id, f"s{i + 1}", lines[i] if i < len(lines) else "", old, sent, seq)
@@ -322,6 +339,7 @@ def sync(force: bool = False) -> None:
         _report("pane", a.pane_id, "order", order, old, sent, seq)
         _report("pane", a.pane_id, "grp", head, old, sent, seq)
         _report("pane", a.pane_id, "line", line, old, sent, seq)
+        _report("pane", a.pane_id, "ctx", ctx_mark(a), old, sent, seq)
         _report("pane", a.pane_id, "lane", lane, old, sent, seq)
     if force:  # otherwise the daemon checks every VIEW_EVERY: each probe redraws herdr's UI
         ensure_view()

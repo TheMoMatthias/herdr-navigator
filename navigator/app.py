@@ -128,12 +128,12 @@ CTX_STYLE = {"ok": "#b8bb26", "warn": "bold #fe8019", "full": "bold #fb4934"}
 
 
 def ctx_text(a) -> Text:
-    """Context gauge: a small circle filling with the window and the tokens in use; green while roomy, orange from
+    """Context gauge: a small bar growing with the window and the tokens in use; green while roomy, orange from
     200K, red from 700K (`[context] warn_at / full_at`): time to /compact."""
     c = getattr(a, "context", None)
     if not c:
         return Text("")
-    return Text(f"{c.dot}{c.short:>5}", style=CTX_STYLE[c.level])
+    return Text(f"{c.gauge}{c.short:>5}", style=CTX_STYLE[c.level])
 
 
 AGENT_FILTERS = (("All", ""), ("⏳ Needs you", "needs"), ("◐ Working", "working"), ("○ Parked", "idle"),

@@ -108,7 +108,7 @@ terminal = ""
 # model id wins; a session seen using more than its window counts as a 1M-token window.
 default = 200000
 # The Ctx gauge turns orange from warn_at tokens in use and red from full_at (or at 70% / 85% of a
-# smaller window); the herdr sidebar marks those sessions with ◔ / ◕.
+# smaller window); the herdr sidebar marks those sessions with an orange ▃ / red ▆.
 warn_at = 200000
 full_at = 700000
 "claude-opus-5" = 1000000
