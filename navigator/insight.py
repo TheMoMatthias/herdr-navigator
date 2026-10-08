@@ -4,12 +4,16 @@ Claude: the newest main-chain assistant message's usage (input + cache read + ca
 the context in use; the window comes from `[context]` in the settings (by model name), and
 grows to 1M when a session is seen using more than the configured window.
 Codex: `token_count` events carry the last turn's usage and the model's context window.
+The bar's full mark is where the session compacts: the CLI's auto-compact setting when set
+(Claude `autoCompactWindow`, per model or global; Codex `model_auto_compact_token_limit`).
 """
 from __future__ import annotations
 
 import json
 import os
+import tomllib
 from dataclasses import dataclass
+from pathlib import Path
 
 from . import settings
 from .filememo import by_file
@@ -72,13 +76,93 @@ def _window_for(model: str) -> int:
     return best
 
 
+def _claude_home() -> Path:
+    return Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+
+
+def _codex_home() -> Path:
+    return Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+
+
 @by_file
+def _json(path: str) -> dict:
+    try:
+        d = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return {}
+    return d if isinstance(d, dict) else {}
+
+
+@by_file
+def _toml(path: str) -> dict:
+    try:
+        return tomllib.loads(Path(path).read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return {}
+
+
+def claude_compact_at(model: str, cwd: str, model_window: int) -> int:
+    """Where Claude Code auto-compacts this session (tokens), 0 when it does not.
+
+    The settings a session runs with: user, then the project's .claude/settings.json and
+    settings.local.json. `modelSettings.<model>.autoCompactWindow` beats `autoCompactWindow`;
+    "auto" or unset means the model's window, or CLAUDE_AUTOCOMPACT_PCT_OVERRIDE percent of it."""
+    files = [_claude_home() / "settings.json"]
+    if cwd:
+        files += [Path(cwd) / ".claude" / "settings.json", Path(cwd) / ".claude" / "settings.local.json"]
+    enabled, window, pct, per_model = True, None, None, {}
+    for f in files:
+        s = _json(str(f))
+        if "autoCompactEnabled" in s:
+            enabled = bool(s["autoCompactEnabled"])
+        if "autoCompactWindow" in s:
+            window = s["autoCompactWindow"]
+        pct = (s.get("env") or {}).get("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", pct)
+        for key, val in (s.get("modelSettings") or {}).items():
+            if isinstance(val, dict) and "autoCompactWindow" in val:
+                per_model[key] = val["autoCompactWindow"]
+    if not enabled:
+        return 0
+    best = max((k for k in per_model if k.lower() in model.lower()), key=len, default=None)
+    if best is not None:
+        window = per_model[best]
+    try:
+        return int(window)
+    except (TypeError, ValueError):
+        pass
+    try:
+        return round(model_window * float(pct or os.environ.get("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE")) / 100)
+    except (TypeError, ValueError):
+        return 0
+
+
+def codex_compact_at() -> int:
+    """Codex's `model_auto_compact_token_limit` (config.toml), 0 when unset."""
+    try:
+        return int(_toml(str(_codex_home() / "config.toml")).get("model_auto_compact_token_limit") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def context(cli: str, path: str) -> Context | None:
+    """Tokens in use against the point where this session compacts: the CLI's auto-compact
+    setting when there is one (never above the model's window), else the model's window."""
+    r = _reading(cli, path)
+    if not r:
+        return None
+    used, model_window, model, cwd = r
+    at = claude_compact_at(model, cwd, model_window) if cli == "claude" else codex_compact_at()
+    return Context(used, min(at, model_window) if at else model_window)
+
+
+@by_file
+def _reading(cli: str, path: str) -> tuple | None:
+    """(tokens in use, model window, model, cwd) from the transcript's tail."""
     if not path:
         return None
     lines = _tail(path)
     if cli == "claude":
-        compacted = 0  # a /compact (or auto-compact) after the last answer: its postTokens is the context now
+        compacted, cwd = 0, ""  # a /compact (or auto-compact) after the last answer: its postTokens is the context now
         for ln in reversed(lines):
             boundary = '"compact_boundary"' in ln
             if not boundary and ('"usage"' not in ln or '"assistant"' not in ln):
@@ -89,6 +173,7 @@ def context(cli: str, path: str) -> Context | None:
                 continue
             if rec.get("isSidechain"):
                 continue
+            cwd = cwd or str(rec.get("cwd") or "")
             if boundary and rec.get("subtype") == "compact_boundary":
                 if not compacted:
                     compacted = int((rec.get("compactMetadata") or {}).get("postTokens") or 1)
@@ -97,15 +182,15 @@ def context(cli: str, path: str) -> Context | None:
                 continue
             msg = rec.get("message") or {}
             u = msg.get("usage") or {}
-            used = int(u.get("input_tokens", 0)) + int(u.get("cache_read_input_tokens", 0)) \
-                + int(u.get("cache_creation_input_tokens", 0))
+            used = int(u.get("input_tokens", 0)) + int(u.get("cache_read_input_tokens", 0))                 + int(u.get("cache_creation_input_tokens", 0))
             if not used:
                 continue
-            window = _window_for(str(msg.get("model", "")))
-            if used > window:
+            model = str(msg.get("model", ""))
+            window = _window_for(model)
+            if used > window:  # seen above its window: a 1M session
                 window = max(window, 1_000_000)
-            return Context(compacted or used, window)  # the model (window) from the last answer
-        return Context(compacted, _window_for("")) if compacted else None
+            return compacted or used, window, model, cwd  # the model (window) from the last answer
+        return (compacted, _window_for(""), "", cwd) if compacted else None
     if cli == "codex":
         for ln in reversed(lines):
             if '"token_count"' not in ln:
@@ -118,7 +203,7 @@ def context(cli: str, path: str) -> Context | None:
             window = int(info.get("model_context_window") or 0)
             used = int(last.get("input_tokens", 0)) + int(last.get("output_tokens", 0))
             if used and window:
-                return Context(used, window)
+                return used, window, "", ""
         return None
     return None
 

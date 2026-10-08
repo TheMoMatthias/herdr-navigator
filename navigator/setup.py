@@ -98,7 +98,7 @@ TREE = {"fg": MUTED}
 # A session's context (sync.ctx_mark): a 4-cell bar, green; the level's invisible braille
 # blanks turn it yellow (one) or red (two).
 def CTX_TOKEN(name: str) -> dict:
-    return {"token": name, "fg": "#b8bb26", "rules": [{"contains": "⠀⠀", "fg": "#fb4934", "bold": True},
+    return {"token": name, "fg": "#56d364", "rules": [{"contains": "⠀⠀", "fg": "#fb4934", "bold": True},
                                                       {"contains": "⠀", "fg": "#fabd2f"}]}
 
 
@@ -120,7 +120,7 @@ STATE_TEXT = {"token": "state_text", "fg": MUTED, "rules": [
     {"contains": "reply", "ignore_case": True, "fg": "#fe8019", "bold": True},
     {"contains": "blocked", "ignore_case": True, "fg": "#fe8019", "bold": True},
     {"contains": "working", "ignore_case": True, "fg": "#fabd2f", "bold": True},
-    {"contains": "done", "ignore_case": True, "fg": "#b8bb26"},
+    {"contains": "done", "ignore_case": True, "fg": "#56d364"},
     {"contains": "idle", "ignore_case": True, "fg": "#7c6f64"},
     {"contains": "inactive", "ignore_case": True, "fg": "#504945"},
 ]}

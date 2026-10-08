@@ -398,3 +398,34 @@ def test_context_after_compact_uses_post_tokens(tmp_path):
     later = dict(ans, message=dict(ans["message"], usage={"input_tokens": 5, "cache_read_input_tokens": 30_000}))
     f.write_text(f.read_text(encoding="utf-8") + json.dumps(later) + "\n", encoding="utf-8")
     assert insight.context("claude", str(f)).used == 30_005   # the next answer's usage wins again
+
+
+def test_context_bar_ends_where_the_session_compacts(tmp_path, monkeypatch):
+    home = tmp_path / "claude"
+    home.mkdir()
+    (home / "settings.json").write_text(json.dumps({
+        "autoCompactWindow": 600_000,
+        "modelSettings": {"claude-opus-5-5": {"autoCompactWindow": 400_000}}}), encoding="utf-8-sig")
+    p = jsonl(tmp_path / "o.jsonl", [claude_msg("m1", "x", inp=200_000)])
+    c = insight.context("claude", p)
+    assert c.window == 400_000 and c.pct == 50            # the model's own setting wins
+    p = jsonl(tmp_path / "s.jsonl", [claude_msg("m1", "x", inp=300_000, model="claude-sonnet-5-5")])
+    assert insight.context("claude", p).window == 600_000  # the global setting
+    p = jsonl(tmp_path / "h.jsonl", [claude_msg("m1", "x", inp=100_000, model="claude-haiku-4-5")])
+    assert insight.context("claude", p).window == 200_000  # never above the model's window
+    proj = tmp_path / "proj" / ".claude"
+    proj.mkdir(parents=True)
+    (proj / "settings.local.json").write_text(json.dumps({"autoCompactEnabled": False}), encoding="utf-8")
+    rec = dict(claude_msg("m1", "x", inp=200_000), cwd=str(tmp_path / "proj"))
+    p = jsonl(tmp_path / "p.jsonl", [rec])
+    assert insight.context("claude", p).window == 1_000_000  # auto-compact off here: the model window
+    (home / "settings.json").write_text(json.dumps({"autoCompactWindow": "auto",
+                                                    "env": {"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "50"}}), encoding="utf-8")
+    assert insight.context("claude", str(tmp_path / "o.jsonl")).window == 500_000  # settings change is seen
+    codex = tmp_path / "codex"
+    codex.mkdir()
+    p = jsonl(tmp_path / "r.jsonl", [{"payload": {"type": "token_count", "info": {
+        "last_token_usage": {"input_tokens": 100_000}, "model_context_window": 258_400}}}])
+    assert insight.context("codex", p).window == 258_400
+    (codex / "config.toml").write_text("model_auto_compact_token_limit = 200000\n", encoding="utf-8")
+    assert insight.context("codex", p).window == 200_000
