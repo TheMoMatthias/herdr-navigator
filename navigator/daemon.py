@@ -31,6 +31,7 @@ MIN_GAP = 1.0         # at most one sync per second
 STATUS_EVERY = 15.0   # status line refresh without events (outside sessions, phone alerts)
 STATUS_GAP = 2.0      # at most one event-driven status refresh per 2 s (busy agents retitle constantly)
 HEAL_EVERY = 300.0    # a sync even without events (events cover changes; this heals the rest)
+WORK_EVERY = 10.0     # did a session's sub-agents or background jobs change? (a sync when so)
 VIEW_EVERY = 20.0     # is herdr's Agents view still ours? (~5 ms; re-applied when dropped)
 CODE_EVERY = 10.0     # has the plugin been updated? (exit, so the new code takes over)
 GIVE_UP = 300.0       # herdr unreachable this long: exit (its startup hook starts a new one)
@@ -216,10 +217,11 @@ class Daemon:
 
     # ---- the work loop ------------------------------------------------------------------------
     def run(self) -> None:
-        from . import model, status, sync
+        from . import live, model, status, sync
         model.SESSIONS_TTL = 10.0
         code = _code_stamp()
-        last_sync = last_status = last_beat = last_heal = last_view = last_code = 0.0
+        last_sync = last_status = last_beat = last_heal = last_view = last_code = last_work = 0.0
+        work_sig = None
         poke_seen = 0.0
         status_text = None
         threading.Thread(target=self.listen, daemon=True, name="nav-events").start()
@@ -249,6 +251,12 @@ class Daemon:
                         self.want_sync = True
                 except OSError:
                     pass
+                if now - last_work >= WORK_EVERY:  # no herdr event when a background job ends
+                    last_work = now
+                    sig = live.work_counts(now)
+                    if work_sig is not None and sig != work_sig:
+                        self.want_sync = True
+                    work_sig = sig
                 if now - last_heal >= HEAL_EVERY:
                     last_heal = now
                     self.want_sync = True

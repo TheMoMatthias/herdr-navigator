@@ -114,10 +114,16 @@ def _worst_mark(agents: list) -> str:
 
 
 def session_lines(label: str, agents: list, folded: bool = False) -> list[str]:
-    return [t for t, _ in session_rows(label, agents, folded)]
+    return [r[0] for r in session_rows(label, agents, folded)]
 
 
-def session_rows(label: str, agents: list, folded: bool = False) -> list[tuple[str, str]]:
+def work_mark(a) -> str:
+    """What a session has running besides itself: ↳ sub-agents, ⟳ background jobs."""
+    subs, jobs = len(a.subagents), getattr(a, "jobs", 0)
+    return " ".join(([f"↳{subs}"] if subs else []) + ([f"⟳{jobs}"] if jobs else []))
+
+
+def session_rows(label: str, agents: list, folded: bool = False) -> list[tuple[str, str, str]]:
     """The indented lines a Space shows under itself: one per session, urgent first. A worktree
     Space already named after its only session shows none (it would just repeat the name). A
     folded project keeps only the sessions that need you, plus a "+N folded" line."""
@@ -125,13 +131,13 @@ def session_rows(label: str, agents: list, folded: bool = False) -> list[tuple[s
     if len(agents) == 1 and agents[0].display.strip().lower() == label.strip().lower():
         return []
     hidden = [a for a in agents if a.status not in model.NEEDS_YOU] if folded else []
-    lines = [(f"{'↗' if not a.in_herdr else SIDE_ICON.get(a.status, '·')} {a.display[:30]}", ctx_mark(a))
+    lines = [(f"{'↗' if not a.in_herdr else SIDE_ICON.get(a.status, '·')} {a.display[:30]}", ctx_mark(a), work_mark(a))
              for a in agents if a not in hidden]
     if hidden:
-        lines.append((f"+{len(hidden)} folded", ""))
+        lines.append((f"+{len(hidden)} folded", "", ""))
     if len(lines) > SESSION_ROWS:
-        lines = lines[:SESSION_ROWS - 1] + [(f"+{len(lines) - SESSION_ROWS + 1} more", "")]
-    return [(("└─ " if i == len(lines) - 1 else "├─ ") + t, m) for i, (t, m) in enumerate(lines)]
+        lines = lines[:SESSION_ROWS - 1] + [(f"+{len(lines) - SESSION_ROWS + 1} more", "", "")]
+    return [(("└─ " if i == len(lines) - 1 else "├─ ") + t, m, w) for i, (t, m, w) in enumerate(lines)]
 
 
 def agent_tree(agents: list, folded: dict | None = None) -> list[tuple]:
@@ -289,12 +295,14 @@ def sync(force: bool = False) -> None:
             a.project.worktree == p.worktree if p.worktree else a.project.worktree not in open_wts - {""})]
         outside = [a for a in mine if not a.in_herdr and not a.mirror_pane]
         rows = session_rows(w.label, here + outside, folded.get(p.root, False))
-        lines = [t for t, _ in rows]
+        lines = [r[0] for r in rows]
         # a Space named after its only session shows no session row: its context mark goes on the heading
         _report("workspace", w.id, "agents", side_counts(here), old, sent, seq)
         _report("workspace", w.id, "ctx", "" if rows else _worst_mark(here), old, sent, seq)
+        _report("workspace", w.id, "work", "" if rows else " ".join(filter(None, map(work_mark, here))), old, sent, seq)
         for i in range(SESSION_ROWS):
             _report("workspace", w.id, f"c{i + 1}", rows[i][1] if i < len(rows) else "", old, sent, seq)
+            _report("workspace", w.id, f"b{i + 1}", rows[i][2] if i < len(rows) else "", old, sent, seq)
         _report("workspace", w.id, "outside", "", old, sent, seq)  # now part of the session rows
         for i in range(SESSION_ROWS):
             _report("workspace", w.id, f"s{i + 1}", lines[i] if i < len(lines) else "", old, sent, seq)
@@ -363,7 +371,7 @@ def sync(force: bool = False) -> None:
 
     for a in world.agents:
         if a.in_herdr:  # mirror panes report their own tokens
-            subs = f"↳{len(a.subagents)}" if a.subagents else ""
+            subs = work_mark(a)  # the $subagents token: ↳ sub-agents and ⟳ background jobs
             _report("pane", a.pane_id, "project", a.project.label, old, sent, seq)
             _report("pane", a.pane_id, "session", a.display, old, sent, seq)
             _report("pane", a.pane_id, "subagents", subs, old, sent, seq)

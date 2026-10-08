@@ -4,7 +4,10 @@
   (cwd, name, busy/idle). A session there whose pid is alive is running, even in another terminal.
 * Codex has no registry: a non-subagent rollout written in the last few minutes counts as active.
 * Sub-agents: Claude writes <transcript dir>/<session>/subagents/agent-*.jsonl (+ .meta.json);
-  Codex writes child threads with thread_source "subagent". Recently written = running.
+  Codex writes child threads with thread_source "subagent". Recently written = running, and a
+  background sub-agent counts until its task-notification arrives, however quiet it is.
+* Background jobs (Claude): a Bash result carrying `backgroundTaskId` starts one, its
+  <task-notification> with a final status ends it; jobs from before the process started died with it.
 * Activity: the last tool call (or message) in the tail of the transcript.
 """
 from __future__ import annotations
@@ -12,6 +15,7 @@ from __future__ import annotations
 import functools
 import json
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,6 +26,7 @@ from .filememo import by_file
 
 ACTIVE_SECONDS = 150        # a transcript written this recently is "running"
 TAIL = 64 * 1024
+BG_FIRST = 4_000_000        # the first look at a transcript reads this much of its end for background jobs
 
 
 @dataclass
@@ -46,6 +51,8 @@ class Running:
     transcript: str = ""
     activity: str = ""
     subagents: list[SubAgent] = field(default_factory=list)
+    jobs: int = 0               # background jobs (shell commands) still running
+    started_at: float = 0.0     # when the process started (epoch seconds), 0 if unknown
 
     @property
     def project(self) -> projects.Project:
@@ -146,18 +153,110 @@ def activity(path: str) -> str:
     return ""
 
 
-def claude_subagents(transcript: str, now: float) -> list[SubAgent]:
+_TASK_END = re.compile(r"<task-id>([^<]+)</task-id>.*?<status>([a-z_]+)</status>", re.S)
+_BG: dict[str, list] = {}  # transcript -> [read up to, {task id: (kind, started)}, {ended ids}]
+
+
+def _epoch(ts: str) -> float:
+    from datetime import datetime
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+    except (ValueError, AttributeError):
+        return 0.0
+
+
+def _bg_scan(state: list, data: bytes) -> None:
+    started, ended = state[1], state[2]
+    for raw in data.split(b"\n"):
+        if b"backgroundTaskId" not in raw and b"async_launched" not in raw and b"<task-notification>" not in raw:
+            continue
+        rec = _loads(raw.decode("utf-8", "replace"))
+        if not isinstance(rec, dict) or rec.get("isSidechain"):
+            continue
+        res = rec.get("toolUseResult")
+        if isinstance(res, dict):
+            if res.get("backgroundTaskId"):
+                started[res["backgroundTaskId"]] = ("job", _epoch(rec.get("timestamp", "")))
+            elif res.get("isAsync") and res.get("status") == "async_launched" and res.get("agentId"):
+                started[res["agentId"]] = ("agent", _epoch(rec.get("timestamp", "")))
+        # the notification itself, as queued for the model (not a tool result quoting one)
+        if rec.get("type") == "queue-operation" and rec.get("operation") == "enqueue":
+            text = rec.get("content")
+        elif rec.get("type") == "attachment":
+            text = (rec.get("attachment") or {}).get("prompt")
+        elif rec.get("type") == "user":
+            text = (rec.get("message") or {}).get("content")
+        else:
+            continue
+        if isinstance(text, str) and text.lstrip().startswith("<task-notification>"):
+            for tid, status in _TASK_END.findall(text):
+                if status != "running":
+                    ended.add(tid)
+
+
+def background(transcript: str, since: float = 0.0) -> tuple[int, set[str]]:
+    """(background jobs still running, ids of background sub-agents still running) for a Claude
+    session. Reads only what was appended since the last call."""
+    try:
+        size = os.path.getsize(transcript)
+    except OSError:
+        return 0, set()
+    state = _BG.get(transcript)
+    if state is None or size < state[0]:  # new, or rewritten
+        state = _BG[transcript] = [max(0, size - BG_FIRST), {}, set()]
+    if size > state[0]:
+        try:
+            with open(transcript, "rb") as f:
+                f.seek(state[0])
+                data = f.read(size - state[0])
+        except OSError:
+            data = b""
+        cut = data.rfind(b"\n") + 1  # a half-written last line waits for the next call
+        _bg_scan(state, data[:cut])
+        state[0] += cut
+    live = [(tid, kind) for tid, (kind, at) in state[1].items() if tid not in state[2] and at >= since]
+    return sum(1 for _, k in live if k == "job"), {tid for tid, k in live if k == "agent"}
+
+
+def _subagent_files(transcript: str, now: float, keep: set[str] = frozenset()) -> list[tuple[Path, float]]:
+    """The running sub-agents' transcripts: written recently, or a background one not yet done."""
     d = Path(transcript).with_suffix("") / "subagents"
-    out = []
     try:  # scandir: on Windows the listing carries the times, no stat call per sub-agent file
         with os.scandir(d) as it:
             files = [(Path(e.path), e.stat().st_mtime) for e in it
                      if e.name.startswith("agent-") and e.name.endswith(".jsonl")]
     except OSError:
-        return out
-    for f, m in files:
-        if now - m > ACTIVE_SECONDS:
-            continue
+        return []
+    return [(f, m) for f, m in files if now - m <= ACTIVE_SECONDS or f.stem.removeprefix("agent-") in keep]
+
+
+def work_counts(now: float) -> list[tuple[str, int, int]]:
+    """(session id, sub-agents, background jobs) per running Claude session: cheap enough to
+    ask every few seconds (only appended transcript lines are read, sub-agents are a listing)."""
+    out = []
+    for r in _claude_registry(now):
+        tr = _transcript_of(r.session_id)
+        if tr:
+            jobs, agents = background(tr, r.started_at)
+            out.append((r.session_id, len(_subagent_files(tr, now, agents)), jobs))
+    return out
+
+
+_TRANSCRIPTS: dict[str, str] = {}
+
+
+def _transcript_of(session_id: str) -> str:
+    tr = _TRANSCRIPTS.get(session_id)
+    if tr and os.path.exists(tr):
+        return tr
+    hits = list(_claude_root().glob(f"*/{session_id}.jsonl"))
+    _TRANSCRIPTS[session_id] = tr = str(hits[0]) if hits else ""
+    return tr
+
+
+def claude_subagents(transcript: str, now: float, keep: set[str] = frozenset()) -> list[SubAgent]:
+    out = []
+    for f, m in _subagent_files(transcript, now, keep):
         meta = {}
         try:
             meta = json.loads(f.with_suffix(".meta.json").read_text(encoding="utf-8"))
@@ -191,7 +290,7 @@ def _claude_registry(now: float) -> list[Running]:
         out.append(Running(
             cli="claude", session_id=d.get("sessionId", ""), name=d.get("name", ""),
             cwd=d.get("cwd", ""), status=d.get("status", "idle"), pid=int(d.get("pid", 0)),
-            user_named=d.get("nameSource") == "user",
+            user_named=d.get("nameSource") == "user", started_at=float(d.get("startedAt") or 0) / 1000,
         ))
     return out
 
@@ -225,7 +324,8 @@ def running(sessions: list[Session]) -> list[Running]:
         if r.transcript:
             r.activity = activity(r.transcript)
             if r.cli == "claude":
-                r.subagents = claude_subagents(r.transcript, now)
+                r.jobs, agents = background(r.transcript, r.started_at)
+                r.subagents = claude_subagents(r.transcript, now, agents)
         r.subagents += children.get(r.session_id, [])
     return out
 

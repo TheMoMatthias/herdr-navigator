@@ -38,6 +38,7 @@ class Agent:
     pid: int = 0
     activity: str = ""
     subagents: list[live.SubAgent] = field(default_factory=list)
+    jobs: int = 0                # background jobs (shell commands) still running
     mirror_pane: str = ""        # herdr pane mirroring this outside session, if any
     question: "asks.Question | None" = None  # a question it is waiting for you to answer
     transcript: str = ""         # the session's transcript file, if known
@@ -282,7 +283,7 @@ def build(with_sessions: bool = True) -> World:
             name=session_name(r, by_session.get(sid), term_title), title=term_title,
             session_id=sid, pane_id=a["pane_id"], workspace_id=a.get("workspace_id", ""),
             tab_id=a.get("tab_id", ""), focused=bool(a.get("focused")), pid=r.pid if r else 0,
-            activity=r.activity if r else "", subagents=r.subagents if r else [],
+            activity=r.activity if r else "", subagents=r.subagents if r else [], jobs=r.jobs if r else 0,
             seq=int(a.get("state_change_seq") or 0),
         ))
     mirror_of = {sid: pane for pane, sid in mirrors.items()}
@@ -294,7 +295,7 @@ def build(with_sessions: bool = True) -> World:
         agents.append(Agent(
             cli=r.cli, status=EXTERNAL_STATUS.get(r.status, "unknown"), project=r.project,
             name=session_name(r, by_session.get(r.session_id), ""), title=r.name,
-            session_id=r.session_id, pid=r.pid, activity=r.activity, subagents=r.subagents,
+            session_id=r.session_id, pid=r.pid, activity=r.activity, subagents=r.subagents, jobs=r.jobs,
             mirror_pane=pane, workspace_id=pane_info.get("workspace_id", ""), tab_id=pane_info.get("tab_id", ""),
         ))
 

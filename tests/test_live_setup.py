@@ -558,3 +558,66 @@ def test_state_words_have_distinct_colours():
     fg = {r["contains"]: r["fg"] for r in rules}
     assert len({fg["working"], fg["idle"], fg["done"], fg["reply"]}) == 4
     assert [r["contains"] for r in rules].index("reply") < [r["contains"] for r in rules].index("working")
+
+
+def _notice(tid, status):
+    return {"type": "queue-operation", "operation": "enqueue", "timestamp": "2026-10-09T10:05:00Z",
+            "content": f"<task-notification>\n<task-id>{tid}</task-id>\n<tool-use-id>t</tool-use-id>\n"
+                       f"<status>{status}</status>\n<summary>x</summary>\n</task-notification>"}
+
+
+def test_background_jobs_and_agents_counted_until_their_notification(tmp_path):
+    tr = tmp_path / "S.jsonl"
+    at = "2026-10-09T10:00:00Z"
+    jl(tr, [{"type": "user", "timestamp": at, "toolUseResult": {"stdout": "", "backgroundTaskId": "b1"}},
+            {"type": "user", "timestamp": at, "toolUseResult": {"backgroundTaskId": "b2"}},
+            {"type": "user", "timestamp": at, "toolUseResult": {
+                "isAsync": True, "status": "async_launched", "agentId": "a1"}},
+            # a tool result that merely quotes a notification ends nothing
+            {"type": "user", "timestamp": at, "toolUseResult": {"stdout": "<task-id>b2</task-id> <status>completed</status>"}},
+            _notice("b1", "running")])
+    assert live.background(str(tr)) == (2, {"a1"})
+    with open(tr, "a", encoding="utf-8") as f:  # appended: only the new lines are read
+        f.write(json.dumps(_notice("b1", "completed")) + "\n" + json.dumps(_notice("a1", "killed")) + "\n")
+        f.write('{"type": "queue-operation", "operation": "enqueue", "content": "<task-notification><task-id>b2')
+    assert live.background(str(tr)) == (1, set())  # the half-written line waits
+    with open(tr, "a", encoding="utf-8") as f:
+        f.write('</task-id><status>failed</status></task-notification>"}\n')
+    assert live.background(str(tr)) == (0, set())
+    # jobs from before the process started died with it
+    jl(tmp_path / "T.jsonl", [{"type": "user", "timestamp": at, "toolUseResult": {"backgroundTaskId": "old"}}])
+    assert live.background(str(tmp_path / "T.jsonl"), since=live._epoch("2026-10-09T11:00:00Z")) == (0, set())
+
+
+def test_quiet_background_subagent_still_listed(tmp_path):
+    tr = tmp_path / "S.jsonl"
+    jl(tr, [{"type": "user"}])
+    quiet = tr.with_suffix("") / "subagents" / "agent-a1.jsonl"
+    jl(quiet, [{"type": "user"}])
+    os.utime(quiet, (time.time() - 3600, time.time() - 3600))
+    assert live.claude_subagents(str(tr), time.time()) == []
+    assert [s.name for s in live.claude_subagents(str(tr), time.time(), {"a1"})] == ["a1"]
+
+
+def test_work_mark_in_session_rows():
+    from types import SimpleNamespace as NS
+    from navigator import model, sync
+    p = projects.Project("/r", "R")
+    a = model.Agent("claude", "working", p, name="LEAD", pane_id="p1", jobs=3,
+                    subagents=[NS(name="s")] * 2)
+    assert sync.work_mark(a) == "↳2 ⟳3"
+    assert sync.work_mark(model.Agent("claude", "idle", p, name="B", pane_id="p2")) == ""
+    rows = sync.session_rows("x", [a, model.Agent("claude", "idle", p, name="B", pane_id="p2")])
+    assert [r[2] for r in rows] == ["↳2 ⟳3", ""]
+
+
+def test_work_counts_follow_jobs_for_the_daemon(tmp_path):
+    tr = tmp_path / "claude" / "projects" / "Repo" / "S1.jsonl"
+    jl(tr, [{"type": "user", "timestamp": "2026-10-09T10:00:00Z", "toolUseResult": {"backgroundTaskId": "b1"}}])
+    (tmp_path / "claude" / "sessions").mkdir(parents=True)
+    (tmp_path / "claude" / "sessions" / "1.json").write_text(json.dumps(
+        {"pid": os.getpid(), "sessionId": "S1", "cwd": str(tmp_path), "kind": "interactive"}))
+    assert live.work_counts(time.time()) == [("S1", 0, 1)]
+    with open(tr, "a", encoding="utf-8") as f:
+        f.write(json.dumps(_notice("b1", "completed")) + "\n")
+    assert live.work_counts(time.time()) == [("S1", 0, 0)]

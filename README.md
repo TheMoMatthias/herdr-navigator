@@ -295,8 +295,14 @@ Always visible in herdr:
   `new` does that) joins it as a tab, running sessions included (`merge_duplicates` in
   `[workspaces]`, on by default).
   `↗ NAME` lists sessions in other windows that have no mirror (only when mirrors are off).
-- **Sidebar, agents:** the session name, its state, running sub-agents (`↳2`) and, on the
-  second line, `project ⎇ worktree` and the CLI. `↗ other window` marks a mirror.
+- **Sidebar, agents:** the session name, its state, running sub-agents (`↳2`) and background
+  jobs (`⟳3`, in blue) and, on the second line, `project ⎇ worktree` and the CLI. `↗ other window`
+  marks a mirror. The Spaces rows carry the same `↳2 ⟳3` after each session.
+- **Background jobs and sub-agents (Claude Code):** a background shell job counts from its
+  start until its completion notice; a background sub-agent counts until it finishes, even when
+  it is quiet; a foreground one while its transcript is being written. Jobs from before a
+  session restarted died with it and are not counted. The daemon checks every 10 s, reading
+  only new transcript lines, so a finished job leaves the sidebar within seconds.
 
 Direct chords (no prefix) that setup adds:
 

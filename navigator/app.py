@@ -94,7 +94,7 @@ HELP = {
                "Every agent, inside herdr or in another window (↗), nested under its project. ← → or ▾ folds a project\n"
                "(a folded one still shows who needs you). Those that need you come first, longest wait first:\n"
                "⚠ waits for an approval or has a question open · ✔ finished.\n"
-               "○ Parked = idle, nothing asked. Waits = how long it has been waiting. ◌ Inactive = parked with nothing new for an hour. Ctx = context in use against where the session auto-compacts (its CLI setting, else the model window) (▰▰▱▱): green, yellow from 200K or 70%, red from 700K or 85% (time to compact).\n\n"
+               "○ Parked = idle, nothing asked. Waits = how long it has been waiting. ◌ Inactive = parked with nothing new for an hour. ↳N = sub-agents running, ⟳N = background jobs running. Ctx = context in use against where the session auto-compacts (its CLI setting, else the model window) (▰▰▱▱): green, yellow from 200K or 70%, red from 700K or 85% (time to compact).\n\n"
                "⚑ Next (g) selects the next one that needs you and puts you in the message box.\n"
                "Answer: when it shows numbered options (a question or a permission prompt), click one.\n"
                "Enter or a second click jumps to the agent's pane. Tick ☐ several to send to all of them.\n"
@@ -727,7 +727,7 @@ class Navigator(App):
     @staticmethod
     def _live_sig(world: World) -> tuple:
         return tuple((a.key, a.status, a.activity, a.title, a.context.pct if a.context else -1,
-                      len(a.subagents), a.waiting_since, bool(a.question)) for a in world.agents)
+                      len(a.subagents), a.jobs, a.waiting_since, bool(a.question)) for a in world.agents)
 
     def apply_live(self, world: World) -> None:
         if self.world is None or self._live_sig(world) == self._live_sig(self.world):
@@ -1693,6 +1693,8 @@ class Navigator(App):
                                     if w.get("pane") == a.pane_id}))
             if marks:
                 who.append(" " + marks)
+            if a.jobs:  # sub-agents get their own ↳ rows below; background jobs only this count
+                who.append(f" ⟳{a.jobs}", style="#83a598")
             if grouped:  # the project is the group above; say only which checkout
                 proj = Text(("⎇ " + a.project.worktree)[:26] if a.project.worktree else "main",
                             style="dim" if a.project.worktree else "dim")
