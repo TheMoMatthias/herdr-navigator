@@ -2,7 +2,7 @@
 
 * auto-named workspaces are renamed to their project (never a name you typed yourself);
 * linked-worktree workspaces are named after the session(s) working in them;
-* every workspace reports `$agents` (e.g. "!1 ✓1 ⚙2") and `$s1`..`$s8`: one line per session working
+* every workspace reports `$agents` (e.g. "!1 ✓1", plus a pulsing ● while one works) and `$s1`..`$s8`: one line per session working
   in it (tabs included, sessions in other windows marked ↗), which the sidebar shows indented under
   the Space, so a session in a second tab is never hidden behind its workspace's name;
 * every agent pane reports `$session` (its name as the CLI shows it), `$project`
@@ -88,9 +88,53 @@ SIDE_ICON = {"blocked": "!", "reply": "?", "done": "●", "working": "◐", "idl
 PAD = "\u2800"  # braille blank: looks like a space, but herdr trims real spaces off token values
 
 
-# The Space heading's tally: only the states that matter at a glance; idle and inactive sessions
-# are left out (the rows below still list them).
-TALLY_ICON = {"blocked": "!", "reply": "?", "done": "✓", "working": "⚙"}
+# The Space heading's tally: only the states that want a look; idle and inactive sessions are
+# left out (the rows below still list them) and working ones show as the pulsing dot instead.
+TALLY_ICON = {"blocked": "!", "reply": "?", "done": "✓"}
+
+# A project with a session working gets a slowly pulsing dot after its name (Spaces: $pulse,
+# Agents: $gpulse). herdr cannot animate a token, so the daemon steps through PULSE_FRAMES
+# (pulse_tick): the frame rides along as trailing braille blanks that setup.PULSE_TOKEN's rules
+# shade from bright to dim. A sync only ever reports the first frame (or "" to stop it).
+PULSE = "●"
+PULSE_FRAMES = [PULSE + PAD * k for k in (0, 1, 2, 3, 2, 1)]
+PULSE_TOKENS = ("pulse", "gpulse")
+
+
+def pulse_mark(agents: list) -> str:
+    return PULSE if any(a.status == "working" for a in agents) else ""
+
+
+_PULSE = {"mtime": 0.0, "targets": [], "frame": 0}
+
+
+def pulse_tick() -> None:
+    """Advance every pulsing dot one frame (the daemon calls this every PULSE_EVERY). The dots
+    are the pulse tokens the last sync left set, read from its sent-cache when that changes."""
+    f = settings.state_dir() / "sync-sent.json"
+    try:
+        m = f.stat().st_mtime
+    except OSError:
+        return
+    if m != _PULSE["mtime"]:
+        _PULSE["mtime"] = m
+        targets = [(k.split(":", 1)[0], *k.split(":", 1)[1].rsplit(":", 1))  # pane ids hold ":" (w6:pF)
+                   for k, v in _load_sent().items() if v and k.rsplit(":", 1)[-1] in PULSE_TOKENS]
+        for kind, target, name in set(_PULSE["targets"]) - set(targets):
+            _send_pulse(kind, target, name, None)  # stopped: never leave a frame of ours behind
+        _PULSE["targets"] = targets
+    if not _PULSE["targets"]:
+        return
+    _PULSE["frame"] = (_PULSE["frame"] + 1) % len(PULSE_FRAMES)
+    for kind, target, name in _PULSE["targets"]:
+        _send_pulse(kind, target, name, PULSE_FRAMES[_PULSE["frame"]])
+
+
+def _send_pulse(kind: str, target: str, name: str, value: str | None) -> None:
+    try:
+        herdr.report_metadata(kind, target, SOURCE, {name: value}, int(next(_SEQ)))
+    except (herdr.HerdrError, OSError, ValueError):
+        pass
 
 
 def side_counts(agents: list) -> str:
@@ -148,8 +192,8 @@ def session_rows(label: str, agents: list, folded: bool = False) -> list[tuple[s
 
 
 def agent_tree(agents: list, folded: dict | None = None) -> list[tuple]:
-    """herdr's Agents panel as a tree: (agent, order, heading, line, lane, hidden) per agent in
-    herdr. Projects come in the order of their most urgent agent, agents by model.rank (running,
+    """herdr's Agents panel as a tree: (agent, order, heading, line, lane, hidden, tally) per agent
+    in herdr; the heading carrier also gets the tally (side_counts, "+N folded"). Projects come in the order of their most urgent agent, agents by model.rank (running,
     then needs you, then idle; the most recent state change first). The first shown agent of
     a project carries the project heading row. A folded project shows only the agents that need
     you (or its first agent, to carry the heading)."""
@@ -166,19 +210,19 @@ def agent_tree(agents: list, folded: dict | None = None) -> list[tuple]:
         shown = [x for x in group if x.status in model.NEEDS_YOU] if shut else group
         shown = shown or group[:1]
         if a not in shown:
-            out.append((a, f"{i:04d}", "", "", "", True))
+            out.append((a, f"{i:04d}", "", "", "", True, ""))
             continue
         last = a is shown[-1]
-        head = ""
+        head = tally = ""
         if a is shown[0]:
             more = len(group) - len(shown)
-            head = (f"{'▸' if shut else '▾'} {a.project.name[:30]}  {side_counts(group)}"
-                    + (f"  +{more} folded" if more else ""))
+            head = f"{'▸' if shut else '▾'} {a.project.name[:30]}"
+            tally = "  ".join(filter(None, (side_counts(group), f"+{more} folded" if more else "")))
         # herdr indents an entry's 2nd and later rows by two columns: the heading carrier's line is
         # its 2nd row, so every other agent's line (its 1st row) gets the same two-column pad
         line = (PAD * 2 if not head else "") + f"{'└─' if last else '├─'} {SIDE_ICON.get(a.status, '·')} {a.display[:34]}"
         lane = ""  # no worktree row (setup.AGENT_ROWS); "" clears one sent by an older version
-        out.append((a, f"{i:04d}", head, line, lane, False))
+        out.append((a, f"{i:04d}", head, line, lane, False, tally))
     return out
 
 
@@ -305,6 +349,7 @@ def sync(force: bool = False) -> None:
         lines = [r[0] for r in rows]
         # a Space named after its only session shows no session row: its context mark goes on the heading
         _report("workspace", w.id, "agents", side_counts(here), old, sent, seq)
+        _report("workspace", w.id, "pulse", pulse_mark(here + outside), old, sent, seq)
         _report("workspace", w.id, "ctx", "" if rows else _worst_mark(here), old, sent, seq)
         _report("workspace", w.id, "work", "" if rows else " ".join(filter(None, map(work_mark, here))), old, sent, seq)
         for i in range(SESSION_ROWS):
@@ -366,10 +411,13 @@ def sync(force: bool = False) -> None:
             pass
 
     # herdr's Agents panel, nested by project: heading row, ├/└ branches (one line per session, no worktree row)
-    for a, order, head, line, lane, hidden in agent_tree(world.agents, folded):
+    working = {a.project.root for a in world.agents if a.in_herdr and a.status == "working"}
+    for a, order, head, line, lane, hidden, tally in agent_tree(world.agents, folded):
         _report("pane", a.pane_id, "hide", "1" if hidden else "", old, sent, seq)
         _report("pane", a.pane_id, "order", order, old, sent, seq)
         _report("pane", a.pane_id, "grp", head, old, sent, seq)
+        _report("pane", a.pane_id, "gpulse", PULSE if head and a.project.root in working else "", old, sent, seq)
+        _report("pane", a.pane_id, "gcount", tally, old, sent, seq)
         _report("pane", a.pane_id, "line", line, old, sent, seq)
         _report("pane", a.pane_id, "ctx", ctx_mark(a), old, sent, seq)
         _report("pane", a.pane_id, "lane", lane, old, sent, seq)

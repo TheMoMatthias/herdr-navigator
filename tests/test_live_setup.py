@@ -334,7 +334,8 @@ def test_agent_panel_tree_groups_by_project_most_urgent_first():
               ag("B2", "reply", wt, "p3"), ag("OUT", "blocked", a_root, "")]   # not in herdr: not in its panel
     rows = [(x[0].display,) + tuple(x[1:]) for x in sync.agent_tree(agents)]
     assert [r[0] for r in rows] == ["A2", "A1", "B2", "B1"]   # Alpha first: it holds the agent that runs
-    assert rows[0][2].startswith("▾ Alpha  ⚙1") and rows[1][2] == "" and rows[2][2].startswith("▾ Beta")
+    assert rows[0][2] == "▾ Alpha" and rows[1][2] == "" and rows[2][2] == "▾ Beta"
+    assert rows[0][6] == "" and rows[2][6] == "?1" and rows[1][6] == ""  # working is the pulse, idle not counted
     assert rows[0][3] == "├─ ◐ A2" and rows[1][3] == sync.PAD * 2 + "└─ ○ A1"
     assert rows[2][3] == "├─ ? B2" and rows[3][3] == sync.PAD * 2 + "└─ ○ B1"
     assert rows[2][4] == "" and rows[3][4] == ""  # no worktree row: it read as a duplicate name
@@ -342,7 +343,7 @@ def test_agent_panel_tree_groups_by_project_most_urgent_first():
     assert all(ch not in "".join(r[2] + r[3] + r[4] for r in rows) for ch in "⏳✔⚠⎇")   # no wide glyphs
     # folded: only who needs you stays, else the first agent carries the heading
     f = {r[0]: r for r in [(x[0].display,) + tuple(x[1:]) for x in sync.agent_tree(agents, {"/b": True, "/a": True})]}
-    assert not f["B2"][5] and f["B1"][5] and f["B2"][2].startswith("▸ Beta") and "+1 folded" in f["B2"][2]
+    assert not f["B2"][5] and f["B1"][5] and f["B2"][2] == "▸ Beta" and f["B2"][6] == "?1  +1 folded"
     assert f["B2"][3] == "└─ ? B2"
     assert not f["A2"][5] and f["A1"][5] and f["A2"][2].startswith("▸ Alpha")
 
@@ -647,3 +648,27 @@ def test_dynamic_workflow_and_its_agents_counted(tmp_path):
     with open(tr, "a", encoding="utf-8") as f:
         f.write(json.dumps(_notice("w1", "completed")) + "\n")
     assert live.background(str(tr)).runs == set()
+
+
+def test_working_project_gets_a_pulsing_dot(tmp_path, monkeypatch):
+    from navigator import model, sync
+    p = projects.Project("/a", "Alpha")
+    assert sync.pulse_mark([model.Agent("claude", "idle", p)]) == ""
+    assert sync.pulse_mark([model.Agent("claude", "idle", p), model.Agent("claude", "working", p)]) == "●"
+    monkeypatch.setattr(sync.settings, "state_dir", lambda: tmp_path)
+    monkeypatch.setattr(sync, "_PULSE", {"mtime": 0.0, "targets": [], "frame": 0})
+    calls = []
+    monkeypatch.setattr(sync.herdr, "report_metadata", lambda kind, target, src, tokens, seq: calls.append(
+        (kind, target, tokens)))
+    sync._save_sent({"workspace:w1:pulse": "●", "pane:w6:pF:gpulse": "●", "pane:w6:pF:grp": "▾ A",
+                     "workspace:w2:pulse": ""}, time.time(), True)
+    sync.pulse_tick()
+    sync.pulse_tick()
+    assert calls == [("workspace", "w1", {"pulse": sync.PULSE_FRAMES[1]}), ("pane", "w6:pF", {"gpulse": sync.PULSE_FRAMES[1]}),
+                     ("workspace", "w1", {"pulse": sync.PULSE_FRAMES[2]}), ("pane", "w6:pF", {"gpulse": sync.PULSE_FRAMES[2]})]
+    assert len(set(sync.PULSE_FRAMES)) == 4 and all(f.startswith("●") for f in sync.PULSE_FRAMES)
+    calls.clear()
+    time.sleep(0.02)
+    sync._save_sent({"workspace:w1:pulse": "●"}, time.time(), True)  # the pane's project stopped working
+    sync.pulse_tick()
+    assert ("pane", "w6:pF", {"gpulse": None}) in calls and ("workspace", "w1", {"pulse": sync.PULSE_FRAMES[3]}) in calls

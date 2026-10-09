@@ -32,6 +32,7 @@ STATUS_EVERY = 15.0   # status line refresh without events (outside sessions, ph
 STATUS_GAP = 2.0      # at most one event-driven status refresh per 2 s (busy agents retitle constantly)
 HEAL_EVERY = 300.0    # a sync even without events (events cover changes; this heals the rest)
 WORK_EVERY = 10.0     # did a session's sub-agents or background jobs change? (a sync when so)
+PULSE_EVERY = 0.7     # one frame of the pulsing "working" dot (sync.pulse_tick): ~4 s a breath
 VIEW_EVERY = 20.0     # is herdr's Agents view still ours? (~5 ms; re-applied when dropped)
 CODE_EVERY = 10.0     # has the plugin been updated? (exit, so the new code takes over)
 GIVE_UP = 300.0       # herdr unreachable this long: exit (its startup hook starts a new one)
@@ -220,7 +221,7 @@ class Daemon:
         from . import live, model, status, sync
         model.SESSIONS_TTL = 10.0
         code = _code_stamp()
-        last_sync = last_status = last_beat = last_heal = last_view = last_code = last_work = 0.0
+        last_sync = last_status = last_beat = last_heal = last_view = last_code = last_work = last_pulse = 0.0
         work_sig = None
         poke_seen = 0.0
         status_text = None
@@ -257,6 +258,9 @@ class Daemon:
                     if work_sig is not None and sig != work_sig:
                         self.want_sync = True
                     work_sig = sig
+                if now - last_pulse >= PULSE_EVERY:
+                    last_pulse = now
+                    sync.pulse_tick()
                 if now - last_heal >= HEAL_EVERY:
                     last_heal = now
                     self.want_sync = True
@@ -290,7 +294,7 @@ class Daemon:
             except Exception as e:  # one bad step never ends the daemon
                 self.log(f"step failed: {e!r}")
                 time.sleep(1.0)
-            time.sleep(0.1 if self.want_sync or self.want_status else 0.25)
+            time.sleep(0.1 if self.want_sync or self.want_status else 0.2)
         self.stop = True
 
 
