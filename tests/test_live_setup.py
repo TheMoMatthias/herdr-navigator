@@ -653,6 +653,16 @@ def test_dynamic_workflow_and_its_agents_counted(tmp_path):
     assert live.background(str(tr)).runs == set()
 
 
+def test_stopped_workflow_no_longer_counted(tmp_path):
+    tr = tmp_path / "S.jsonl"
+    launch = lambda tid, run: {"type": "user", "timestamp": "2026-10-09T10:00:00Z", "toolUseResult": {
+        "status": "async_launched", "taskId": tid, "taskType": "local_workflow", "runId": run}}
+    jl(tr, [launch("w1", "wf_1"), {"type": "user", "toolUseResult": {  # TaskStop sends no completion notice
+        "message": "Successfully stopped task: w1 (plan)", "task_id": "w1", "task_type": "local_workflow"}},
+        launch("w2", "wf_2")])
+    assert live.background(str(tr)).runs == {"wf_2"}
+
+
 def test_working_project_gets_a_pulsing_dot(tmp_path, monkeypatch):
     from navigator import model, sync
     p = projects.Project("/a", "Alpha")

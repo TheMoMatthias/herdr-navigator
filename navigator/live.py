@@ -178,7 +178,8 @@ def _epoch(ts: str) -> float:
 def _bg_scan(state: list, data: bytes) -> None:
     started, ended = state[1], state[2]
     for raw in data.split(b"\n"):
-        if b"backgroundTaskId" not in raw and b"async_launched" not in raw and b"<task-notification>" not in raw:
+        if (b"backgroundTaskId" not in raw and b"async_launched" not in raw and b"<task-notification>" not in raw
+                and b"Successfully stopped task" not in raw):
             continue
         rec = _loads(raw.decode("utf-8", "replace"))
         if not isinstance(rec, dict) or rec.get("isSidechain"):
@@ -186,7 +187,9 @@ def _bg_scan(state: list, data: bytes) -> None:
         res = rec.get("toolUseResult")
         if isinstance(res, dict):
             at = _epoch(rec.get("timestamp", ""))
-            if res.get("backgroundTaskId"):
+            if res.get("task_id") and str(res.get("message", "")).startswith("Successfully stopped task"):
+                ended.add(res["task_id"])  # TaskStop: a stopped task never sends its completion notice
+            elif res.get("backgroundTaskId"):
                 started[res["backgroundTaskId"]] = ("job", at, "")
             elif res.get("status") == "async_launched":
                 if res.get("agentId"):  # a background sub-agent: its notice carries the agent id
