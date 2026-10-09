@@ -126,7 +126,8 @@ def PULSE_TOKEN(name: str) -> dict:  # rules: most blanks first, "contains" matc
 # it has running $b1..$b8);
 # empty rows disappear
 SPACE_ROWS = [
-    ["state_icon", "workspace", PULSE_TOKEN("$pulse"), {"token": "$agents", "dim": True}, CTX_TOKEN("$ctx"), WORK_TOKEN("$work")],
+    ["state_icon", "workspace", {"token": "$agents", "dim": True}, CTX_TOKEN("$ctx"), WORK_TOKEN("$work"),
+     PULSE_TOKEN("$pulse")],  # last: its frames change width (sync.PULSE_FRAMES)
     ["branch", "git_status"],
     *[[{"token": f"$s{i}", **TREE}, CTX_TOKEN(f"$c{i}"), WORK_TOKEN(f"$b{i}")] for i in range(1, 9)],
 ]
@@ -146,7 +147,7 @@ STATE_TEXT = {"token": "state_text", "fg": MUTED, "rules": [
     {"contains": "inactive", "ignore_case": True, "fg": "#504945"},
 ]}
 AGENT_ROWS = [
-    [{"token": "$grp", "bold": True}, PULSE_TOKEN("$gpulse"), {"token": "$gcount", "dim": True}],
+    [{"token": "$grp", "bold": True}, {"token": "$gcount", "dim": True}, PULSE_TOKEN("$gpulse")],
     [{"token": "$line", **TREE}, CTX_TOKEN("$ctx"), STATE_TEXT, WORK_TOKEN("$subagents")],
 ]
 

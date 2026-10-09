@@ -444,6 +444,9 @@ def test_daemon_heartbeat_lock_and_event_routing(tmp_path, monkeypatch):
     assert daemon.alive() and hook._alive() and daemon.poke() and (tmp_path / "daemon.poke").exists()
     jsonfile.write(tmp_path / "daemon.json", {"pid": 1, "at": time.time() - daemon.STALE - 1})
     assert not daemon.alive() and not hook._alive()
+    spawned = []
+    monkeypatch.setattr(daemon.subprocess, "Popen", lambda *a, **k: spawned.append(a))
+    assert not daemon.start() and not spawned  # never from a test: it would outlive it on a temp dir
     held = daemon._lock()                      # one daemon per server: a second lock fails
     assert held is not None and daemon._lock() is None
     held.close()
@@ -671,6 +674,8 @@ def test_working_project_gets_a_pulsing_dot(tmp_path, monkeypatch):
     rules = setup.PULSE_TOKEN("$pulse")["rules"]
     assert [len(r["contains"]) for r in rules] == list(range(sync.PULSE_SHADES - 1, 0, -1))  # longest run first
     assert len({r["fg"] for r in rules}) == sync.PULSE_SHADES - 1
+    for row in (setup.SPACE_ROWS[0], setup.AGENT_ROWS[0]):  # its frames change width: nothing may follow it
+        assert row[-1]["token"] in ("$pulse", "$gpulse")
     calls.clear()
     time.sleep(0.02)
     sync._save_sent({"workspace:w1:pulse": "●"}, time.time(), True)  # the pane's project stopped working

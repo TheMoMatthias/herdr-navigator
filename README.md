@@ -291,7 +291,7 @@ Always visible in herdr:
 - **Sidebar, spaces:** one group per repo. The repo's own checkout comes first (its second
   line shows the branch, e.g. `main`), and the active worktrees are indented under it, named
   after the session working there. `!1 ?1 ✓1` counts the sessions that are blocked, waiting for a reply and done (idle and
-  inactive ones are not counted); a slowly pulsing `●` after the name means one is working
+  inactive ones are not counted); a pulsing cyan `●` at the end of the heading means one is working
   (the Agents panel's project headings carry the same).
   One Space per folder: a second Space opened on a folder that has one (herdr's sidebar
   `new` does that) joins it as a tab, running sessions included (`merge_duplicates` in

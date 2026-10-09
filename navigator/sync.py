@@ -92,12 +92,12 @@ PAD = "\u2800"  # braille blank: looks like a space, but herdr trims real spaces
 # left out (the rows below still list them) and working ones show as the pulsing dot instead.
 TALLY_ICON = {"blocked": "!", "reply": "?", "done": "✓"}
 
-# A project with a session working gets a slowly pulsing dot after its name (Spaces: $pulse,
-# Agents: $gpulse). herdr cannot animate a token, so the daemon steps through PULSE_FRAMES
+# A project with a session working gets a pulsing dot at the end of its heading row (Spaces:
+# $pulse, Agents: $gpulse): the frames differ in width, so nothing may follow the dot. herdr cannot animate a token, so the daemon steps through PULSE_FRAMES
 # (pulse_tick): the frame rides along as trailing braille blanks that setup.PULSE_TOKEN's rules
 # shade from bright to dim. A sync only ever reports the first frame (or "" to stop it).
 PULSE = "●"
-PULSE_SHADES = 7  # bright, then six steps dimmer: down and back up is one breath
+PULSE_SHADES = 6  # bright, then five steps dimmer: down and back up is one breath (10 frames)
 PULSE_FRAMES = [PULSE + PAD * k for k in (*range(PULSE_SHADES), *range(PULSE_SHADES - 2, 0, -1))]
 PULSE_TOKENS = ("pulse", "gpulse")
 
