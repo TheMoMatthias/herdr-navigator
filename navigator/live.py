@@ -8,6 +8,8 @@
   background sub-agent counts until its task-notification arrives, however quiet it is.
 * Background jobs (Claude): a Bash result carrying `backgroundTaskId` starts one, its
   <task-notification> with a final status ends it; jobs from before the process started died with it.
+  Dynamic workflows the same way (an `async_launched` result with taskType local_workflow); their
+  agents write <session>/subagents/workflows/<run id>/agent-*.jsonl and count as sub-agents.
 * Activity: the last tool call (or message) in the tail of the transcript.
 """
 from __future__ import annotations
@@ -52,6 +54,7 @@ class Running:
     activity: str = ""
     subagents: list[SubAgent] = field(default_factory=list)
     jobs: int = 0               # background jobs (shell commands) still running
+    workflows: int = 0          # dynamic workflows still running
     started_at: float = 0.0     # when the process started (epoch seconds), 0 if unknown
 
     @property
@@ -175,10 +178,16 @@ def _bg_scan(state: list, data: bytes) -> None:
             continue
         res = rec.get("toolUseResult")
         if isinstance(res, dict):
+            at = _epoch(rec.get("timestamp", ""))
             if res.get("backgroundTaskId"):
-                started[res["backgroundTaskId"]] = ("job", _epoch(rec.get("timestamp", "")))
-            elif res.get("isAsync") and res.get("status") == "async_launched" and res.get("agentId"):
-                started[res["agentId"]] = ("agent", _epoch(rec.get("timestamp", "")))
+                started[res["backgroundTaskId"]] = ("job", at, "")
+            elif res.get("status") == "async_launched":
+                if res.get("agentId"):  # a background sub-agent: its notice carries the agent id
+                    started[res["agentId"]] = ("agent", at, "")
+                elif res.get("taskType") == "local_workflow" and res.get("taskId"):
+                    started[res["taskId"]] = ("workflow", at, str(res.get("runId") or ""))
+                elif res.get("taskId"):  # any other background task (a monitor, ...)
+                    started[res["taskId"]] = ("job", at, "")
         # the notification itself, as queued for the model (not a tool result quoting one)
         if rec.get("type") == "queue-operation" and rec.get("operation") == "enqueue":
             text = rec.get("content")
@@ -194,13 +203,20 @@ def _bg_scan(state: list, data: bytes) -> None:
                     ended.add(tid)
 
 
-def background(transcript: str, since: float = 0.0) -> tuple[int, set[str]]:
-    """(background jobs still running, ids of background sub-agents still running) for a Claude
-    session. Reads only what was appended since the last call."""
+@dataclass
+class Background:
+    jobs: int = 0                                  # background shell jobs and other tasks
+    agents: set[str] = field(default_factory=set)  # background sub-agents' ids
+    runs: set[str] = field(default_factory=set)    # dynamic workflows' run ids
+
+
+def background(transcript: str, since: float = 0.0) -> Background:
+    """What a Claude session still has running in the background. Reads only what was appended
+    since the last call."""
     try:
         size = os.path.getsize(transcript)
     except OSError:
-        return 0, set()
+        return Background()
     state = _BG.get(transcript)
     if state is None or size < state[0]:  # new, or rewritten
         state = _BG[transcript] = [max(0, size - BG_FIRST), {}, set()]
@@ -214,31 +230,42 @@ def background(transcript: str, since: float = 0.0) -> tuple[int, set[str]]:
         cut = data.rfind(b"\n") + 1  # a half-written last line waits for the next call
         _bg_scan(state, data[:cut])
         state[0] += cut
-    live = [(tid, kind) for tid, (kind, at) in state[1].items() if tid not in state[2] and at >= since]
-    return sum(1 for _, k in live if k == "job"), {tid for tid, k in live if k == "agent"}
+    live = [(tid, kind, run) for tid, (kind, at, run) in state[1].items() if tid not in state[2] and at >= since]
+    return Background(jobs=sum(1 for _, k, _ in live if k == "job"),
+                      agents={tid for tid, k, _ in live if k == "agent"},
+                      runs={run or tid for tid, k, run in live if k == "workflow"})
 
 
-def _subagent_files(transcript: str, now: float, keep: set[str] = frozenset()) -> list[tuple[Path, float]]:
-    """The running sub-agents' transcripts: written recently, or a background one not yet done."""
-    d = Path(transcript).with_suffix("") / "subagents"
+def _agent_files(d: Path) -> list[tuple[Path, float]]:
     try:  # scandir: on Windows the listing carries the times, no stat call per sub-agent file
         with os.scandir(d) as it:
-            files = [(Path(e.path), e.stat().st_mtime) for e in it
-                     if e.name.startswith("agent-") and e.name.endswith(".jsonl")]
+            return [(Path(e.path), e.stat().st_mtime) for e in it
+                    if e.name.startswith("agent-") and e.name.endswith(".jsonl")]
     except OSError:
         return []
-    return [(f, m) for f, m in files if now - m <= ACTIVE_SECONDS or f.stem.removeprefix("agent-") in keep]
 
 
-def work_counts(now: float) -> list[tuple[str, int, int]]:
-    """(session id, sub-agents, background jobs) per running Claude session: cheap enough to
+def _subagent_files(transcript: str, now: float, keep: set[str] = frozenset(),
+                    runs: set[str] = frozenset()) -> list[tuple[Path, float]]:
+    """The running sub-agents' transcripts: written recently, or a background one not yet done;
+    plus the recently written agents of the session's running workflows."""
+    d = Path(transcript).with_suffix("") / "subagents"
+    out = [(f, m) for f, m in _agent_files(d)
+           if now - m <= ACTIVE_SECONDS or f.stem.removeprefix("agent-") in keep]
+    for run in runs:
+        out += [(f, m) for f, m in _agent_files(d / "workflows" / run) if now - m <= ACTIVE_SECONDS]
+    return out
+
+
+def work_counts(now: float) -> list[tuple[str, int, int, int]]:
+    """(session id, sub-agents, workflows, background jobs) per running Claude session: cheap enough to
     ask every few seconds (only appended transcript lines are read, sub-agents are a listing)."""
     out = []
     for r in _claude_registry(now):
         tr = _transcript_of(r.session_id)
         if tr:
-            jobs, agents = background(tr, r.started_at)
-            out.append((r.session_id, len(_subagent_files(tr, now, agents)), jobs))
+            bg = background(tr, r.started_at)
+            out.append((r.session_id, len(_subagent_files(tr, now, bg.agents, bg.runs)), len(bg.runs), bg.jobs))
     return out
 
 
@@ -254,9 +281,10 @@ def _transcript_of(session_id: str) -> str:
     return tr
 
 
-def claude_subagents(transcript: str, now: float, keep: set[str] = frozenset()) -> list[SubAgent]:
+def claude_subagents(transcript: str, now: float, keep: set[str] = frozenset(),
+                     runs: set[str] = frozenset()) -> list[SubAgent]:
     out = []
-    for f, m in _subagent_files(transcript, now, keep):
+    for f, m in _subagent_files(transcript, now, keep, runs):
         meta = {}
         try:
             meta = json.loads(f.with_suffix(".meta.json").read_text(encoding="utf-8"))
@@ -324,8 +352,9 @@ def running(sessions: list[Session]) -> list[Running]:
         if r.transcript:
             r.activity = activity(r.transcript)
             if r.cli == "claude":
-                r.jobs, agents = background(r.transcript, r.started_at)
-                r.subagents = claude_subagents(r.transcript, now, agents)
+                bg = background(r.transcript, r.started_at)
+                r.jobs, r.workflows = bg.jobs, len(bg.runs)
+                r.subagents = claude_subagents(r.transcript, now, bg.agents, bg.runs)
         r.subagents += children.get(r.session_id, [])
     return out
 

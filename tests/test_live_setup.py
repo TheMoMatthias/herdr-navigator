@@ -576,17 +576,19 @@ def test_background_jobs_and_agents_counted_until_their_notification(tmp_path):
             # a tool result that merely quotes a notification ends nothing
             {"type": "user", "timestamp": at, "toolUseResult": {"stdout": "<task-id>b2</task-id> <status>completed</status>"}},
             _notice("b1", "running")])
-    assert live.background(str(tr)) == (2, {"a1"})
+    b = live.background(str(tr))
+    assert (b.jobs, b.agents) == (2, {"a1"})
     with open(tr, "a", encoding="utf-8") as f:  # appended: only the new lines are read
         f.write(json.dumps(_notice("b1", "completed")) + "\n" + json.dumps(_notice("a1", "killed")) + "\n")
         f.write('{"type": "queue-operation", "operation": "enqueue", "content": "<task-notification><task-id>b2')
-    assert live.background(str(tr)) == (1, set())  # the half-written line waits
+    b = live.background(str(tr))
+    assert (b.jobs, b.agents) == (1, set())  # the half-written line waits
     with open(tr, "a", encoding="utf-8") as f:
         f.write('</task-id><status>failed</status></task-notification>"}\n')
-    assert live.background(str(tr)) == (0, set())
+    assert live.background(str(tr)) == live.Background()
     # jobs from before the process started died with it
     jl(tmp_path / "T.jsonl", [{"type": "user", "timestamp": at, "toolUseResult": {"backgroundTaskId": "old"}}])
-    assert live.background(str(tmp_path / "T.jsonl"), since=live._epoch("2026-10-09T11:00:00Z")) == (0, set())
+    assert live.background(str(tmp_path / "T.jsonl"), since=live._epoch("2026-10-09T11:00:00Z")) == live.Background()
 
 
 def test_quiet_background_subagent_still_listed(tmp_path):
@@ -617,7 +619,26 @@ def test_work_counts_follow_jobs_for_the_daemon(tmp_path):
     (tmp_path / "claude" / "sessions").mkdir(parents=True)
     (tmp_path / "claude" / "sessions" / "1.json").write_text(json.dumps(
         {"pid": os.getpid(), "sessionId": "S1", "cwd": str(tmp_path), "kind": "interactive"}))
-    assert live.work_counts(time.time()) == [("S1", 0, 1)]
+    assert live.work_counts(time.time()) == [("S1", 0, 0, 1)]
     with open(tr, "a", encoding="utf-8") as f:
         f.write(json.dumps(_notice("b1", "completed")) + "\n")
-    assert live.work_counts(time.time()) == [("S1", 0, 0)]
+    assert live.work_counts(time.time()) == [("S1", 0, 0, 0)]
+
+
+def test_dynamic_workflow_and_its_agents_counted(tmp_path):
+    from navigator import model, sync
+    tr = tmp_path / "S.jsonl"
+    jl(tr, [{"type": "user", "timestamp": "2026-10-09T10:00:00Z", "toolUseResult": {
+        "status": "async_launched", "taskId": "w1", "taskType": "local_workflow", "runId": "wf_1"}}])
+    run = tr.with_suffix("") / "subagents" / "workflows" / "wf_1"
+    jl(run / "agent-x.jsonl", [{"type": "user"}])
+    jl(run / "journal.jsonl", [{"x": 1}])
+    b = live.background(str(tr))
+    assert (b.jobs, b.agents, b.runs) == (0, set(), {"wf_1"})
+    assert [s.name for s in live.claude_subagents(str(tr), time.time(), b.agents, b.runs)] == ["x"]
+    a = model.Agent("claude", "working", projects.Project("/r", "R"), name="L", pane_id="p",
+                    workflows=1, subagents=[object()])
+    assert sync.work_mark(a) == "↳1 ◈1"
+    with open(tr, "a", encoding="utf-8") as f:
+        f.write(json.dumps(_notice("w1", "completed")) + "\n")
+    assert live.background(str(tr)).runs == set()
