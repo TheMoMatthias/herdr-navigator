@@ -19,7 +19,7 @@ from pathlib import Path
 import tomlkit
 from tomlkit.items import AoT, Array, InlineTable, Table
 
-from . import settings
+from . import settings, sync
 
 ROOT = Path(__file__).resolve().parent.parent
 WINDOWS = os.name == "nt"
@@ -107,12 +107,19 @@ def WORK_TOKEN(name: str) -> dict:
     return {"token": name, "fg": "#83a598"}
 
 
-# The pulsing "working" dot after a project's name (sync.PULSE_FRAMES): amber, the frame's
-# trailing braille blanks shade it down and back up again.
-def PULSE_TOKEN(name: str) -> dict:
-    return {"token": name, "fg": "#fabd2f", "bold": True,
-            "rules": [{"contains": "⠀⠀⠀", "fg": "#5c4a1e"}, {"contains": "⠀⠀", "fg": "#8a6c22"},
-                      {"contains": "⠀", "fg": "#c29527"}]}
+# The pulsing "working" dot after a project's name (sync.PULSE_FRAMES): cyan, the frame's
+# trailing braille blanks (0..PULSE_SHADES-1) shade it evenly from bright to deep teal.
+PULSE_BRIGHT, PULSE_DIM = (0x7d, 0xf9, 0xff), (0x14, 0x4a, 0x55)
+
+
+def _pulse_shade(k: int) -> str:
+    t = k / (sync.PULSE_SHADES - 1)
+    return "#" + "".join(f"{round(b + (d - b) * t):02x}" for b, d in zip(PULSE_BRIGHT, PULSE_DIM))
+
+
+def PULSE_TOKEN(name: str) -> dict:  # rules: most blanks first, "contains" matches any shorter run too
+    return {"token": name, "fg": _pulse_shade(0), "bold": True,
+            "rules": [{"contains": sync.PAD * k, "fg": _pulse_shade(k)} for k in range(sync.PULSE_SHADES - 1, 0, -1)]}
 
 
 # one row per session inside the Space ($s1..$s8 from sync.py, its context mark $c1..$c8, what

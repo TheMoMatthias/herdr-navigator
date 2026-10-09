@@ -97,7 +97,8 @@ TALLY_ICON = {"blocked": "!", "reply": "?", "done": "✓"}
 # (pulse_tick): the frame rides along as trailing braille blanks that setup.PULSE_TOKEN's rules
 # shade from bright to dim. A sync only ever reports the first frame (or "" to stop it).
 PULSE = "●"
-PULSE_FRAMES = [PULSE + PAD * k for k in (0, 1, 2, 3, 2, 1)]
+PULSE_SHADES = 7  # bright, then six steps dimmer: down and back up is one breath
+PULSE_FRAMES = [PULSE + PAD * k for k in (*range(PULSE_SHADES), *range(PULSE_SHADES - 2, 0, -1))]
 PULSE_TOKENS = ("pulse", "gpulse")
 
 
@@ -128,6 +129,10 @@ def pulse_tick() -> None:
     _PULSE["frame"] = (_PULSE["frame"] + 1) % len(PULSE_FRAMES)
     for kind, target, name in _PULSE["targets"]:
         _send_pulse(kind, target, name, PULSE_FRAMES[_PULSE["frame"]])
+
+
+def pulsing() -> bool:
+    return bool(_PULSE["targets"])
 
 
 def _send_pulse(kind: str, target: str, name: str, value: str | None) -> None:

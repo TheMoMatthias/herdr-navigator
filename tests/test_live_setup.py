@@ -666,7 +666,11 @@ def test_working_project_gets_a_pulsing_dot(tmp_path, monkeypatch):
     sync.pulse_tick()
     assert calls == [("workspace", "w1", {"pulse": sync.PULSE_FRAMES[1]}), ("pane", "w6:pF", {"gpulse": sync.PULSE_FRAMES[1]}),
                      ("workspace", "w1", {"pulse": sync.PULSE_FRAMES[2]}), ("pane", "w6:pF", {"gpulse": sync.PULSE_FRAMES[2]})]
-    assert len(set(sync.PULSE_FRAMES)) == 4 and all(f.startswith("●") for f in sync.PULSE_FRAMES)
+    assert len(set(sync.PULSE_FRAMES)) == sync.PULSE_SHADES and all(f.startswith("●") for f in sync.PULSE_FRAMES)
+    from navigator import setup
+    rules = setup.PULSE_TOKEN("$pulse")["rules"]
+    assert [len(r["contains"]) for r in rules] == list(range(sync.PULSE_SHADES - 1, 0, -1))  # longest run first
+    assert len({r["fg"] for r in rules}) == sync.PULSE_SHADES - 1
     calls.clear()
     time.sleep(0.02)
     sync._save_sent({"workspace:w1:pulse": "●"}, time.time(), True)  # the pane's project stopped working
