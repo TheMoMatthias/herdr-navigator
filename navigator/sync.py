@@ -2,7 +2,7 @@
 
 * auto-named workspaces are renamed to their project (never a name you typed yourself);
 * linked-worktree workspaces are named after the session(s) working in them;
-* every workspace reports `$agents` (e.g. "⚠1 ◐2") and `$s1`..`$s8`: one line per session working
+* every workspace reports `$agents` (e.g. "!1 ✓1 ⚙2") and `$s1`..`$s8`: one line per session working
   in it (tabs included, sessions in other windows marked ↗), which the sidebar shows indented under
   the Space, so a session in a second tab is never hidden behind its workspace's name;
 * every agent pane reports `$session` (its name as the CLI shows it), `$project`
@@ -88,10 +88,14 @@ SIDE_ICON = {"blocked": "!", "reply": "?", "done": "●", "working": "◐", "idl
 PAD = "\u2800"  # braille blank: looks like a space, but herdr trims real spaces off token values
 
 
+# The Space heading's tally: only the states that matter at a glance; idle and inactive sessions
+# are left out (the rows below still list them).
+TALLY_ICON = {"blocked": "!", "reply": "?", "done": "✓", "working": "⚙"}
+
+
 def side_counts(agents: list) -> str:
     c = Counter(a.status for a in agents)
-    return " ".join(f"{SIDE_ICON[s]}{c[s]}" for s in ("blocked", "reply", "done", "working", "idle", "inactive")
-                    if c.get(s))
+    return " ".join(f"{icon}{c[s]}" for s, icon in TALLY_ICON.items() if c.get(s))
 
 
 # Context in use: a 4-cell bar (▰▰▱▱) of the window after every session, in its own token so

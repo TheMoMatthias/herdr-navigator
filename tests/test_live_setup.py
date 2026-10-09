@@ -334,7 +334,7 @@ def test_agent_panel_tree_groups_by_project_most_urgent_first():
               ag("B2", "reply", wt, "p3"), ag("OUT", "blocked", a_root, "")]   # not in herdr: not in its panel
     rows = [(x[0].display,) + tuple(x[1:]) for x in sync.agent_tree(agents)]
     assert [r[0] for r in rows] == ["A2", "A1", "B2", "B1"]   # Alpha first: it holds the agent that runs
-    assert rows[0][2].startswith("▾ Alpha  ◐1 ○1") and rows[1][2] == "" and rows[2][2].startswith("▾ Beta")
+    assert rows[0][2].startswith("▾ Alpha  ⚙1") and rows[1][2] == "" and rows[2][2].startswith("▾ Beta")
     assert rows[0][3] == "├─ ◐ A2" and rows[1][3] == sync.PAD * 2 + "└─ ○ A1"
     assert rows[2][3] == "├─ ? B2" and rows[3][3] == sync.PAD * 2 + "└─ ○ B1"
     assert rows[2][4] == "" and rows[3][4] == ""  # no worktree row: it read as a duplicate name
