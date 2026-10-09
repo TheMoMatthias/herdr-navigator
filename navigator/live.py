@@ -9,7 +9,7 @@
 * Background jobs (Claude): a Bash result carrying `backgroundTaskId` starts one, its
   <task-notification> with a final status ends it; jobs from before the process started died with it.
   Dynamic workflows the same way (an `async_launched` result with taskType local_workflow); their
-  agents write <session>/subagents/workflows/<run id>/agent-*.jsonl and count as sub-agents.
+  agents write <session>/subagents/workflows/<run id>/agent-*.jsonl and belong to that background task (⟳), not to the session's ↳ count.
 * Activity: the last tool call (or message) in the tail of the transcript.
 """
 from __future__ import annotations
@@ -39,6 +39,7 @@ class SubAgent:
     model: str
     mtime: float
     activity: str = ""
+    workflow: str = ""  # run id when the agent works for a dynamic workflow (a ⟳ task), not for the session (↳)
 
 
 @dataclass
@@ -265,7 +266,8 @@ def work_counts(now: float) -> list[tuple[str, int, int, int]]:
         tr = _transcript_of(r.session_id)
         if tr:
             bg = background(tr, r.started_at)
-            out.append((r.session_id, len(_subagent_files(tr, now, bg.agents, bg.runs)), len(bg.runs), bg.jobs))
+            own = [f for f, _ in _subagent_files(tr, now, bg.agents, bg.runs) if not _workflow_of(f)]
+            out.append((r.session_id, len(own), len(bg.runs), bg.jobs))
     return out
 
 
@@ -279,6 +281,11 @@ def _transcript_of(session_id: str) -> str:
     hits = list(_claude_root().glob(f"*/{session_id}.jsonl"))
     _TRANSCRIPTS[session_id] = tr = str(hits[0]) if hits else ""
     return tr
+
+
+def _workflow_of(f: Path) -> str:
+    """The run id of a workflow agent's transcript (subagents/workflows/<run>/agent-*.jsonl), else ""."""
+    return f.parent.name if f.parent.parent.name == "workflows" else ""
 
 
 def claude_subagents(transcript: str, now: float, keep: set[str] = frozenset(),
@@ -297,6 +304,7 @@ def claude_subagents(transcript: str, now: float, keep: set[str] = frozenset(),
             model=meta.get("model", ""),
             mtime=m,
             activity=activity(str(f)),
+            workflow=_workflow_of(f),
         ))
     return sorted(out, key=lambda s: -s.mtime)
 

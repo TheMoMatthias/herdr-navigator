@@ -635,10 +635,15 @@ def test_dynamic_workflow_and_its_agents_counted(tmp_path):
     jl(run / "journal.jsonl", [{"x": 1}])
     b = live.background(str(tr))
     assert (b.jobs, b.agents, b.runs) == (0, set(), {"wf_1"})
-    assert [s.name for s in live.claude_subagents(str(tr), time.time(), b.agents, b.runs)] == ["x"]
+    subs = live.claude_subagents(str(tr), time.time(), b.agents, b.runs)
+    assert [(s.name, s.workflow) for s in subs] == [("x", "wf_1")]
     a = model.Agent("claude", "working", projects.Project("/r", "R"), name="L", pane_id="p",
-                    workflows=1, subagents=[object()])
-    assert sync.work_mark(a) == "↳1 ◈1"
+                    workflows=1, subagents=subs)
+    assert sync.work_mark(a) == "⟳1"  # a workflow is one background task; its agents are not the session's ↳
+    a.jobs = 2
+    assert sync.work_mark(a) == "⟳3"
+    assert live._workflow_of(run / "agent-x.jsonl") == "wf_1"
+    assert live._workflow_of(tr.with_suffix("") / "subagents" / "agent-y.jsonl") == ""
     with open(tr, "a", encoding="utf-8") as f:
         f.write(json.dumps(_notice("w1", "completed")) + "\n")
     assert live.background(str(tr)).runs == set()

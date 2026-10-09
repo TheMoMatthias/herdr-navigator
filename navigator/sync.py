@@ -118,9 +118,11 @@ def session_lines(label: str, agents: list, folded: bool = False) -> list[str]:
 
 
 def work_mark(a) -> str:
-    """What a session has running besides itself: ↳ sub-agents (its workflows' agents too),
-    ◈ dynamic workflows, ⟳ background jobs."""
-    marks = (("↳", len(a.subagents)), ("◈", getattr(a, "workflows", 0)), ("⟳", getattr(a, "jobs", 0)))
+    """What a session has running besides itself, the same two marks for every CLI: ↳ its own
+    sub-agents, ⟳ background tasks (shell jobs, monitors, dynamic workflows; a workflow's agents
+    belong to its task, not to ↳)."""
+    own = sum(1 for s in a.subagents if not getattr(s, "workflow", ""))
+    marks = (("↳", own), ("⟳", getattr(a, "workflows", 0) + getattr(a, "jobs", 0)))
     return " ".join(f"{sym}{n}" for sym, n in marks if n)
 
 
@@ -372,7 +374,7 @@ def sync(force: bool = False) -> None:
 
     for a in world.agents:
         if a.in_herdr:  # mirror panes report their own tokens
-            subs = work_mark(a)  # the $subagents token: ↳ sub-agents, ◈ workflows, ⟳ background jobs
+            subs = work_mark(a)  # the $subagents token: ↳ sub-agents, ⟳ background tasks
             _report("pane", a.pane_id, "project", a.project.label, old, sent, seq)
             _report("pane", a.pane_id, "session", a.display, old, sent, seq)
             _report("pane", a.pane_id, "subagents", subs, old, sent, seq)

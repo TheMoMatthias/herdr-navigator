@@ -94,7 +94,7 @@ HELP = {
                "Every agent, inside herdr or in another window (↗), nested under its project. ← → or ▾ folds a project\n"
                "(a folded one still shows who needs you). Those that need you come first, longest wait first:\n"
                "⚠ waits for an approval or has a question open · ✔ finished.\n"
-               "○ Parked = idle, nothing asked. Waits = how long it has been waiting. ◌ Inactive = parked with nothing new for an hour. ↳N = sub-agents running, ◈N = dynamic workflows, ⟳N = background jobs. Ctx = context in use against where the session auto-compacts (its CLI setting, else the model window) (▰▰▱▱): green, yellow from 200K or 70%, red from 700K or 85% (time to compact).\n\n"
+               "○ Parked = idle, nothing asked. Waits = how long it has been waiting. ◌ Inactive = parked with nothing new for an hour. ↳N = sub-agents running, ⟳N = background tasks running (shell jobs, monitors, dynamic workflows). Ctx = context in use against where the session auto-compacts (its CLI setting, else the model window) (▰▰▱▱): green, yellow from 200K or 70%, red from 700K or 85% (time to compact).\n\n"
                "⚑ Next (g) selects the next one that needs you and puts you in the message box.\n"
                "Answer: when it shows numbered options (a question or a permission prompt), click one.\n"
                "Enter or a second click jumps to the agent's pane. Tick ☐ several to send to all of them.\n"
@@ -784,7 +784,7 @@ class Navigator(App):
     def render_topbar(self, world: World) -> None:
         total = model.Counter(a.status for a in world.agents)
         outside = sum(1 for a in world.agents if not a.in_herdr)
-        subs = sum(len(a.subagents) for a in world.agents)
+        subs = sum(1 for a in world.agents for s in a.subagents if not s.workflow)
         where = self.current_project.label if self.current_project else "—"
         bar = Text.assemble(("▣ ", "bold"), (where, "bold"), ("   │   ", "dim"))
         bar.append_text(counts_text(total) or Text("no agents running", style="dim"))
@@ -1364,7 +1364,7 @@ class Navigator(App):
                 items.add_row(Text(STATE_ICON.get(a.status, "?"), style=STATE_STYLE.get(a.status, "")), name,
                               Text((a.activity or "")[:24], style="dim"), key=f"a:{a.key}")
                 for i, sa in enumerate(a.subagents):
-                    items.add_row("", Text(f"  ↳ {sa.name}"[:32], style="dim"),
+                    items.add_row("", Text(f"  {'⟳' if sa.workflow else '↳'} {sa.name}"[:32], style="dim"),
                                   Text((sa.activity or "")[:30], style="dim"), key=f"x:{a.key}:{i}")
         live_ids = {a.session_id for a in agents}
         rest = [s_ for s_ in sessions if s_.id not in live_ids][:10]
@@ -1693,9 +1693,8 @@ class Navigator(App):
                                     if w.get("pane") == a.pane_id}))
             if marks:
                 who.append(" " + marks)
-            if a.workflows or a.jobs:  # sub-agents get their own ↳ rows below; these only a count
-                who.append("".join(f" {sym}{n}" for sym, n in (("◈", a.workflows), ("⟳", a.jobs)) if n),
-                           style="#83a598")
+            if a.workflows + a.jobs:  # sub-agents get their own ↳ rows below; background tasks a count
+                who.append(f" ⟳{a.workflows + a.jobs}", style="#83a598")
             if grouped:  # the project is the group above; say only which checkout
                 proj = Text(("⎇ " + a.project.worktree)[:26] if a.project.worktree else "main",
                             style="dim" if a.project.worktree else "dim")
@@ -1715,7 +1714,7 @@ class Navigator(App):
             self.agent_rows[a.key] = (a, -1)
             for i, sa in enumerate(a.subagents):
                 k = f"{a.key}#sub{i}"
-                t.add_row("", Text("↳", style="dim"), "", Text(f"  {sa.name}", style="dim"), "", "",
+                t.add_row("", Text("⟳" if sa.workflow else "↳", style="dim"), "", Text(f"  {sa.name}", style="dim"), "", "",
                           Text(sa.kind or "", style="dim"), clip(sa.activity or sa.description or "", 56), key=k)
                 self.agent_rows[k] = (a, i)
         if self.agent_sort == "recent" and not self.agent_filter:
