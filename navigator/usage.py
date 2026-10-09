@@ -2,8 +2,10 @@
 
 Claude: every assistant message's `usage` (deduplicated by message id: one message is written
 as several records). Sub-agent transcripts count toward their parent session. Codex: the
-`last_token_usage` of each `token_count` event. Files are read incrementally: the cache keeps
-each file's read offset and per-day sums, so a refresh reads only what was appended.
+growth of `total_token_usage` across the `token_count` events (they repeat, so summing each
+event's `last_token_usage` counts a turn several times; a total that falls is a reset).
+Files are read incrementally: the cache keeps each file's read offset, last Codex total and
+per-day sums, so a refresh reads only what was appended.
 """
 from __future__ import annotations
 
@@ -17,7 +19,7 @@ from pathlib import Path
 from . import settings
 
 DAYS = 7
-CACHE_VERSION = 2
+CACHE_VERSION = 3
 
 
 @dataclass
@@ -75,6 +77,9 @@ def _claude_files(cutoff: float) -> list[tuple[Path, str]]:
         for f in proj.glob("*/subagents/*.jsonl"):
             if f.stat().st_mtime >= cutoff:
                 out.append((f, f.parent.parent.name))   # counts toward the parent session
+        for f in proj.glob("*/subagents/workflows/*/agent-*.jsonl"):   # a workflow's agents: <sid>/subagents/workflows/<run>/
+            if f.stat().st_mtime >= cutoff:
+                out.append((f, f.parents[3].name))
     return out
 
 
@@ -90,9 +95,9 @@ def _codex_files(cutoff: float) -> list[tuple[Path, str]]:
     return out
 
 
-def _scan(cli: str, path: Path, start: int, seen_ids: set[str], days: dict[str, list[int]]) -> int:
+def _scan(cli: str, path: Path, start: int, seen_ids: set[str], days: dict[str, list[int]], last: list[int]) -> int:
     """Add the usage found after byte `start` to `days`; return the new offset (end of the
-    last complete line)."""
+    last complete line). `last` is the Codex running total [input, cached, output], updated in place."""
     with path.open("rb") as fh:
         fh.seek(start)
         data = fh.read()
@@ -123,10 +128,17 @@ def _scan(cli: str, path: Path, start: int, seen_ids: set[str], days: dict[str, 
             p = rec.get("payload") or {}
             if p.get("type") != "token_count":
                 continue
-            last = (p.get("info") or {}).get("last_token_usage") or {}
-            cached = int(last.get("cached_input_tokens", 0))
-            fresh = max(0, int(last.get("input_tokens", 0)) - cached)
-            out = int(last.get("output_tokens", 0))
+            tot = (p.get("info") or {}).get("total_token_usage")
+            if not tot:
+                continue
+            now = [int(tot.get("input_tokens", 0)), int(tot.get("cached_input_tokens", 0)), int(tot.get("output_tokens", 0))]
+            # growth since the previous event; a total that fell restarted (compaction, resume): all of it is new
+            base = last if now[0] + now[2] >= last[0] + last[2] else [0, 0, 0]
+            grew = [max(0, n - b) for n, b in zip(now, base)]
+            last[:] = now
+            cached = grew[1]
+            fresh = max(0, grew[0] - cached)
+            out = grew[2]
             day = _day(rec.get("timestamp", ""))
         if not day:
             continue
@@ -159,11 +171,11 @@ def collect(now: float | None = None) -> dict[tuple[str, str], SessionUsage]:
                 continue
             ent = files.get(k)
             if not ent or ent["off"] > size:  # new file, or rewritten from scratch
-                ent = {"off": 0, "ids": [], "days": {}}
+                ent = {"off": 0, "ids": [], "days": {}, "last": [0, 0, 0]}
             if ent["off"] < size:
                 ids = set(ent["ids"])
                 try:
-                    ent["off"] = _scan(cli, path, ent["off"], ids, ent["days"])
+                    ent["off"] = _scan(cli, path, ent["off"], ids, ent["days"], ent.setdefault("last", [0, 0, 0]))
                 except OSError:
                     continue
                 ent["ids"] = list(ids)[-4000:]

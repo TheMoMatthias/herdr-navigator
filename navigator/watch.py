@@ -10,7 +10,6 @@ pane closes.
 """
 from __future__ import annotations
 
-import json
 import os
 import re
 import subprocess
@@ -19,7 +18,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import herdr, jsonfile, settings
+from . import herdr, insight, jsonfile, settings
 
 KINDS = {"done": "🔔", "chain": "⛓", "errors": "🚨"}
 ERROR_RE = re.compile(r"(\bFAILED\b|\bFAIL:|Traceback \(most recent call last\)|^\s*\w*Error:|\bERROR\b|"
@@ -125,15 +124,35 @@ def notify(title: str, body: str, sound: str = "done", phone: bool = True) -> No
             pass
 
 
-def _status(pane: str) -> str:
+def _agent(pane: str) -> dict | None:
     try:
-        return herdr.run("agent", "get", pane).get("agent", {}).get("agent_status", "")
+        return herdr.run("agent", "get", pane).get("agent", {})
     except herdr.HerdrError:
-        return "gone"
+        return None
+
+
+def _status(pane: str) -> str:
+    a = _agent(pane)
+    return "gone" if a is None else insight.agent_status(a)
+
+
+def _wait_codex(pane: str, *until: str, every: float = 2.0) -> str:
+    """herdr reports Codex as "unknown" after a turn, so `agent wait --until idle` would never
+    return: poll the status derived from the rollout instead."""
+    while True:
+        st = _status(pane)
+        if st == "gone" or st in until:
+            return st
+        time.sleep(every)
 
 
 def _wait(pane: str, *until: str) -> str:
     """Block until the agent reaches one of the states; returns it ('gone' when the pane closed)."""
+    a = _agent(pane)
+    if a is None:
+        return "gone"
+    if a.get("agent") == "codex":
+        return _wait_codex(pane, *until)
     args = [a for u in until for a in ("--until", u)]
     try:
         res = herdr.run("agent", "wait", pane, *args, timeout=7 * 24 * 3600)

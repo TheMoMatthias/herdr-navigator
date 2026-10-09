@@ -18,7 +18,7 @@ from . import projects, settings
 
 HEAD_BYTES = 96 * 1024
 TAIL_BYTES = 256 * 1024
-CACHE_VERSION = 9  # bumped: sessions without a cwd record
+CACHE_VERSION = 10  # bumped: Codex titles skip the injected AGENTS.md preamble
 
 
 @dataclass
@@ -95,7 +95,7 @@ def _clip(s: str, n: int = 140) -> str:
 # --- Claude Code ---------------------------------------------------------------
 
 def _claude_root() -> Path:
-    return Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude")) / "projects"
+    return Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "projects"
 
 
 @functools.lru_cache(maxsize=1024)
@@ -219,7 +219,7 @@ def _claude_files(cutoff: float) -> list[Path]:
 # --- Codex ---------------------------------------------------------------------
 
 def _codex_home() -> Path:
-    return Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
+    return Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
 
 
 def _codex_names() -> dict[str, str]:
@@ -236,10 +236,18 @@ def _codex_names() -> dict[str, str]:
     return names
 
 
+_CODEX_INJECTED = ("# AGENTS.md instructions", "<environment_context>", "<user_instructions>", "<permissions")
+
+
+def _codex_request(text: str) -> str:
+    """The prompt itself: the IDE extension wraps it in the editor's context."""
+    return text.split("## My request for Codex:", 1)[-1]
+
+
 def _parse_codex(path: Path) -> Session | None:
     head, tail = _read_head_tail(path)
     meta = None
-    first_prompt = last_prompt = branch = ""
+    first_prompt = last_prompt = branch = item_prompt = ""
     for line in head:
         d = _loads(line)
         if not d:
@@ -250,8 +258,11 @@ def _parse_codex(path: Path) -> Session | None:
             branch = ((p.get("git") or {}).get("branch") or "") if isinstance(p.get("git"), dict) else ""
         elif d.get("type") == "event_msg" and p.get("type") == "user_message" and not first_prompt:
             first_prompt = p.get("message", "")
-        elif d.get("type") == "response_item" and p.get("type") == "message" and p.get("role") == "user" and not first_prompt:
-            first_prompt = _text_of(p.get("content"))
+        elif d.get("type") == "response_item" and p.get("type") == "message" and p.get("role") == "user" and not item_prompt:
+            text = _text_of(p.get("content"))
+            if not text.lstrip().startswith(_CODEX_INJECTED):  # the AGENTS.md / environment preamble
+                item_prompt = text
+    first_prompt = _codex_request(first_prompt or item_prompt)
     if not meta or not meta.get("id"):
         return None
     for line in reversed(tail):
@@ -260,7 +271,7 @@ def _parse_codex(path: Path) -> Session | None:
             continue
         p = d.get("payload") if isinstance(d.get("payload"), dict) else {}
         if d.get("type") == "event_msg" and p.get("type") == "user_message":
-            last_prompt = p.get("message", "")
+            last_prompt = _codex_request(p.get("message", ""))
             break
     st = path.stat()
     return Session(
@@ -500,10 +511,17 @@ def _xdg_data() -> Path:
     return Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
 
 
+def _newest_db(app: str) -> Path:
+    """<data>/<app>/<app>.db, or a release channel's own <app>-<channel>.db (opencode-stable.db)."""
+    d = _xdg_data() / app
+    dbs = [p for p in d.glob(f"{app}*.db") if p.is_file()] if d.is_dir() else []
+    return max(dbs, key=lambda p: p.stat().st_mtime) if dbs else d / f"{app}.db"
+
+
 # cli -> database file. Kilo is an OpenCode fork with the same schema.
 SQLITE_STORES = {
-    "opencode": lambda: _xdg_data() / "opencode" / "opencode.db",
-    "kilo": lambda: _xdg_data() / "kilo" / "kilo.db",
+    "opencode": lambda: _newest_db("opencode"),
+    "kilo": lambda: _newest_db("kilo"),
 }
 
 _LAST_USER_SQL = """

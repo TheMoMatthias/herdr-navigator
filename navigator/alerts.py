@@ -20,7 +20,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from . import settings
+from . import insight, settings
 
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 _DETACHED = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
@@ -193,7 +193,7 @@ def check_waiting(snap: dict, now: float | None = None, sender=send_background) 
     labels = {w["workspace_id"]: w.get("label", "") for w in snap.get("workspaces", [])}
     waiting = {a["pane_id"]: a for a in snap.get("agents", []) if a.get("agent_status") == "blocked"}
     # herdr says "done" for a finished turn you have not seen yet, so that waits too
-    idle = {a["pane_id"] for a in snap.get("agents", []) if a.get("agent_status") in ("idle", "done")}
+    idle = {a["pane_id"] for a in snap.get("agents", []) if insight.agent_status(a) in ("idle", "done")}
     try:  # written by sync: agents with an open question, here or in another window
         replies = json.loads((settings.state_dir() / "replies.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):

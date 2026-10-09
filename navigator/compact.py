@@ -1,7 +1,8 @@
 """/compact with your own instructions, so you never type them again.
 
 The text lives in navigator.toml (`[compact] instructions`, Settings > Prompts). Claude Code
-takes it as `/compact <instructions>`; other CLIs get a plain `/compact`. Sent from the
+takes it as `/compact <instructions>`; other CLIs get their plain command (`/compact`, or
+`/compress` for Gemini and its fork Qwen). Sent from the
 Navigator (Compact button, the row menu, every ticked agent) or from herdr itself: a key
 (prefix+shift+c) or the pane menu (F5, panemenu.py)."""
 from __future__ import annotations
@@ -12,6 +13,7 @@ import os
 from . import herdr, settings
 
 TAKES_INSTRUCTIONS = {"claude"}
+PLAIN = {"gemini": "/compress", "qwen": "/compress"}  # everything else: /compact
 
 
 def instructions() -> str:
@@ -21,13 +23,13 @@ def instructions() -> str:
 
 def command(cli: str) -> str:
     text = instructions()
-    return f"/compact {text}" if text and cli in TAKES_INSTRUCTIONS else "/compact"
+    return f"/compact {text}" if text and cli in TAKES_INSTRUCTIONS else PLAIN.get(cli, "/compact")
 
 
 def send(pane: str, cli: str) -> str:
     cmd = command(cli)
     herdr.run("agent", "prompt", pane, cmd)
-    return "⇣ compacting" + (" with your instructions" if cmd != "/compact" else "")
+    return "⇣ compacting" + (" with your instructions" if " " in cmd else "")
 
 
 def _note_context(ctx: dict) -> None:

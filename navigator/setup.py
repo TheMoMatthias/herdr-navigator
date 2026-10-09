@@ -153,6 +153,8 @@ AGENT_ROWS = [
 
 
 def herdr_config_path() -> Path:
+    if p := os.environ.get("HERDR_CONFIG_PATH"):  # herdr's own override
+        return Path(p).expanduser()
     if WINDOWS:
         return Path(os.environ.get("APPDATA", Path.home())) / "herdr" / "config.toml"
     base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")

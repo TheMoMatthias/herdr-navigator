@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
+from html import escape
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -74,11 +76,16 @@ def installed(fresh: bool = False) -> bool:
 
 
 def _env() -> dict[str, str]:
-    """The plugin dirs herdr assigned, so the restore finds its settings without herdr's env."""
+    """The plugin dirs herdr assigned, so the restore finds its settings without herdr's env, and
+    (macOS/Linux) today's PATH: a LaunchAgent or desktop autostart starts with a bare one, where
+    herdr and the agent CLIs (npm, ~/.local/bin, Homebrew) would not be found."""
     from . import settings
-    return {"HERDR_PLUGIN_CONFIG_DIR": str(settings.config_dir()),
-            "HERDR_PLUGIN_STATE_DIR": str(settings.state_dir()),
-            "HERDR_BIN_PATH": os.environ.get("HERDR_BIN_PATH", "")}
+    env = {"HERDR_PLUGIN_CONFIG_DIR": str(settings.config_dir()),
+           "HERDR_PLUGIN_STATE_DIR": str(settings.state_dir()),
+           "HERDR_BIN_PATH": os.environ.get("HERDR_BIN_PATH") or shutil.which("herdr") or ""}
+    if os.name != "nt":
+        env["PATH"] = os.environ.get("PATH", "")
+    return env
 
 
 def install() -> str:
@@ -104,7 +111,7 @@ def install() -> str:
         if r.returncode != 0 or not installed(fresh=True):
             return f"✗ could not register the logon task: {(r.stderr or r.stdout).strip()[:200]}"
     elif sys.platform == "darwin":
-        env_xml = "".join(f"<key>{k}</key><string>{v}</string>" for k, v in _env().items() if v)
+        env_xml = "".join(f"<key>{k}</key><string>{escape(v)}</string>" for k, v in _env().items() if v)
         p.write_text(f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>

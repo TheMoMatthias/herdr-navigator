@@ -58,7 +58,8 @@ class Binding:
 
 
 def config_path() -> Path:
-    return Path(os.environ.get("APPDATA", Path.home())) / "herdr" / "config.toml"
+    from .setup import herdr_config_path  # one answer for every OS and HERDR_CONFIG_PATH
+    return herdr_config_path()
 
 
 def _defaults() -> dict[str, list[str]]:

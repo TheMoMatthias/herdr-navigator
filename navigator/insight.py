@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import time
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -230,8 +232,10 @@ def last_answer(cli: str, path: str, limit: int = 8000) -> str:
             t = _text((rec.get("message") or {}).get("content")).strip()
         elif cli == "codex":
             p = rec.get("payload") or {}
-            if p.get("type") == "agent_message":
-                t = str(p.get("message", "")).strip()
+            if p.get("type") == "task_complete":
+                t = str(p.get("last_agent_message") or "").strip()  # the turn's final answer, as the CLI itself recorded it
+            elif p.get("type") == "agent_message":
+                t = str(p.get("message", "")).strip()  # inter-agent lines carry `content`, not `message`
             elif p.get("type") == "message" and p.get("role") == "assistant":
                 t = _text(p.get("content")).strip()
             else:
@@ -243,20 +247,97 @@ def last_answer(cli: str, path: str, limit: int = 8000) -> str:
     return ""
 
 
+def _epoch_of(rec: dict) -> float:
+    from datetime import datetime
+    ts = rec.get("timestamp", "")
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp() if ts else 0.0
+    except ValueError:
+        return 0.0
+
+
 @by_file
 def last_answer_at(cli: str, path: str) -> float:
-    """When the agent last said something (epoch seconds), 0 if unknown."""
-    from datetime import datetime
+    """When the agent last said something (epoch seconds), 0 if unknown or the CLI has no parser."""
+    if cli not in ("claude", "codex"):
+        return 0.0  # any timestamped record would be a wrong answer
     for ln in reversed(_tail(path)):
         if cli == "claude" and '"assistant"' not in ln:
             continue
-        if cli == "codex" and "agent_message" not in ln and '"assistant"' not in ln:
+        if cli == "codex" and "task_complete" not in ln and "agent_message" not in ln:
             continue
         try:
             rec = json.loads(ln)
-            ts = rec.get("timestamp", "")
-            if ts:
-                return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
         except ValueError:
             continue
+        p = rec.get("payload") or {}
+        # Codex: the turn ending (sub-agents' inter-agent agent_message lines have no `message`)
+        if cli == "codex" and p.get("type") != "task_complete" and not (p.get("type") == "agent_message" and p.get("message")):
+            continue
+        t = _epoch_of(rec)
+        if t:
+            return t
     return 0.0
+
+
+_TURN = re.compile(rb'"type"\s*:\s*"(task_started|task_complete|turn_aborted)"')
+TURN_TAIL_MAX = 8_000_000
+
+
+@by_file
+def codex_turn(path: str) -> str:
+    """"working" while the newest Codex turn has started and not ended, "idle" once it
+    completed or was aborted, "" when the file says nothing. herdr reports "unknown" for Codex
+    after a turn, so this is what settles it. Reads the end of the file, widening only while no
+    marker is in it (a long turn buries task_started under thousands of events)."""
+    try:
+        size = os.path.getsize(path)
+        n = 64 * 1024
+        with open(path, "rb") as f:
+            while True:
+                f.seek(max(0, size - n))
+                found = _TURN.findall(f.read())
+                if found:
+                    return "working" if found[-1] == b"task_started" else "idle"
+                if n >= size:
+                    return ""
+                if n >= TURN_TAIL_MAX:
+                    return "working"  # no end marker in the last 8 MB: a turn is running
+                n *= 4
+    except OSError:
+        return ""
+
+
+_ROLLOUTS: dict[str, str] = {}
+_MISSED: dict[str, float] = {}  # sid -> when a lookup found nothing: a new session's file comes later
+
+
+def codex_rollout(sid: str) -> str:
+    """The rollout file of a Codex session id ('' when there is none (yet))."""
+    if not re.fullmatch(r"[0-9A-Za-z-]+", sid or ""):
+        return ""
+    hit = _ROLLOUTS.get(sid)
+    if hit and os.path.exists(hit):
+        return hit
+    if time.time() - _MISSED.get(sid, 0.0) < 30:  # the glob walks every rollout: not on each poll
+        return ""
+    root = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "sessions"
+    try:
+        found = next(root.glob(f"*/*/*/rollout-*-{sid}.jsonl"), None)
+    except OSError:
+        found = None
+    if found:
+        _ROLLOUTS[sid] = str(found)
+    else:
+        _MISSED[sid] = time.time()
+    return str(found or "")
+
+
+def agent_status(a: dict) -> str:
+    """A herdr agent record's status, with Codex's "unknown" settled from its rollout."""
+    st = a.get("agent_status", "")
+    if st == "unknown" and a.get("agent") == "codex":
+        sid = (a.get("agent_session") or {}).get("value", "")
+        path = codex_rollout(sid)
+        return (codex_turn(path) if path else "") or st
+    return st

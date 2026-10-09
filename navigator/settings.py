@@ -84,6 +84,24 @@ cline_new = "cline"
 cline_resume = "cline --id {id}"
 cursor_new = "cursor-agent"
 cursor_resume = "cursor-agent --resume {id}"
+# the rest of herdr's agents, with herdr's own resume commands (herdr docs: session state)
+agy_new = "agy"
+agy_resume = "agy --conversation {id}"
+omp_new = "omp"
+omp_resume = "omp --resume={id}"
+grok_new = "grok"
+grok_resume = "grok --resume {id}"
+devin_new = "devin"
+devin_resume = "devin --resume {id}"
+kimi_new = "kimi"
+kimi_resume = "kimi --session {id}"
+qodercli_new = "qodercli"
+qodercli_resume = "qodercli --resume {id}"
+letta_new = "letta"
+letta_resume = "letta --conversation {id}"
+mastracode_new = "mastracode"
+mastracode_resume = "mastracode --thread {id}"
+kiro_new = "kiro-cli"
 
 [restore]
 # Startup restore: which sessions reopen when you log on (Navigator › Sessions, ⚙ Settings › Logon).
@@ -210,6 +228,20 @@ class Settings:
 
 
 PLUGIN_ID = "momatthias.navigator"
+
+
+def user_path(p: str) -> Path:
+    """A path from the user's settings: $VARS expanded, and a CLI's default home ("~/.claude/",
+    "~/.codex/", "~/.gemini/") moved to where that CLI's own override (CLAUDE_CONFIG_DIR,
+    CODEX_HOME, GEMINI_CLI_HOME) puts it, so the default [login] blocks fit a relocated CLI too."""
+    p = os.path.expandvars(p).replace("\\", "/")
+    homes = {"~/.claude.json": ("CLAUDE_CONFIG_DIR", ".claude.json"), "~/.claude/": ("CLAUDE_CONFIG_DIR", ""),
+             "~/.local/share/": ("XDG_DATA_HOME", ""), "~/.codex/": ("CODEX_HOME", ""), "~/.gemini/": ("GEMINI_CLI_HOME", ".gemini/")}
+    for prefix, (var, sub) in homes.items():
+        if p.startswith(prefix) and os.environ.get(var):
+            p = os.path.join(os.environ[var], sub + p[len(prefix):])
+            break
+    return Path(os.path.expanduser(p))
 
 
 def _dirs_file() -> Path:

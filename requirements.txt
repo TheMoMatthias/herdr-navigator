@@ -1,2 +1,2 @@
-textual>=8.0
-tomlkit>=0.13
+textual>=8.0,<9
+tomlkit>=0.13,<1

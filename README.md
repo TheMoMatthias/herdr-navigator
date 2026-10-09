@@ -15,11 +15,13 @@ everything your coding agents are doing:
   right-click menus take no plugin entries, so those are the ways in; folding in the Navigator's
   Agents tab does the same. A folded project keeps
   only who needs you, in the Agents panel and under its Spaces (`+5 folded`).
-* **What is running where?** Every Claude Code and Codex agent is listed per project and
-  worktree, including sessions running in *other* terminal windows and their live
+* **What is running where?** Every agent herdr runs (Claude Code, Codex, pi, OpenCode, Gemini,
+  Qwen, Copilot, and the rest of herdr's agents) is listed per project and worktree, plus Claude
+  Code and Codex sessions running in *other* terminal windows and their live
   **sub-agents**, each with what it is doing right now (`⚙ Bash: run tests`, `💬 …`).
-* **How do I get back in?** Every Claude Code and Codex session from the last 45 days can be
-  searched and resumed with one click, in the right project, worktree and tab.
+* **How do I get back in?** Every session from the last 45 days can be searched and resumed with
+  one click, in the right project, worktree and tab (Claude Code, Codex, pi, Qwen, Gemini, Copilot,
+  OpenCode, Kilo and Hermes are read from disk; see [How it knows](#how-it-knows)).
 * **Sessions in other windows show up in herdr.** Each one gets a *mirror* tab in its
   project's workspace. The mirror appears in herdr's Agents panel under the session's real
   name and state, shows its live conversation, and resumes it inside herdr once the other
@@ -94,7 +96,8 @@ Swap, Rename and Close.
 
 **Compact without retyping.** Write once what a compaction must keep (⚙ Settings › Prompts ›
 *Compact instructions*, or `[compact] instructions` in navigator.toml). Every Compact then sends
-`/compact <your instructions>` to Claude Code (other CLIs get a plain `/compact`): the ⇣ Compact
+`/compact <your instructions>` to Claude Code (other CLIs get a plain `/compact`, Gemini and Qwen
+`/compress`): the ⇣ Compact
 button, the agent row menu, every ☑ ticked agent at once, and `Ctrl+B › Shift+C` on the focused
 agent inside herdr.
 
@@ -282,7 +285,7 @@ presses ⏎ / Esc / ^C, in every ticked agent at once.
 - **Usage tab** (`5`). Tokens per project and session for today and the last 7 days, and how much
   of that was output, read incrementally from the Claude and Codex transcripts.
 
-Questions an agent is waiting on (Claude `AskUserQuestion`, Codex `request_user_input`) show up
+Questions an agent is waiting on (Claude `AskUserQuestion`, Codex `request_user_input` and its async variant) show up
 in **Agents** as `❓` with the question and its options, also for sessions in other windows.
 
 Always visible in herdr:
@@ -330,9 +333,10 @@ own F1/F2 shortcuts (command help, prediction view).
 |---|---|
 | Agents in herdr | herdr's socket API (`herdr api snapshot`) |
 | Claude sessions in other terminals | `~/.claude/sessions/<pid>.json`, kept only while that process is alive (`busy`/`shell` → working, `idle`) |
-| Codex sessions in other terminals | a top-level rollout written in the last ~2 minutes |
+| Codex sessions in other terminals | a top-level rollout written in the last ~15 minutes; working while its last turn has started and not completed, else idle |
+| Codex state inside herdr | herdr reports Codex as `unknown` once a turn ends; the rollout's last `task_started` / `task_complete` settles it as working or idle |
 | Sub-agents | `…/<session>/subagents/agent-*.jsonl` + `.meta.json` (Claude); child threads (Codex), both written in the last ~2 minutes |
-| Resumable sessions | Claude `~/.claude/projects`, Codex `~/.codex/sessions`, pi `~/.pi/agent/sessions`, Qwen `~/.qwen/projects`, Gemini `~/.gemini/tmp`, Copilot `~/.copilot/session-state` (head and tail only, cached); OpenCode / Kilo `~/.local/share/{opencode,kilo}/*.db` and Hermes `~/.hermes/state.db` (read-only SQLite). Each row carries a `[cli]` tag. Droid, Amp, Cline and Cursor have launch/resume templates but no session reader yet. |
+| Resumable sessions | Claude `~/.claude/projects`, Codex `~/.codex/sessions`, pi `~/.pi/agent/sessions`, Qwen `~/.qwen/projects`, Gemini `~/.gemini/tmp`, Copilot `~/.copilot/session-state` (head and tail only, cached); OpenCode / Kilo `~/.local/share/{opencode,kilo}/*.db` and Hermes `~/.hermes/state.db` (read-only SQLite). Each row carries a `[cli]` tag. Every agent herdr can resume (Droid, Amp, Cline, Cursor, Kimi, Grok, Devin, Antigravity, OMP, Qoder, Letta, MastraCode too) has a launch/resume template, so its panes come back after a restart; the ones without a reader just don't appear in the Sessions list. |
 | Projects and worktrees | the nearest `.git` directory; a `.git` *file* points a linked worktree at its main repo |
 
 Apart from mirror tabs and the names and labels it reports to herdr, the Navigator changes

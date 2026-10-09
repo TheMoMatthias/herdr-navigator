@@ -22,11 +22,13 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import projects
+from . import insight, projects
 from .sessions import Session, _claude_root, _loads
 from .filememo import by_file
 
 ACTIVE_SECONDS = 150        # a transcript written this recently is "running"
+CODEX_BUSY_SECONDS = 900    # a Codex turn that started and never ended counts as running this long after its last write
+CODEX_IDLE_SECONDS = 900    # a Codex session outside herdr stays listed (idle) this long after its last write
 TAIL = 64 * 1024
 BG_FIRST = 4_000_000        # the first look at a transcript reads this much of its end for background jobs
 
@@ -346,16 +348,27 @@ def running(sessions: list[Session]) -> list[Running]:
     # Codex: recently written top-level threads; children attach to their parent
     children: dict[str, list[SubAgent]] = {}
     for s in sessions:
-        if s.cli != "codex" or now - s.mtime > ACTIVE_SECONDS:
+        age = now - s.mtime
+        if s.cli != "codex" or age > max(CODEX_BUSY_SECONDS, CODEX_IDLE_SECONDS):
             continue
         if s.subagent:
-            parent = _codex_parent(s.path)
-            children.setdefault(parent, []).append(SubAgent(
-                name=s.title[:30], description=s.title, kind="codex", model="", mtime=s.mtime,
-                activity=activity(s.path)))
+            if age <= ACTIVE_SECONDS:
+                parent = _codex_parent(s.path)
+                children.setdefault(parent, []).append(SubAgent(
+                    name=s.title[:30], description=s.title, kind="codex", model="", mtime=s.mtime,
+                    activity=activity(s.path)))
+            continue
+        # no process to check: the rollout says whether a turn is open (a long tool call writes
+        # nothing for minutes, so "recently written" alone would call a busy agent gone)
+        turn = insight.codex_turn(s.path)
+        if (turn == "working" and age <= CODEX_BUSY_SECONDS) or (not turn and age <= ACTIVE_SECONDS):
+            status = "busy"
+        elif age <= CODEX_IDLE_SECONDS:
+            status = "idle"
         else:
-            out.append(Running(cli="codex", session_id=s.id, name=s.title, cwd=s.cwd,
-                               status="active", transcript=s.path, user_named=s.named))
+            continue
+        out.append(Running(cli="codex", session_id=s.id, name=s.title, cwd=s.cwd,
+                           status=status, transcript=s.path, user_named=s.named))
     for r in out:
         if r.transcript:
             r.activity = activity(r.transcript)

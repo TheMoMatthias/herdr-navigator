@@ -1,8 +1,9 @@
 """Is an agent waiting on a question to you? Read from the end of its transcript.
 
 Claude: the last AskUserQuestion tool call that has no tool result yet. Codex: the last
-request_user_input call without an output. herdr's own state (blocked) covers permission prompts;
-this adds the question text and its options, also for sessions running outside herdr.
+request_user_input call without an output; the async variant
+(`request_user_input_async`, answered `{"accepted":true}` at once) stays open until your next turn.
+herdr's own state (blocked) covers permission prompts; this adds the question text and its options, also for sessions running outside herdr.
 """
 from __future__ import annotations
 
@@ -69,30 +70,43 @@ def _claude(lines: list[str]) -> Question | None:
     return None
 
 
+CODEX_ASK = ("request_user_input", "request_user_input_async")
+
+
 def _codex(lines: list[str]) -> Question | None:
     pending: dict[str, dict] = {}
+    asynch: set[str] = set()
     for ln in lines:
-        if "request_user_input" not in ln and "function_call_output" not in ln:
+        if not any(k in ln for k in ("request_user_input", "function_call_output", "task_started", "user_message")):
             continue
         try:
             p = json.loads(ln).get("payload") or {}
         except ValueError:
             continue
-        if p.get("type") == "function_call" and p.get("name") == "request_user_input":
+        if p.get("type") == "function_call" and p.get("name") in CODEX_ASK:
             try:
                 args = json.loads(p.get("arguments") or "{}")
             except ValueError:
                 args = {}
             pending[p.get("call_id", "")] = args
+            if p["name"].endswith("_async"):
+                asynch.add(p.get("call_id", ""))
         elif p.get("type") == "function_call_output":
-            pending.pop(p.get("call_id", ""), None)
+            # the async variant answers {"accepted":true} at once: the question is still open
+            if p.get("call_id", "") not in asynch:
+                pending.pop(p.get("call_id", ""), None)
+        elif p.get("type") in ("task_started", "user_message"):
+            # your next turn means you answered (or moved on): async questions end here
+            for cid in asynch:
+                pending.pop(cid, None)
+            asynch.clear()
     if not pending:
         return None
     args = list(pending.values())[-1]
     qs = args.get("questions") or [args]
     q = qs[0] if isinstance(qs[0], dict) else {}
     opts = [o.get("label", "") if isinstance(o, dict) else str(o) for o in q.get("options") or []]
-    return Question(str(q.get("question") or q.get("prompt") or "").strip(), opts, False, len(qs) - 1)
+    return Question(str(q.get("question") or q.get("prompt") or q.get("title") or "").strip(), opts, False, len(qs) - 1)
 
 
 @by_file

@@ -47,11 +47,11 @@ def _cfg(cli: str) -> dict:
 
 
 def files(cli: str) -> list[Path]:
-    return [Path(os.path.expanduser(f)) for f in _cfg(cli).get("files", [])]
+    return [settings.user_path(f) for f in _cfg(cli).get("files", [])]
 
 
 def json_keys(cli: str) -> dict[Path, list[str]]:
-    return {Path(os.path.expanduser(f)): list(keys) for f, keys in (_cfg(cli).get("json_keys") or {}).items()}
+    return {settings.user_path(f): list(keys) for f, keys in (_cfg(cli).get("json_keys") or {}).items()}
 
 
 def supported(cli: str) -> bool:

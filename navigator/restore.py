@@ -187,7 +187,9 @@ def resume_panes() -> str:
         from .sessions import load_sessions
         m = load_panes()
         snap = herdr.snapshot()
-        by_id = {x.id: x for x in load_sessions(include_hidden=True)}
+        known = load_sessions(include_hidden=True)
+        by_id = {x.id: x for x in known}
+        by_path = {os.path.normcase(x.path): x.id for x in known if x.path}
         todo_: list[tuple[str, dict]] = []
         skipped: list[str] = []
         elsewhere = live_ids(snap)  # never a second process on a session that runs somewhere
@@ -196,7 +198,7 @@ def resume_panes() -> str:
             rec = m.get(pane, {})
             ref = p.get("agent_session") or {}
             # our record first (name, options); else what herdr itself remembers for the pane
-            sid = rec.get("sid") or ref.get("value") or ""
+            sid = rec.get("sid") or model.session_ref(ref, by_path)
             cli = rec.get("cli") or ref.get("agent") or ""
             if not sid or not cli or p.get("agent") or rec.get("quit") == sid:
                 continue
@@ -237,6 +239,7 @@ def resume_panes() -> str:
             cmd = startup.launch_command(e["cli"], e["sid"], e.get("name", ""),
                                          startup.prefs_of(f"{e['cli']}:{e['sid']}"))
             if not cmd:
+                log(f"pane resume skipped {e.get('name') or e['sid'][:8]}: no {e['cli']}_resume in [launch]")
                 continue
             herdr.pane_run(pane, cmd)
             m[pane]["resumed_at"] = time.time()
@@ -320,7 +323,7 @@ def todo(sessions: list[Session] | None = None, everything: bool = False) -> tup
 # ---- Claude sign-in gate ------------------------------------------------------------------------
 
 def _claude_token_expiry() -> float | None:
-    p = Path.home() / ".claude" / ".credentials.json"
+    p = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / ".credentials.json"
     try:
         exp = json.loads(p.read_text(encoding="utf-8"))["claudeAiOauth"]["expiresAt"]
         return float(exp) / 1000.0
@@ -477,8 +480,18 @@ def _started_at(pid: int) -> float:
         finally:
             k32.CloseHandle(h)
     try:
-        return os.stat(f"/proc/{pid}").st_mtime  # Linux; elsewhere unknown
+        return os.stat(f"/proc/{pid}").st_mtime  # Linux
     except OSError:
+        pass
+    try:  # macOS/BSD: no /proc; ps gives the elapsed time as [[dd-]hh:]mm:ss
+        out = subprocess.run(["ps", "-o", "etime=", "-p", str(pid)], capture_output=True,
+                             text=True, timeout=3).stdout.strip()
+        days, _, hms = out.rpartition("-")
+        secs = 0
+        for part in hms.split(":"):
+            secs = secs * 60 + int(part)
+        return time.time() - secs - int(days or 0) * 86400
+    except (OSError, ValueError, subprocess.SubprocessError):
         return 0.0
 
 

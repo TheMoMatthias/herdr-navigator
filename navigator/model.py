@@ -269,11 +269,12 @@ def build(with_sessions: bool = True) -> World:
     agents: list[Agent] = []
     seen_ids = set()
     by_session = {s.id: s for s in all_sessions}
+    by_path = {os.path.normcase(s.path): s.id for s in all_sessions if s.path}
     mirrors = mirror_panes()
     for a in herdr_agents:
         if a["pane_id"] in mirrors or is_plugin_pane(a.get("cwd", "")):
             continue  # a mirror pane stands in for an outside session: listed once, below
-        sid = (a.get("agent_session") or {}).get("value", "")
+        sid = session_ref(a.get("agent_session"), by_path)
         cwd = a.get("cwd", "")
         r = run_by_id.get(sid)
         seen_ids.add(sid)
@@ -339,6 +340,10 @@ def build(with_sessions: bool = True) -> World:
         r, s = run_by_id.get(a.session_id), by_session.get(a.session_id)
         a.transcript = (r.transcript if r else "") or (s.path if s else "")
         a.context = insight.context(a.cli, a.transcript)
+        if a.cli == "codex" and a.status == "unknown":
+            # herdr cannot tell a Codex turn's end ("unknown"): the rollout can. "idle", not "done":
+            # nothing records whether you looked, and a done that never clears would hold the queue forever
+            a.status = insight.codex_turn(a.transcript) or a.status
         # a pending question means it waits for you, whatever herdr says: herdr shows a question
         # dialog as "done", or "working" while background agents run
         a.question = asks.pending(a.cli, a.transcript)
@@ -346,7 +351,7 @@ def build(with_sessions: bool = True) -> World:
             a.status = "blocked"
         if a.status in NEEDS_YOU:
             a.waiting_since = insight.last_answer_at(a.cli, a.transcript)
-        elif a.status == "idle" and inactive_after and not a.focused                 and now - _mtime(a.transcript) > inactive_after:
+        elif a.status == "idle" and inactive_after and not a.focused                 and now - last_write(s, a.transcript) > inactive_after:
             a.status = "inactive"
 
     live_sessions = {a.session_id: a for a in agents if a.session_id}
@@ -365,6 +370,24 @@ RANK_ORDER = {"working": 0, "blocked": 1, "reply": 2, "done": 3, "idle": 4, "ina
 def cfg_inactive_after() -> float:
     """Seconds without anything new before an idle session counts as inactive (0 = never)."""
     return 60.0 * settings.load().inactive_after_minutes
+
+
+def session_ref(ref: dict | None, by_path: dict[str, str]) -> str:
+    """The session id herdr reports for a pane. Some integrations (pi, omp) report the session
+    file instead (kind "path"): that maps to the id of the session read from that file."""
+    ref = ref or {}
+    value = str(ref.get("value") or "")
+    if ref.get("kind") == "path" and value:
+        return by_path.get(os.path.normcase(value), value)
+    return value
+
+
+def last_write(s: Session | None, transcript: str) -> float:
+    """When the session last wrote. A database-backed CLI (opencode, kilo, hermes) shares one file
+    across all its sessions, so there the session's own last update counts, not the file's."""
+    if s and s.path == transcript and not transcript.endswith((".jsonl", ".json")):
+        return s.mtime
+    return _mtime(transcript)
 
 
 def _mtime(path: str) -> float:

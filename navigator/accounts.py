@@ -64,7 +64,7 @@ def clis() -> dict[str, dict]:
 
 def watch_file(cli: str) -> Path | None:
     w = settings.load().login.get(cli, {}).get("watch", "")
-    return Path(os.path.expanduser(w)) if w else None
+    return settings.user_path(w) if w else None
 
 
 def stamp(cli: str) -> float:

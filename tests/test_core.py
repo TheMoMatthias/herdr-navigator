@@ -329,3 +329,37 @@ def test_merge_moves_each_tab_and_closes_the_duplicate(monkeypatch):
     assert moves[0] == ("w9:p1", {"type": "new_tab", "workspace_id": "w6", "label": "one"})
     assert moves[2] == ("w9:p3", {"type": "tab", "tab_id": "w6:t9", "split": "right"})
     assert ("workspace.close", {"workspace_id": "w9"}) in calls and len(done) == 1
+
+
+def test_user_paths_follow_relocated_cli_homes(monkeypatch, tmp_path):
+    from pathlib import Path
+    from navigator import keys, settings, setup
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "cc"))
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    assert settings.user_path("~/.claude/.credentials.json") == tmp_path / "cc" / ".credentials.json"
+    assert settings.user_path("~/.claude.json") == tmp_path / "cc" / ".claude.json"
+    assert settings.user_path("~/.codex/auth.json") == Path.home() / ".codex" / "auth.json"
+    monkeypatch.setenv("HERDR_CONFIG_PATH", str(tmp_path / "h.toml"))
+    assert setup.herdr_config_path() == keys.config_path() == tmp_path / "h.toml"
+
+
+def test_cli_compat_helpers(monkeypatch, tmp_path):
+    from navigator import compact, model, sessions
+    from navigator.sessions import Session
+    # pi/omp report the session file: it maps to the id read from that file
+    p = str(tmp_path / "s.jsonl")
+    assert model.session_ref({"kind": "path", "value": p}, {os.path.normcase(p): "abc"}) == "abc"
+    assert model.session_ref({"kind": "id", "value": "x1"}, {}) == "x1" and model.session_ref(None, {}) == ""
+    # a shared database's mtime moves with every session: the session's own update counts
+    db = Session(cli="opencode", id="o", cwd="", title="", last_prompt="", branch="", mtime=5.0, path=str(tmp_path / "o.db"))
+    assert model.last_write(db, db.path) == 5.0
+    # Gemini and Qwen compact with /compress; only Claude takes instructions
+    monkeypatch.setattr(compact, "instructions", lambda: "keep it short")
+    assert compact.command("gemini") == "/compress" and compact.command("codex") == "/compact"
+    assert compact.command("claude") == "/compact keep it short"
+    assert sessions._codex_request("# Context from my IDE\n## My request for Codex:\nfix it") == "\nfix it"
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    (tmp_path / "opencode").mkdir()
+    (tmp_path / "opencode" / "opencode-stable.db").write_bytes(b"")
+    assert sessions._newest_db("opencode").name == "opencode-stable.db"
+    assert sessions._newest_db("kilo").name == "kilo.db"
