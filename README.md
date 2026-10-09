@@ -261,7 +261,10 @@ presses ⏎ / Esc / ^C, in every ticked agent at once.
   70% / 85% of a smaller window; `warn_at` / `full_at` in `[context]`). herdr's sidebar shows the same
   coloured bar after every session, and the top bar names the full ones. `⇣` sends
   `/compact` to the ticked agents, or to the selected one. Windows come from `[context]` (by model
-  name); Codex reports its own.
+  name), then a built-in table; Codex and Qwen report their own. Besides Claude Code and Codex the
+  gauge reads OpenCode and Kilo (their database), pi and OMP (`compaction.reserveTokens`), Qwen (its
+  auto-compact point) and Gemini (`model.compressionThreshold`); a model with no known window shows
+  the tokens only.
 - **Saved prompts.** `☰ Prompts ▾` sends a saved prompt in one click (Status, Compact, Wrap up,
   Commit & push, Review, or your own). Add and delete your own in ⚙ Settings › Prompts, or type a
   message and pick *＋ Save the message as a prompt*.
@@ -309,6 +312,9 @@ Always visible in herdr:
   it is quiet; a foreground one while its transcript is being written. Jobs from before a
   session restarted died with it and are not counted. The daemon checks every 10 s, reading
   only new transcript lines, so a finished job leaves the sidebar within seconds.
+- **Codex** gets the same marks: its sub-agents (child threads, named by their nickname) count
+  while their turn runs, and a background process (`exec_command` that keeps running) counts
+  in `⟳` until a poll reports its exit code. Other CLIs show their state only.
 
 Direct chords (no prefix) that setup adds:
 
@@ -335,8 +341,8 @@ own F1/F2 shortcuts (command help, prediction view).
 | Claude sessions in other terminals | `~/.claude/sessions/<pid>.json`, kept only while that process is alive (`busy`/`shell` → working, `idle`) |
 | Codex sessions in other terminals | a top-level rollout written in the last ~15 minutes; working while its last turn has started and not completed, else idle |
 | Codex state inside herdr | herdr reports Codex as `unknown` once a turn ends; the rollout's last `task_started` / `task_complete` settles it as working or idle |
-| Sub-agents | `…/<session>/subagents/agent-*.jsonl` + `.meta.json` (Claude); child threads (Codex), both written in the last ~2 minutes |
-| Resumable sessions | Claude `~/.claude/projects`, Codex `~/.codex/sessions`, pi `~/.pi/agent/sessions`, Qwen `~/.qwen/projects`, Gemini `~/.gemini/tmp`, Copilot `~/.copilot/session-state` (head and tail only, cached); OpenCode / Kilo `~/.local/share/{opencode,kilo}/*.db` and Hermes `~/.hermes/state.db` (read-only SQLite). Each row carries a `[cli]` tag. Every agent herdr can resume (Droid, Amp, Cline, Cursor, Kimi, Grok, Devin, Antigravity, OMP, Qoder, Letta, MastraCode too) has a launch/resume template, so its panes come back after a restart; the ones without a reader just don't appear in the Sessions list. |
+| Sub-agents | `…/<session>/subagents/agent-*.jsonl` + `.meta.json` (Claude, written in the last ~2 minutes); child threads (Codex) while their turn is open |
+| Resumable sessions | Claude `~/.claude/projects`, Codex `~/.codex/sessions`, pi `~/.pi/agent/sessions`, Qwen `~/.qwen/projects`, Gemini `~/.gemini/tmp`, Copilot `~/.copilot/session-state` (head and tail only, cached); OpenCode / Kilo `~/.local/share/{opencode,kilo}/*.db` and Hermes `~/.hermes/state.db` (read-only SQLite); Droid `~/.factory/sessions`, Cursor Agent `~/.cursor/projects/*/agent-transcripts` and Cline `~/.cline/data/db/sessions.db`. Each row carries a `[cli]` tag. Every agent herdr can resume (Amp, Kimi, Grok, Devin, Antigravity, OMP, Qoder, Letta, MastraCode too) has a launch/resume template, so its panes come back after a restart; the ones without a reader just don't appear in the Sessions list. |
 | Projects and worktrees | the nearest `.git` directory; a `.git` *file* points a linked worktree at its main repo |
 
 Apart from mirror tabs and the names and labels it reports to herdr, the Navigator changes

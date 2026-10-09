@@ -201,3 +201,190 @@ def test_last_answer_at_unknown_cli_is_zero(tmp_path):
     p = jl(tmp_path / "x.jsonl", [{"timestamp": "2026-10-09T10:00:00Z", "type": "assistant", "message": {"content": "hi"}}])
     assert insight.last_answer_at("pi", p) == 0.0
     assert insight.last_answer_at("claude", p) > 0
+
+
+# ---- background terminals and sub-agents (sidebar ⟳ / ↳) -------------------------------------------
+
+def _tool(ts, kind, cid, **kw):
+    return {"timestamp": ts, "type": "response_item", "payload": {"type": kind, "call_id": cid, **kw}}
+
+
+def _exec_out(cid, ts="2026-10-09T10:00:00.000Z", sid=None, exit_code=None, mode="code"):
+    body = {"chunk_id": "c", "wall_time_seconds": 1.0, "output": "x"}
+    if sid is not None:
+        body["session_id"] = sid
+    if exit_code is not None:
+        body["exit_code"] = exit_code
+    if mode == "plain":   # the non-code-mode text form
+        txt = f"Process running with session ID {sid}\nOutput:\nx" if sid is not None else f"Process exited with code {exit_code}\nOutput:\nx"
+        return _tool(ts, "function_call_output", cid, output=txt)
+    return _tool(ts, "custom_tool_call_output", cid, output=[
+        {"type": "input_text", "text": "Script completed\nWall time 1.0 seconds\nOutput:\n"},
+        {"type": "input_text", "text": json.dumps(body)}])
+
+
+def _start(cid, ts="2026-10-09T10:00:00.000Z"):
+    return _tool(ts, "custom_tool_call", cid, name="exec", input='text(await tools.exec_command({cmd:"pytest"}));')
+
+
+def _poll(cid, sid, ts="2026-10-09T10:01:00.000Z"):
+    return _tool(ts, "custom_tool_call", cid, name="exec",
+                 input=f'text(await tools.write_stdin({{session_id:{sid},chars:"",yield_time_ms:1000}}));')
+
+
+NOW = datetime.fromisoformat("2026-10-09T10:05:00+00:00").timestamp()
+
+
+def _utcnow():
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _append(path, *recs):
+    with open(path, "a", encoding="utf-8") as f:
+        for r in recs:
+            f.write(json.dumps(r, separators=(",", ":")) + "\n")
+
+
+def test_codex_job_runs_until_a_poll_returns_an_exit_code(tmp_path):
+    p = tmp_path / "r.jsonl"
+    jl(p, [_start("a"), _exec_out("a", sid=111), _start("b"), _exec_out("b", sid=222),
+           _start("c"), _exec_out("c", exit_code=0)])                       # c finished at once: never a job
+    assert live.codex_jobs(str(p), NOW) == 2
+    _append(p, _poll("d", 111), _exec_out("d", sid=111))                   # still running when polled: unchanged
+    assert live.codex_jobs(str(p), NOW) == 2
+    _append(p, _poll("e", 111), _exec_out("e", exit_code=0))               # an exit code on the poll ends it
+    assert live.codex_jobs(str(p), NOW) == 1
+
+
+def test_codex_job_in_plain_function_call_form(tmp_path):
+    start = _tool("2026-10-09T10:00:00.000Z", "function_call", "a", name="exec_command", arguments=json.dumps({"cmd": "npm run dev"}))
+    poll = _tool("2026-10-09T10:01:00.000Z", "function_call", "b", name="write_stdin", arguments=json.dumps({"session_id": 9, "chars": ""}))
+    p = jl(tmp_path / "r.jsonl", [start, _exec_out("a", sid=9, mode="plain")])
+    assert live.codex_jobs(p, NOW) == 1
+    _append(p, poll, _exec_out("b", exit_code=0, mode="plain"))
+    assert live.codex_jobs(p, NOW) == 0
+
+
+def test_codex_job_ignores_quoted_text_and_stale_jobs(tmp_path):
+    said = {"timestamp": "2026-10-09T10:00:00.000Z", "type": "response_item", "payload": {
+        "type": "message", "call_id": "q", "role": "assistant", "content": [{"type": "output_text", "text": 'the log said Process running with session ID 5'}]}}
+    p = jl(tmp_path / "r.jsonl", [said, _start("a"), _exec_out("a", sid=7)])
+    assert live.codex_jobs(p, NOW) == 1
+    assert live.codex_jobs(p, NOW + live.CODEX_JOB_SECONDS + 60) == 0     # its process died with the session long ago
+    assert live.codex_jobs(str(tmp_path / "missing.jsonl"), NOW) == 0
+
+
+def test_codex_job_scan_is_incremental(tmp_path, monkeypatch):
+    p = jl(tmp_path / "r.jsonl", [_start("a"), _exec_out("a", sid=1)])
+    assert live.codex_jobs(p, NOW) == 1
+    seen = []
+    real = live._cj_scan
+    monkeypatch.setattr(live, "_cj_scan", lambda st, data: (seen.append(len(data)), real(st, data)))
+    assert live.codex_jobs(p, NOW) == 1 and seen == []                    # unchanged: nothing read
+    before = os.path.getsize(p)
+    _append(p, _start("b"))
+    live.codex_jobs(p, NOW)
+    assert seen == [os.path.getsize(p) - before]                          # only the appended line
+
+
+def _child(day, cid, parent, nick, role, markers, proj, age=0):
+    meta = {"type": "session_meta", "payload": {
+        "id": cid, "cwd": str(proj), "thread_source": "subagent", "parent_thread_id": parent,
+        "source": {"subagent": {"thread_spawn": {"parent_thread_id": parent, "agent_nickname": nick, "agent_role": role}}},
+        "agent_nickname": nick, "agent_role": role}}
+    f = jl(day / f"rollout-{cid}.jsonl", [meta, ev("user_message", message=f"task of {nick}")] + markers)
+    if age:
+        os.utime(f, (time.time() - age, time.time() - age))
+    return f
+
+
+def _proj_day(tmp_path):
+    proj = tmp_path / "P"
+    (proj / ".git").mkdir(parents=True)
+    return proj, tmp_path / "codex" / "sessions" / "2026" / "10" / "09"
+
+
+def _parent(day, proj, markers, age=0):
+    f = jl(day / "rollout-p.jsonl", [{"type": "session_meta", "payload": {"id": "P1", "cwd": str(proj)}},
+                                     ev("user_message", message="lead")] + markers)
+    if age:
+        os.utime(f, (time.time() - age, time.time() - age))
+    return f
+
+
+def test_running_codex_gets_subagents_by_turn_and_jobs(tmp_path):
+    proj, day = _proj_day(tmp_path)
+    _parent(day, proj, [ev("task_started"), _start("a"), _exec_out("a", ts=_utcnow(), sid=5)])
+    # a long quiet tool call (written 400 s ago) still counts while its turn is open; a finished turn does not
+    _child(day, "C1", "P1", "Hilbert", "explorer", [ev("task_started")], proj, age=400)
+    _child(day, "C2", "P1", "Noether", "worker", [ev("task_started"), ev("task_complete")], proj)
+    _child(day, "C3", "P1", "Gauss", "worker", [ev("task_started")], proj, age=7200)   # long dead
+    _child(day, "C4", "OTHER", "Euler", "worker", [ev("task_started")], proj)
+    rr = live.running(sessions.load_sessions(include_hidden=True))
+    [r] = [r for r in rr if r.session_id == "P1"]
+    assert [(s.name, s.kind, s.description) for s in r.subagents] == [("Hilbert", "explorer", "task of Hilbert")]
+    assert r.jobs == 1 and r.workflows == 0
+    assert {x.session_id for x in rr} == {"P1"}                            # children are never top-level rows
+
+
+def test_codex_work_for_a_pane_running_no_longer_lists(tmp_path):
+    proj, day = _proj_day(tmp_path)
+    _parent(day, proj, [ev("task_started"), ev("task_complete"), _start("a"), _exec_out("a", ts=_utcnow(), sid=5)], age=3000)
+    _child(day, "C1", "P1", "Hilbert", "explorer", [ev("task_started")], proj)    # idle far past the 15 min listing window
+    allses = sessions.load_sessions(include_hidden=True)
+    assert [r for r in live.running(allses) if r.cli == "codex"] == []
+    [s] = [s for s in allses if s.id == "P1"]
+    subs, jobs = live.codex_work(s, live.codex_children(allses, time.time()), time.time())
+    assert [x.name for x in subs] == ["Hilbert"] and jobs == 1
+
+
+def test_herdr_codex_pane_carries_subagents_and_jobs(tmp_path, monkeypatch):
+    from navigator import model, sync
+    proj, day = _proj_day(tmp_path)
+    _parent(day, proj, [ev("task_started"), ev("task_complete"), _start("a"), _exec_out("a", ts=_utcnow(), sid=5)], age=3000)
+    _child(day, "C1", "P1", "Hilbert", "explorer", [ev("task_started")], proj)
+    pane = {"pane_id": "p1", "agent": "codex", "agent_status": "idle", "cwd": str(proj), "workspace_id": "w1",
+            "tab_id": "t1", "agent_session": {"kind": "id", "value": "P1"}}
+    monkeypatch.setattr(model, "live_state", lambda: ([], [pane], {}, ""))
+    model.forget_sessions()
+    agents = [a for v in model.build().projects for a in v.agents]
+    [a] = [a for a in agents if a.pane_id == "p1"]
+    assert [s.name for s in a.subagents] == ["Hilbert"] and a.jobs == 1
+    assert sync.work_mark(a) == "↳1 ⟳1"
+
+
+def test_work_counts_include_codex_sessions_the_daemon_has_seen(tmp_path):
+    proj, day = _proj_day(tmp_path)
+    p = _parent(day, proj, [ev("task_started")])
+    c = _child(day, "C1", "P1", "Hilbert", "explorer", [ev("task_started")], proj)
+    live.running(sessions.load_sessions(include_hidden=True))
+    assert live.work_counts(time.time()) == [("P1", 1, 0, 0)]
+    _append(c, ev("task_complete"))                                        # the child finishes: no herdr event, the daemon notices
+    _append(p, _start("a"), _exec_out("a", ts=_utcnow(), sid=3))
+    assert live.work_counts(time.time()) == [("P1", 0, 0, 1)]
+
+
+def test_codex_job_one_script_polling_several_processes(tmp_path):
+    two = _tool("2026-10-09T10:01:00.000Z", "custom_tool_call", "p", name="exec", input=(
+        'text(await tools.write_stdin({session_id:11,chars:""})); text(await tools.write_stdin({session_id:22,chars:""}));'))
+    out = _tool("2026-10-09T10:01:05.000Z", "custom_tool_call_output", "p", output=[
+        {"type": "input_text", "text": "Script completed\n"},
+        {"type": "input_text", "text": json.dumps({"chunk_id": "a", "exit_code": 0, "output": "done"})},
+        {"type": "input_text", "text": json.dumps({"chunk_id": "b", "session_id": 22, "output": "..."})}])
+    p = jl(tmp_path / "r.jsonl", [_start("a"), _exec_out("a", sid=11), _start("b"), _exec_out("b", sid=22), two, out])
+    assert live.codex_jobs(p, NOW) == 1                                    # 11 ended (first result), 22 still runs (second)
+
+
+def test_codex_job_poll_beside_an_instant_command_in_one_script(tmp_path):
+    mixed = _tool("2026-10-09T10:01:00.000Z", "custom_tool_call", "p", name="exec", input=(
+        'text(await tools.exec_command({cmd:"rg x"})); text(await tools.write_stdin({session_id:11,chars:""}));'))
+    out = _tool("2026-10-09T10:01:05.000Z", "custom_tool_call_output", "p", output=[
+        {"type": "input_text", "text": json.dumps({"chunk_id": "a", "exit_code": 0, "output": "hit"})},   # the rg, not the poll
+        {"type": "input_text", "text": json.dumps({"chunk_id": "b", "exit_code": 0, "output": "done"})}])  # the poll: 11 ended
+    p = jl(tmp_path / "r.jsonl", [_start("a"), _exec_out("a", sid=11), _start("b"), _exec_out("b", sid=22), mixed, out])
+    assert live.codex_jobs(p, NOW) == 1
+    quiet = _tool("2026-10-09T10:02:00.000Z", "custom_tool_call_output", "p2", output=[
+        {"type": "input_text", "text": json.dumps({"chunk_id": "c", "exit_code": 0})}])
+    _append(p, _tool("2026-10-09T10:02:00.000Z", "custom_tool_call", "p2", name="exec", input=(
+        'text(await tools.write_stdin({session_id:22,chars:""})); text(await tools.exec_command({cmd:"b"}));')), quiet)
+    assert live.codex_jobs(p, NOW) == 1                                    # a result count that fits no call list ends nothing

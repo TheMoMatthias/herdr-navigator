@@ -4,14 +4,19 @@ Claude: the newest main-chain assistant message's usage (input + cache read + ca
 the context in use; the window comes from `[context]` in the settings (by model name), and
 grows to 1M when a session is seen using more than the configured window.
 Codex: `token_count` events carry the last turn's usage and the model's context window.
+OpenCode/Kilo (SQLite), pi/omp, Qwen, Gemini: the newest assistant turn's prompt-side tokens
+(input + cache read/write), the window by model name (`[context]`, then a built-in table; an
+unknown model shows tokens only, window 0).
 The bar's full mark is where the session compacts: the CLI's auto-compact setting when set
-(Claude `autoCompactWindow`, per model or global; Codex `model_auto_compact_token_limit`).
+(Claude `autoCompactWindow`, per model or global; Codex `model_auto_compact_token_limit`;
+pi `compaction.reserveTokens`; Qwen's 85% ladder; Gemini `model.compressionThreshold`).
 """
 from __future__ import annotations
 
 import json
 import os
 import re
+import sqlite3
 import time
 import tomllib
 from dataclasses import dataclass
@@ -146,14 +151,20 @@ def codex_compact_at() -> int:
         return 0
 
 
-def context(cli: str, path: str) -> Context | None:
+def context(cli: str, path: str, sid: str = "") -> Context | None:
     """Tokens in use against the point where this session compacts: the CLI's auto-compact
-    setting when there is one (never above the model's window), else the model's window."""
-    r = _reading(cli, path)
+    setting when there is one (never above the model's window), else the model's window.
+    `sid` picks the session out of a shared store (OpenCode, Kilo: one database for all)."""
+    r = _sqlite_reading(cli, path, sid) if cli in SQLITE_CLIS else _reading(cli, path)
     if not r:
         return None
     used, model_window, model, cwd = r
-    at = claude_compact_at(model, cwd, model_window) if cli == "claude" else codex_compact_at()
+    if cli == "claude":
+        at = claude_compact_at(model, cwd, model_window)
+    elif cli == "codex":
+        at = codex_compact_at()
+    else:
+        at = _COMPACT_AT.get(cli, lambda w: 0)(model_window) if model_window else 0
     return Context(used, min(at, model_window) if at else model_window)
 
 
@@ -207,7 +218,207 @@ def _reading(cli: str, path: str) -> tuple | None:
             if used and window:
                 return used, window, "", ""
         return None
+    if cli in ("pi", "omp"):
+        return _pi_reading(lines)
+    if cli == "qwen":
+        return _qwen_reading(lines)
+    if cli == "gemini":
+        return _gemini_reading(path, lines)
     return None
+
+
+# --- the other CLIs --------------------------------------------------------------------
+
+# Context windows of models these CLIs commonly run, under `[context]` (which wins). Longest
+# key contained in the model id wins, as there.
+WINDOWS = {
+    "gemini": 1_048_576, "qwen3-coder-plus": 1_000_000, "qwen3-coder": 262_144, "qwen3-max": 262_144,
+    "claude": 200_000, "gpt-5": 400_000, "gpt-4.1": 1_047_576, "o3": 200_000, "o4-mini": 200_000,
+    "kimi-k2": 262_144, "glm-4.5": 131_072, "glm-4.6": 200_000, "deepseek": 128_000,
+    "grok-code": 256_000, "grok-4": 256_000,
+}
+
+
+def _known_window(model: str) -> int:
+    """The window by model name, 0 when unknown (the bar then shows tokens only: a guessed window
+    would draw a fill that means nothing)."""
+    if not model:
+        return 0
+    m = model.lower()
+    user = {k: v for k, v in settings.load().context.items() if k not in ("default", "warn_at", "full_at")}
+    for table in (user, WINDOWS):
+        key = max((k for k in table if k.lower() in m), key=len, default=None)
+        if key is not None:
+            return max(int(table[key]), 1_000_000 if "[1m]" in m else 0)
+    return 1_000_000 if "[1m]" in m else 0
+
+
+def _records(lines: list[str], needle: str):
+    """The JSON records among `lines` that contain `needle`, newest first."""
+    for ln in reversed(lines):
+        if needle in ln:
+            try:
+                rec = json.loads(ln)
+            except ValueError:
+                continue
+            if isinstance(rec, dict):
+                yield rec
+
+
+def _pi_reading(lines: list[str]) -> tuple | None:
+    """pi / oh-my-pi: `{"type":"message","message":{"role":"assistant","model",...,"usage":
+    {input, output, cacheRead, cacheWrite, totalTokens}}}`; a later `compaction` entry replaces
+    the context (omp records its `tokensAfter`, pi does not: 1 until the next answer)."""
+    compacted = 0
+    for rec in _records(lines, '"type"'):
+        if rec.get("type") == "compaction":
+            compacted = compacted or int(rec.get("tokensAfter") or 1)
+            continue
+        msg = rec.get("message") or {}
+        if rec.get("type") != "message" or msg.get("role") != "assistant":
+            continue
+        u = msg.get("usage") or {}
+        used = int(u.get("input") or 0) + int(u.get("cacheRead") or 0) + int(u.get("cacheWrite") or 0)
+        if used:  # an aborted or failed turn reports nothing
+            model = str(msg.get("model") or "")
+            return compacted or used, _known_window(model), model, ""
+    return (compacted, 0, "", "") if compacted else None
+
+
+def _qwen_reading(lines: list[str]) -> tuple | None:
+    """Qwen Code: assistant records carry Gemini-style `usageMetadata` (promptTokenCount already
+    counts the cached part), `model` and `contextWindowSize`; a later `chat_compression` system
+    record's `info.newTokenCount` is the context after compressing."""
+    compacted = 0
+    for rec in _records(lines, '"type"'):
+        if rec.get("isSidechain"):
+            continue
+        if rec.get("type") == "system" and rec.get("subtype") == "chat_compression":
+            info = (rec.get("systemPayload") or {}).get("info") or {}
+            compacted = compacted or int(info.get("newTokenCount") or 1)
+            continue
+        used = int((rec.get("usageMetadata") or {}).get("promptTokenCount") or 0)
+        if rec.get("type") == "assistant" and used:
+            model = str(rec.get("model") or "")
+            return compacted or used, int(rec.get("contextWindowSize") or 0) or _known_window(model), model, ""
+    return (compacted, 0, "", "") if compacted else None
+
+
+def _gemini_reading(path: str, lines: list[str]) -> tuple | None:
+    """Gemini CLI: `type: "gemini"` message records with `tokens: {input, output, cached, ...}`
+    (input is the prompt, cached included) and `model`. JSONL appends a message again when its
+    tokens arrive; a legacy .json is one document with a `messages` list."""
+    if path.endswith(".json"):
+        recs = list(reversed([m for m in _json(path).get("messages") or [] if isinstance(m, dict)]))
+    else:
+        recs = []
+        for rec in _records(lines, '"gemini"'):
+            if isinstance((rec.get("$set") or {}).get("messages"), list):  # a rewrite carries them all
+                recs += reversed([m for m in rec["$set"]["messages"] if isinstance(m, dict)])
+            else:
+                recs.append(rec)
+    for rec in recs:
+        used = int((rec.get("tokens") or {}).get("input") or 0)
+        if rec.get("type") == "gemini" and used:
+            model = str(rec.get("model") or "")
+            return used, _known_window(model), model, ""
+    return None
+
+
+def _pi_settings() -> dict:
+    home = os.environ.get("PI_CODING_AGENT_DIR") or str(Path.home() / ".pi" / "agent")
+    return _json(str(Path(home) / "settings.json"))
+
+
+def _pi_compact_at(window: int) -> int:
+    """pi compacts once the context passes the window less `compaction.reserveTokens` (16384)."""
+    c = _pi_settings().get("compaction") or {}
+    if c.get("enabled") is False:
+        return 0
+    try:
+        return max(0, window - int(c.get("reserveTokens", 16_384)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _qwen_compact_at(window: int) -> int:
+    """Qwen's auto-compaction ladder: 85% of the window, but never past window - 33K (the summary's
+    output reserve plus a buffer)."""
+    ceiling = window - 20_000 - 13_000
+    return round(min(0.85 * window, ceiling) if ceiling > 0 else 0.85 * window)
+
+
+def _gemini_compact_at(window: int) -> int:
+    """Gemini compresses at `model.compressionThreshold` (0.5 by default) of the window."""
+    home = Path(os.environ.get("GEMINI_CLI_HOME") or Path.home()) / ".gemini"
+    try:
+        frac = float((_json(str(home / "settings.json")).get("model") or {}).get("compressionThreshold", 0.5))
+    except (TypeError, ValueError):
+        frac = 0.5
+    return round(window * frac) if 0 < frac <= 1 else 0
+
+
+_COMPACT_AT = {"pi": _pi_compact_at, "qwen": _qwen_compact_at, "gemini": _gemini_compact_at}
+
+
+# OpenCode and Kilo (a fork, same schema) keep every session in one SQLite database, so the
+# file's stamp alone cannot key the reading: (database, session) plus the stamps of the
+# database and its WAL (writes land in -wal until a checkpoint, leaving the .db untouched).
+SQLITE_CLIS = ("opencode", "kilo")
+_SQLITE_MEMO: dict[tuple, tuple] = {}
+
+# Newest assistant messages first: a turn in flight is stored with zero tokens until it ends.
+_ASSISTANT_SQL = """
+SELECT data FROM message WHERE session_id = ? AND json_extract(data, '$.role') = 'assistant'
+ORDER BY time_created DESC, id DESC LIMIT 8
+"""
+
+
+def _stamp(path: str) -> tuple:
+    out = []
+    for p in (path, path + "-wal"):
+        try:
+            st = os.stat(p)
+            out.append((st.st_mtime_ns, st.st_size))
+        except OSError:
+            out.append(None)
+    return tuple(out)
+
+
+def _sqlite_reading(cli: str, path: str, sid: str) -> tuple | None:
+    """(tokens in use, model window, model, "") of one session: the newest finished assistant
+    message's `tokens` {input, output, reasoning, cache {read, write}} and `modelID`. After a
+    compaction the newest is the summary (`summary: true`): its output is the new context."""
+    if not path or not sid or not os.path.isfile(path):
+        return None
+    key, stamp = (path, sid), _stamp(path)
+    hit = _SQLITE_MEMO.get(key)
+    if hit and hit[0] == stamp:
+        return hit[1]
+    out = None
+    try:
+        con = sqlite3.connect(f"file:{Path(path).as_posix()}?mode=ro", uri=True, timeout=1)
+        try:
+            rows = con.execute(_ASSISTANT_SQL, (sid,)).fetchall()
+        finally:
+            con.close()
+    except sqlite3.Error:  # locked, or not (yet) this schema
+        rows = []
+    for (data,) in rows:
+        try:
+            d = json.loads(data)
+        except (TypeError, ValueError):
+            continue
+        t = d.get("tokens") or {}
+        cache = t.get("cache") or {}
+        used = int(t.get("output") or 0) if d.get("summary") else \
+            int(t.get("input") or 0) + int(cache.get("read") or 0) + int(cache.get("write") or 0)
+        if used:
+            model = str(d.get("modelID") or "")
+            out = used, _known_window(model), model, ""
+            break
+    _SQLITE_MEMO[key] = (stamp, out)
+    return out
 
 
 def _text(content) -> str:

@@ -271,6 +271,7 @@ def build(with_sessions: bool = True) -> World:
     by_session = {s.id: s for s in all_sessions}
     by_path = {os.path.normcase(s.path): s.id for s in all_sessions if s.path}
     mirrors = mirror_panes()
+    kids = None
     for a in herdr_agents:
         if a["pane_id"] in mirrors or is_plugin_pane(a.get("cwd", "")):
             continue  # a mirror pane stands in for an outside session: listed once, below
@@ -278,6 +279,10 @@ def build(with_sessions: bool = True) -> World:
         cwd = a.get("cwd", "")
         r = run_by_id.get(sid)
         seen_ids.add(sid)
+        subs, jobs = (r.subagents, r.jobs) if r else ([], 0)
+        if not r and a.get("agent") == "codex" and sid in by_session:  # idle long enough to drop off the running list, its terminals may still run
+            kids = kids if kids is not None else live.codex_children(all_sessions, time.time())
+            subs, jobs = live.codex_work(by_session[sid], kids, time.time())
         term_title = a.get("terminal_title_stripped") or a.get("terminal_title") or ""
         agents.append(Agent(
             cli=a.get("agent", "?"), status=a.get("agent_status", "unknown"),
@@ -285,7 +290,7 @@ def build(with_sessions: bool = True) -> World:
             name=session_name(r, by_session.get(sid), term_title), title=term_title,
             session_id=sid, pane_id=a["pane_id"], workspace_id=a.get("workspace_id", ""),
             tab_id=a.get("tab_id", ""), focused=bool(a.get("focused")), pid=r.pid if r else 0,
-            activity=r.activity if r else "", subagents=r.subagents if r else [], jobs=r.jobs if r else 0, workflows=r.workflows if r else 0,
+            activity=r.activity if r else "", subagents=subs, jobs=jobs, workflows=r.workflows if r else 0,
             seq=int(a.get("state_change_seq") or 0),
         ))
     mirror_of = {sid: pane for pane, sid in mirrors.items()}
@@ -339,7 +344,7 @@ def build(with_sessions: bool = True) -> World:
             continue
         r, s = run_by_id.get(a.session_id), by_session.get(a.session_id)
         a.transcript = (r.transcript if r else "") or (s.path if s else "")
-        a.context = insight.context(a.cli, a.transcript)
+        a.context = insight.context(a.cli, a.transcript, a.session_id)
         if a.cli == "codex" and a.status == "unknown":
             # herdr cannot tell a Codex turn's end ("unknown"): the rollout can. "idle", not "done":
             # nothing records whether you looked, and a done that never clears would hold the queue forever

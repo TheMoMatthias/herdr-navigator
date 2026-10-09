@@ -10,6 +10,9 @@
   <task-notification> with a final status ends it; jobs from before the process started died with it.
   Dynamic workflows the same way (an `async_launched` result with taskType local_workflow); their
   agents write <session>/subagents/workflows/<run id>/agent-*.jsonl and belong to that background task (⟳), not to the session's ↳ count.
+* Codex: a sub-agent is a child rollout (session_meta.source.subagent.thread_spawn: parent, nickname,
+  role) whose newest turn is still open; a background job is an exec_command whose output carries a
+  `session_id` (unified exec keeps the process) until a write_stdin on it returns an exit code.
 * Activity: the last tool call (or message) in the tail of the transcript.
 """
 from __future__ import annotations
@@ -30,6 +33,7 @@ ACTIVE_SECONDS = 150        # a transcript written this recently is "running"
 CODEX_BUSY_SECONDS = 900    # a Codex turn that started and never ended counts as running this long after its last write
 CODEX_IDLE_SECONDS = 900    # a Codex session outside herdr stays listed (idle) this long after its last write
 TAIL = 64 * 1024
+CODEX_JOB_SECONDS = 6 * 3600  # a Codex job older than this is assumed dead with its process: the rollout never says so
 BG_FIRST = 4_000_000        # the first look at a transcript reads this much of its end for background jobs
 
 
@@ -270,7 +274,7 @@ def work_counts(now: float) -> list[tuple[str, int, int, int]]:
             bg = background(tr, r.started_at)
             own = [f for f, _ in _subagent_files(tr, now, bg.agents, bg.runs) if not _workflow_of(f)]
             out.append((r.session_id, len(own), len(bg.runs), bg.jobs))
-    return out
+    return out + _codex_counts(now)
 
 
 _TRANSCRIPTS: dict[str, str] = {}
@@ -346,21 +350,14 @@ def running(sessions: list[Session]) -> list[Running]:
             hits = list(_claude_root().glob(f"*/{r.session_id}.jsonl"))
             r.transcript = str(hits[0]) if hits else ""
     # Codex: recently written top-level threads; children attach to their parent
-    children: dict[str, list[SubAgent]] = {}
+    children = codex_children(sessions, now)
     for s in sessions:
         age = now - s.mtime
-        if s.cli != "codex" or age > max(CODEX_BUSY_SECONDS, CODEX_IDLE_SECONDS):
-            continue
-        if s.subagent:
-            if age <= ACTIVE_SECONDS:
-                parent = _codex_parent(s.path)
-                children.setdefault(parent, []).append(SubAgent(
-                    name=s.title[:30], description=s.title, kind="codex", model="", mtime=s.mtime,
-                    activity=activity(s.path)))
+        if s.cli != "codex" or s.subagent or age > max(CODEX_BUSY_SECONDS, CODEX_IDLE_SECONDS):
             continue
         # no process to check: the rollout says whether a turn is open (a long tool call writes
         # nothing for minutes, so "recently written" alone would call a busy agent gone)
-        turn = insight.codex_turn(s.path)
+        turn = _turn(s.path)
         if (turn == "working" and age <= CODEX_BUSY_SECONDS) or (not turn and age <= ACTIVE_SECONDS):
             status = "busy"
         elif age <= CODEX_IDLE_SECONDS:
@@ -376,14 +373,161 @@ def running(sessions: list[Session]) -> list[Running]:
                 bg = background(r.transcript, r.started_at)
                 r.jobs, r.workflows = bg.jobs, len(bg.runs)
                 r.subagents = claude_subagents(r.transcript, now, bg.agents, bg.runs)
+            elif r.cli == "codex":
+                r.jobs = codex_jobs(r.transcript, now)
+                _SEEN[r.transcript] = r.session_id
         r.subagents += children.get(r.session_id, [])
     return out
 
 
+_turn = by_file(insight.codex_turn)  # every refresh asks; an unchanged rollout is not re-read
+_CODEX_META: dict[str, dict] = {}
+_CHILDREN: dict[str, list[str]] = {}  # parent id -> child rollouts of the last listing (the daemon re-asks their turns)
+_SEEN: dict[str, str] = {}            # Codex rollouts the panes/listing asked about: the daemon watches them
+
+
+def _codex_meta(path: str) -> dict:
+    """A rollout's session_meta payload (the first line never changes: remembered by path)."""
+    m = _CODEX_META.get(path)
+    if m is None:
+        try:
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                d = _loads(fh.readline()) or {}
+        except OSError:
+            return {}
+        m = _CODEX_META[path] = d.get("payload") if isinstance(d.get("payload"), dict) else {}
+    return m
+
+
+def _spawn(path: str) -> dict:
+    src = _codex_meta(path).get("source")
+    spawn = ((src.get("subagent") or {}).get("thread_spawn") if isinstance(src, dict) else None) or {}
+    return spawn if isinstance(spawn, dict) else {}
+
+
 def _codex_parent(path: str) -> str:
+    return _codex_meta(path).get("parent_thread_id") or _spawn(path).get("parent_thread_id", "")
+
+
+def _child_running(path: str, now: float) -> bool:
+    """A child thread works while its newest turn is open (idle children stay around for follow-ups).
+    No turn marker at all: "written just now"."""
     try:
-        with open(path, encoding="utf-8", errors="replace") as fh:
-            d = _loads(fh.readline()) or {}
+        age = now - os.path.getmtime(path)
     except OSError:
-        return ""
-    return (d.get("payload") or {}).get("parent_thread_id", "")
+        return False
+    turn = _turn(path)
+    return (turn == "working" and age <= CODEX_BUSY_SECONDS) or (not turn and age <= ACTIVE_SECONDS)
+
+
+def codex_children(sessions: list[Session], now: float) -> dict[str, list[SubAgent]]:
+    """parent session id -> its running sub-agents (child rollouts, named by nickname)."""
+    kids: dict[str, list[SubAgent]] = {}
+    seen: dict[str, list[str]] = {}
+    for s in sessions:
+        if s.cli != "codex" or not s.subagent or now - s.mtime > CODEX_BUSY_SECONDS:
+            continue
+        parent = _codex_parent(s.path)
+        seen.setdefault(parent, []).append(s.path)
+        if _child_running(s.path, now):
+            m, sp = _codex_meta(s.path), _spawn(s.path)
+            role = m.get("agent_role") or sp.get("agent_role") or ""
+            nick = m.get("agent_nickname") or sp.get("agent_nickname") or ""
+            kids.setdefault(parent, []).append(SubAgent(
+                name=nick or role or s.title[:30], description=s.title, kind=role or "codex", model="",
+                mtime=s.mtime, activity=activity(s.path)))
+    _CHILDREN.clear()
+    _CHILDREN.update(seen)
+    return kids
+
+
+_JOB_ID = re.compile(r'"session_id"\s*:\s*(\d+)|running with session ID (\d+)')
+_EXIT = re.compile(r'"exit_code"\s*:')
+_STDIN_ID = re.compile(r'"?session_id"?\s*:\s*(\d+)')
+_CALLS = re.compile(r'tools\.(exec_command|write_stdin)\((?:\{\s*session_id\s*:\s*(\d+))?')
+_CJ: dict[str, list] = {}  # rollout -> [read up to, {unified-exec session id: started}, {call id: [polled id or ""]}]
+
+
+def _output_text(p: dict) -> str:
+    o = p.get("output")
+    if isinstance(o, list):
+        return "".join(x.get("text", "") for x in o if isinstance(x, dict))
+    return o if isinstance(o, str) else ""
+
+
+def _cj_scan(state: list, data: bytes) -> None:
+    jobs, pending = state[1], state[2]
+    for raw in data.split(b"\n"):
+        # only what can matter is parsed: a rollout is mostly reasoning and file dumps
+        if b"session_id" not in raw and b"session ID" not in raw and b"Process exited" not in raw and not any(c in raw for c in pending):
+            continue
+        rec = _loads(raw.decode("utf-8", "replace"))
+        p = rec.get("payload") if isinstance(rec, dict) and rec.get("type") == "response_item" else None
+        if not isinstance(p, dict) or not isinstance(p.get("call_id"), str):
+            continue
+        kind, cid = p.get("type"), p["call_id"].encode()
+        if kind in ("function_call", "custom_tool_call"):
+            text = str(p.get("arguments") or p.get("input") or "")
+            # what each exec_command/write_stdin in the call will answer: "" = a new command, else the polled id
+            polls = [i or "" for _, i in _CALLS.findall(text)] if "tools." in text else (
+                [(_STDIN_ID.findall(text) or [""])[0]] if p.get("name") == "write_stdin" else [""])
+            if any(polls):
+                pending[cid] = polls
+        elif kind in ("function_call_output", "custom_tool_call_output"):
+            text = _output_text(p)
+            polled = pending.pop(cid, [])
+            # a script's results come in call order, one "chunk_id" each (plain mode: the whole text)
+            parts = text.split('"chunk_id"')[1:] or [text]
+            at = _epoch(rec.get("timestamp", ""))
+            for n, part in enumerate(parts):
+                ids = [x or y for x, y in _JOB_ID.findall(part)]
+                if ids:  # the process is still there (first sight, or a poll that found it running)
+                    for i in ids:
+                        jobs.setdefault(i, at)
+                elif len(parts) == len(polled) and polled[n] and (_EXIT.search(part) or "Process exited" in part):
+                    jobs.pop(polled[n], None)  # the polled process ended (unpaired results are left alone)
+
+
+def codex_jobs(rollout: str, now: float) -> int:
+    """Background terminals a Codex session still has: unified-exec processes that returned a
+    session id and were not seen to exit. Reads only what was appended since the last call."""
+    try:
+        size = os.path.getsize(rollout)
+    except OSError:
+        return 0
+    state = _CJ.get(rollout)
+    if state is None or size < state[0]:  # new, or rewritten
+        state = _CJ[rollout] = [max(0, size - BG_FIRST), {}, {}]
+    if size > state[0]:
+        try:
+            with open(rollout, "rb") as f:
+                f.seek(state[0])
+                data = f.read(size - state[0])
+        except OSError:
+            data = b""
+        cut = data.rfind(b"\n") + 1  # a half-written last line waits for the next call
+        _cj_scan(state, data[:cut])
+        state[0] += cut
+    return sum(1 for at in state[1].values() if now - at <= CODEX_JOB_SECONDS)
+
+
+def codex_work(s: Session, kids: dict[str, list[SubAgent]], now: float) -> tuple[list[SubAgent], int]:
+    """(sub-agents, background jobs) of one Codex session, for a herdr pane that running() no
+    longer lists (idle a long while, yet its background terminals may still run)."""
+    _SEEN[s.path] = s.id
+    return kids.get(s.id, []), codex_jobs(s.path, now)
+
+
+def _codex_counts(now: float) -> list[tuple[str, int, int, int]]:
+    home = str(Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "sessions")
+    out = []
+    for path, sid in list(_SEEN.items()):
+        try:
+            fresh = now - os.path.getmtime(path) <= CODEX_JOB_SECONDS
+        except OSError:
+            fresh = False
+        if not fresh:
+            del _SEEN[path]
+        elif path.startswith(home):
+            out.append((sid, sum(_child_running(c, now) for c in _CHILDREN.get(sid, [])), 0, codex_jobs(path, now)))
+    return out

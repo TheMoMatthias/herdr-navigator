@@ -1029,7 +1029,8 @@ class Navigator(App):
                 "idle": "parked", "inactive": "inactive (nothing new for an hour)"}.get(a.status, a.status)
         head = f"{a.display}  ·  {a.cli}  ·  {word}  ·  {a.project.label}"
         if a.context:
-            head += f"  ·  context {a.context.short} of {a.context.window // 1000}K ({a.context.pct}%)"
+            head += f"  ·  context {a.context.short}" + (
+                f" of {a.context.window // 1000}K ({a.context.pct}%)" if a.context.window else "")
         out.append(head + "\n", style="bold")
         if a.in_herdr and sub < 0:
             from . import watch

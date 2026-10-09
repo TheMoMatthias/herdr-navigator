@@ -6,6 +6,7 @@ cache the result by (mtime, size), so a refresh after the first run touches chan
 from __future__ import annotations
 
 import functools
+import glob
 import json
 import os
 import re
@@ -18,7 +19,7 @@ from . import projects, settings
 
 HEAD_BYTES = 96 * 1024
 TAIL_BYTES = 256 * 1024
-CACHE_VERSION = 10  # bumped: Codex titles skip the injected AGENTS.md preamble
+CACHE_VERSION = 11  # bumped: Droid and Cursor Agent readers
 
 
 @dataclass
@@ -505,6 +506,112 @@ def _copilot_files(cutoff: float) -> list[Path]:
     return out
 
 
+# --- Factory Droid ---------------------------------------------------------------------
+# ~/.factory/sessions/<cwd, non-alphanumerics as '-'>/<uuid>.jsonl; the first line is
+# {"type":"session_start","id","title","sessionTitle","cwd","callingSessionId"?}, then
+# {"type":"message","message":{"role","content"}}. Layout as read by entireio/cli.
+
+def _droid_root() -> Path:
+    # FACTORY_HOME_OVERRIDE replaces the home, not .factory itself
+    return Path(os.environ.get("FACTORY_HOME_OVERRIDE") or Path.home()) / ".factory" / "sessions"
+
+
+def _droid_prompt(d: dict) -> str:
+    m = d.get("message") if d.get("type") == "message" else None
+    return _text_of(m.get("content")) if isinstance(m, dict) and m.get("role") == "user" else ""
+
+
+def _parse_droid(path: Path) -> Session | None:
+    head, tail = _read_head_tail(path)
+    meta = None
+    first_prompt = last_prompt = ""
+    for line in head:
+        d = _loads(line)
+        if not d:
+            continue
+        if d.get("type") == "session_start" and meta is None:
+            meta = d
+        first_prompt = first_prompt or _droid_prompt(d)
+    if not meta or not meta.get("id") or not meta.get("cwd"):
+        return None
+    for line in reversed(tail or head):
+        last_prompt = _droid_prompt(_loads(line) or {})
+        if last_prompt:
+            break
+    name = meta.get("sessionTitle") or ""
+    return Session(
+        cli="droid", id=meta["id"], cwd=meta["cwd"], named=bool(meta.get("isSessionTitleManuallySet") and name),
+        title=_clip(name or first_prompt or _clean(meta.get("title", "")) or "(untitled)"),
+        last_prompt=_clip(last_prompt or first_prompt, 200), branch="", mtime=path.stat().st_mtime,
+        path=str(path), subagent=bool(meta.get("callingSessionId")), origin="cli")
+
+
+def _droid_files(cutoff: float) -> list[Path]:
+    return _recent(_droid_root(), "*/*.jsonl", cutoff)
+
+
+# --- Cursor Agent CLI ------------------------------------------------------------------
+# ~/.cursor/projects/<cwd, leading '/' dropped, non-alphanumerics as '-'>/agent-transcripts/<id>.jsonl
+# holds {"role","message":{"content"}} lines and no cwd; newer CLIs file <chats>/<md5(cwd)>/<id>/meta.json
+# with it. The IDE nests <id>/<id>.jsonl, which cursor-agent cannot resume, so only the flat layout
+# is read. Layout as read by entireio/cli; Cursor has no variable that relocates these.
+
+def _cursor_home() -> Path:
+    return Path.home() / ".cursor"
+
+
+_CURSOR_WRAP = re.compile(r"^\s*(<timestamp>.*?</timestamp>\s*)?<user_query>\s*(.*?)\s*(</user_query>)?\s*$", re.S)
+
+
+def _cursor_prompt(d: dict) -> str:
+    if d.get("role") != "user":
+        return ""
+    content = (d.get("message") or {}).get("content")
+    parts = [content] if isinstance(content, str) else content if isinstance(content, list) else []
+    for p in parts:
+        t = p if isinstance(p, str) else p.get("text", "") if isinstance(p, dict) and p.get("type") in ("text", None) else ""
+        m = _CURSOR_WRAP.match(t)
+        t = m.group(2) if m else _clean(t)  # the CLI wraps the prompt in <user_query>
+        if t.strip():
+            return t
+    return ""
+
+
+def _cursor_cwd(path: Path) -> str:
+    sid, proj = path.stem, path.parent.parent
+    for meta in (_cursor_home() / "chats").glob(f"*/{glob.escape(sid)}/meta.json"):
+        try:
+            cwd = (_loads(meta.read_text(encoding="utf-8")) or {}).get("cwd")
+        except OSError:
+            continue
+        if cwd:
+            return cwd
+    try:
+        cwd = (_loads((proj / ".workspace-trusted").read_text(encoding="utf-8")) or {}).get("workspacePath")
+    except OSError:
+        cwd = ""
+    if cwd:
+        return cwd
+    return _decode_project_dir(proj.name if os.name == "nt" else "-" + proj.name)
+
+
+def _parse_cursor(path: Path) -> Session | None:
+    cwd = _cursor_cwd(path)
+    if not cwd:
+        return None
+    head, tail = _read_head_tail(path)
+    prompts = [p for p in (_cursor_prompt(_loads(line) or {}) for line in head + tail) if p]
+    first = prompts[0] if prompts else ""
+    return Session(
+        cli="cursor", id=path.stem, cwd=cwd, title=_clip(first or "(untitled)"),
+        last_prompt=_clip(prompts[-1] if prompts else "", 200), branch="",
+        mtime=path.stat().st_mtime, path=str(path), origin="cli")
+
+
+def _cursor_files(cutoff: float) -> list[Path]:
+    return _recent(_cursor_home() / "projects", "*/agent-transcripts/*.jsonl", cutoff)
+
+
 # --- OpenCode family (SQLite: opencode, kilo) -----------------------------------------
 
 def _xdg_data() -> Path:
@@ -595,6 +702,47 @@ def _hermes_sessions(cutoff: float) -> list[Session]:
     return out
 
 
+# --- Cline CLI (SQLite) ----------------------------------------------------------------
+# <data>/db/sessions.db, table `sessions`; the title lives in metadata_json, the first prompt in
+# `prompt`. Paths and schema from cline/cline sdk/packages/shared (storage/paths.ts, db/sqlite-db.ts).
+
+def _cline_db() -> Path:
+    env = lambda k: (os.environ.get(k) or "").strip()
+    if env("CLINE_DB_DATA_DIR"):
+        return Path(env("CLINE_DB_DATA_DIR")) / "sessions.db"
+    data = env("CLINE_DATA_DIR") or Path(env("CLINE_DIR") or Path.home() / ".cline") / "data"
+    return Path(data) / "db" / "sessions.db"
+
+
+def _cline_sessions(cutoff: float) -> list[Session]:
+    db = _cline_db()
+    if not db.is_file():
+        return []
+    out = []
+    try:
+        con = sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True, timeout=1)
+        try:
+            rows = con.execute("SELECT session_id, source, cwd, workspace_root, prompt, metadata_json,"
+                               " is_subagent, parent_session_id, started_at, updated_at FROM sessions").fetchall()
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return []
+    for sid, source, cwd, root, prompt, meta, sub, parent, started, updated in rows:
+        mtime = _epoch(updated) or _epoch(started)
+        cwd = cwd or root
+        if not sid or not cwd or mtime < cutoff:
+            continue
+        title = _loads(meta or "") or {}
+        title = title.get("title") if isinstance(title.get("title"), str) else ""
+        prompt = _clean(str(prompt or ""))
+        out.append(Session(
+            cli="cline", id=str(sid), cwd=cwd, named=bool(title),
+            title=_clip(title or prompt or "(untitled)"), last_prompt=_clip(prompt, 200), branch="",
+            mtime=mtime, path=str(db), subagent=bool(sub or parent), origin=str(source or "cli")))
+    return out
+
+
 def _epoch(v) -> float:
     """Unix seconds from seconds, milliseconds or an ISO string; 0 when unknown."""
     if v in (None, ""):
@@ -620,6 +768,8 @@ PROVIDERS = {
     "qwen": (_qwen_files, _parse_qwen),
     "gemini": (_gemini_files, _parse_gemini),
     "copilot": (_copilot_files, _parse_copilot),
+    "droid": (_droid_files, _parse_droid),
+    "cursor": (_cursor_files, _parse_cursor),
 }
 
 
@@ -672,7 +822,7 @@ def load_sessions(include_hidden: bool = False) -> list[Session]:
             if include_hidden or is_listed(s):
                 out.append(s)
     db_sessions = [s for cli, db in SQLITE_STORES.items() for s in _sqlite_sessions(cli, db(), cutoff)]
-    for s in db_sessions + _hermes_sessions(cutoff):
+    for s in db_sessions + _hermes_sessions(cutoff) + _cline_sessions(cutoff):
         if include_hidden or is_listed(s):
             out.append(s)
     if fresh != entries:  # unchanged (the usual case): no rewrite of the whole cache

@@ -19,6 +19,10 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setenv("GEMINI_CLI_HOME", str(tmp_path / "gemini"))
     monkeypatch.setenv("COPILOT_HOME", str(tmp_path / "copilot"))
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    monkeypatch.setenv("FACTORY_HOME_OVERRIDE", str(tmp_path / "droid"))
+    monkeypatch.setenv("CLINE_DB_DATA_DIR", str(tmp_path / "cline"))
+    from navigator import sessions
+    monkeypatch.setattr(sessions, "_cursor_home", lambda: tmp_path / "cursor")
     monkeypatch.delenv("QWEN_RUNTIME_DIR", raising=False)
     # pytest's tmp_path is under %TEMP%, which the default config hides
     (tmp_path / "cfg").mkdir()
