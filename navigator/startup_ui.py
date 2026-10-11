@@ -84,7 +84,7 @@ LEGEND = Text.assemble(
     ("⚠", "bold #fe8019"), " waits for approval   ", ("⏳", "bold #fe8019"), " asks you   ", ("✔", "bold"),
     " done   ", ("◐", "dim"), " working   ", ("○", "dim"), " parked\n         ", ("❓", "bold #fe8019"), " asks a question   ", ("↗", "dim"), " other window   ",
     ("●", "bold"), " running here\n         ",
-    ("⎇", "dim"), " worktree   ", ("↳", "dim"), " sub-agent   ", ("▲", "bold #fe8019"), " context almost full   ",
+    ("⎇", "dim"), " worktree   ", ("↳", "dim"), " background work   ", ("▲", "bold #fe8019"), " context almost full   ",
     ("▸", ""), " tool it runs   ", ("☑", "bold"), " on   ", ("☐", "dim"), " off   ",
     ("▾ ▸", "bold"), " fold   ", ("▾", ""), " opens a menu")
 

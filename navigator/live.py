@@ -9,7 +9,7 @@
 * Background jobs (Claude): a Bash result carrying `backgroundTaskId` starts one, its
   <task-notification> with a final status ends it; jobs from before the process started died with it.
   Dynamic workflows the same way (an `async_launched` result with taskType local_workflow); their
-  agents write <session>/subagents/workflows/<run id>/agent-*.jsonl and belong to that background task (⟳), not to the session's ↳ count.
+  agents write <session>/subagents/workflows/<run id>/agent-*.jsonl and belong to that background task, which ↳ already counts once.
 * Codex: a sub-agent is a child rollout (session_meta.source.subagent.thread_spawn: parent, nickname,
   role) whose newest turn is still open; a background job is an exec_command whose output carries a
   `session_id` (unified exec keeps the process) until a write_stdin on it returns an exit code.
@@ -45,7 +45,7 @@ class SubAgent:
     model: str
     mtime: float
     activity: str = ""
-    workflow: str = ""  # run id when the agent works for a dynamic workflow (a ⟳ task), not for the session (↳)
+    workflow: str = ""  # run id when the agent works for a dynamic workflow (counted once, as its task), not for the session
 
 
 @dataclass

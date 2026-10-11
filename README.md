@@ -297,24 +297,25 @@ Always visible in herdr:
 - **Sidebar, spaces:** one group per repo. The repo's own checkout comes first (its second
   line shows the branch, e.g. `main`), and the active worktrees are indented under it, named
   after the session working there. `!1 ?1 ✓1` counts the sessions that are blocked, waiting for a reply and done (idle and
-  inactive ones are not counted); a pulsing cyan `●` at the end of the heading means one is working
+  inactive ones are not counted); a pulsing cyan `●` at the end of the repo's heading means a session anywhere in the project
+  (its own checkout, a worktree, another window) is working
   (the Agents panel's project headings carry the same).
   One Space per folder: a second Space opened on a folder that has one (herdr's sidebar
   `new` does that) joins it as a tab, running sessions included (`merge_duplicates` in
   `[workspaces]`, on by default).
   `↗ NAME` lists sessions in other windows that have no mirror (only when mirrors are off).
-- **Sidebar, agents:** the session name, its state, running sub-agents (`↳2`) and background
-  tasks (`⟳3`: shell jobs, monitors and dynamic workflows, in blue) and, on the second line, `project ⎇ worktree` and the CLI. `↗ other window`
-  marks a mirror. The Spaces rows carry the same `↳2 ⟳3` after each session.
+- **Sidebar, agents:** the session name, its state, what it runs in the background
+  (`↳3`, in blue: sub-agents, shell jobs, monitors and dynamic workflows, one count for all) and, on the second line, `project ⎇ worktree` and the CLI. `↗ other window`
+  marks a mirror. The Spaces rows carry the same `↳3` after each session.
 - **Background jobs, workflows and sub-agents (Claude Code):** a background shell job (or
   monitor) and a dynamic workflow count from their start until their completion notice, and a
-  running workflow's agents belong to its `⟳` task (listed as `⟳` rows in the Navigator), not to `↳`; a background sub-agent counts until it finishes, even when
+  running workflow's agents belong to its task and are not counted twice; a background sub-agent counts until it finishes, even when
   it is quiet; a foreground one while its transcript is being written. Jobs from before a
   session restarted died with it and are not counted. The daemon checks every 10 s, reading
   only new transcript lines, so a finished job leaves the sidebar within seconds.
 - **Codex** gets the same marks: its sub-agents (child threads, named by their nickname) count
   while their turn runs, and a background process (`exec_command` that keeps running) counts
-  in `⟳` until a poll reports its exit code. Other CLIs show their state only.
+  in `↳` until a poll reports its exit code. Other CLIs show their state only.
 
 Direct chords (no prefix) that setup adds:
 

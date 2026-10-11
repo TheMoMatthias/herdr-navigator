@@ -611,10 +611,10 @@ def test_work_mark_in_session_rows():
     p = projects.Project("/r", "R")
     a = model.Agent("claude", "working", p, name="LEAD", pane_id="p1", jobs=3,
                     subagents=[NS(name="s")] * 2)
-    assert sync.work_mark(a) == "↳2 ⟳3"
+    assert sync.work_mark(a) == "↳5"
     assert sync.work_mark(model.Agent("claude", "idle", p, name="B", pane_id="p2")) == ""
     rows = sync.session_rows("x", [a, model.Agent("claude", "idle", p, name="B", pane_id="p2")])
-    assert [r[2] for r in rows] == ["↳2 ⟳3", ""]
+    assert [r[2] for r in rows] == ["↳5", ""]
 
 
 def test_work_counts_follow_jobs_for_the_daemon(tmp_path):
@@ -643,9 +643,9 @@ def test_dynamic_workflow_and_its_agents_counted(tmp_path):
     assert [(s.name, s.workflow) for s in subs] == [("x", "wf_1")]
     a = model.Agent("claude", "working", projects.Project("/r", "R"), name="L", pane_id="p",
                     workflows=1, subagents=subs)
-    assert sync.work_mark(a) == "⟳1"  # a workflow is one background task; its agents are not the session's ↳
+    assert sync.work_mark(a) == "↳1"  # a workflow is one background task; its agents are not counted again
     a.jobs = 2
-    assert sync.work_mark(a) == "⟳3"
+    assert sync.work_mark(a) == "↳3"
     assert live._workflow_of(run / "agent-x.jsonl") == "wf_1"
     assert live._workflow_of(tr.with_suffix("") / "subagents" / "agent-y.jsonl") == ""
     with open(tr, "a", encoding="utf-8") as f:

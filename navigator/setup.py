@@ -102,7 +102,7 @@ def CTX_TOKEN(name: str) -> dict:
                                                       {"contains": "⠀", "fg": "#fabd2f"}]}
 
 
-# What a session has running besides itself (sync.work_mark): ↳N sub-agents, ⟳N background tasks.
+# What a session has running besides itself (sync.work_mark): ↳N sub-agents and background tasks.
 def WORK_TOKEN(name: str) -> dict:
     return {"token": name, "fg": "#83a598"}
 

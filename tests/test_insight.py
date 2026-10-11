@@ -429,3 +429,31 @@ def test_context_bar_ends_where_the_session_compacts(tmp_path, monkeypatch):
     assert insight.context("codex", p).window == 258_400
     (codex / "config.toml").write_text("model_auto_compact_token_limit = 200000\n", encoding="utf-8")
     assert insight.context("codex", p).window == 200_000
+
+
+def test_spaces_pulse_sits_on_the_projects_own_space(tmp_path, monkeypatch):
+    """A session working in a worktree Space pulses the repo's own Space, as on the Agents panel."""
+    from navigator import herdr, model, settings, sync
+    from types import SimpleNamespace as NS
+    monkeypatch.setattr(settings, "state_dir", lambda: tmp_path)
+    (tmp_path / "replies.json").write_text("{}")
+    root = str(tmp_path)
+    main, wt = NS(root=root, name="A", label="A", worktree=""), NS(root=root, name="A", label="A", worktree="x")
+    other = NS(root=root + "/b", name="B", label="B", worktree="y")
+    ws = [NS(id="w1", label="A", cwd=root, project=main, linked_worktree=False),
+          NS(id="w2", label="LEAD", cwd=root + "/x", project=wt, linked_worktree=True),
+          NS(id="w3", label="SOLO", cwd=root + "/b/y", project=other, linked_worktree=True)]
+    agents = [model.Agent(cli="claude", status="idle", project=main, pane_id="w1:p1", workspace_id="w1", name="R"),
+              model.Agent(cli="claude", status="working", project=wt, pane_id="w2:p1", workspace_id="w2", name="LEAD"),
+              model.Agent(cli="claude", status="working", project=other, pane_id="w3:p1", workspace_id="w3", name="SOLO")]
+    world = model.World([], agents, ws, [], {}, "", {}, "", {})
+    monkeypatch.setattr(model, "build", lambda *k, **kw: world)
+    monkeypatch.setattr(herdr, "request", lambda m, p, **kw: {})
+    monkeypatch.setattr(herdr, "run", lambda *args, **kw: {})
+    monkeypatch.setattr(sync, "agent_tree", lambda agents, folded=None: [])
+    monkeypatch.setattr(sync, "ensure_view", lambda: None)
+    sync.sync(force=True)
+    sent = sync._load_sent()
+    assert sent.get("workspace:w1:pulse") == "●"   # the repo's Space: its worktree session works
+    assert not sent.get("workspace:w2:pulse")       # not again on the worktree Space
+    assert sent.get("workspace:w3:pulse") == "●"   # a worktree whose repo has no Space keeps its own

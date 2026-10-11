@@ -170,13 +170,18 @@ def session_lines(label: str, agents: list, folded: bool = False) -> list[str]:
     return [r[0] for r in session_rows(label, agents, folded)]
 
 
-def work_mark(a) -> str:
-    """What a session has running besides itself, the same two marks for every CLI: ↳ its own
-    sub-agents, ⟳ background tasks (shell jobs, monitors, dynamic workflows; a workflow's agents
-    belong to its task, not to ↳)."""
+def work_count(a) -> int:
+    """Everything a session has running in the background, one number for every CLI: its own
+    sub-agents plus its background tasks (shell jobs, monitors, dynamic workflows; a workflow's
+    agents belong to its task and are not counted again)."""
     own = sum(1 for s in a.subagents if not getattr(s, "workflow", ""))
-    marks = (("↳", own), ("⟳", getattr(a, "workflows", 0) + getattr(a, "jobs", 0)))
-    return " ".join(f"{sym}{n}" for sym, n in marks if n)
+    return own + getattr(a, "workflows", 0) + getattr(a, "jobs", 0)
+
+
+def work_mark(a) -> str:
+    """One mark for whatever runs in the background: ↳N."""
+    n = work_count(a)
+    return f"↳{n}" if n else ""
 
 
 def session_rows(label: str, agents: list, folded: bool = False) -> list[tuple[str, str, str]]:
@@ -334,6 +339,9 @@ def sync(force: bool = False) -> None:
     global _SEQ
     _SEQ = (str(n) for n in itertools.count(int(started * 1000) * 1000))  # rises across runs and reports
 
+    # the working dot sits on the project's own Space, as on the Agents panel's project heading;
+    # a worktree Space shows it only when its project has no Space of its own open
+    primaries = {x.project.root for x in world.workspaces if x.project and not x.linked_worktree}
     for w in world.workspaces:
         if not w.project:
             continue
@@ -354,7 +362,13 @@ def sync(force: bool = False) -> None:
         lines = [r[0] for r in rows]
         # a Space named after its only session shows no session row: its context mark goes on the heading
         _report("workspace", w.id, "agents", side_counts(here), old, sent, seq)
-        _report("workspace", w.id, "pulse", pulse_mark(here + outside), old, sent, seq)
+        if w.linked_worktree and p.root in primaries:
+            pulse = ""
+        elif w.linked_worktree:
+            pulse = pulse_mark(here + outside)
+        else:  # the whole project: every Space of it, and its sessions in other windows
+            pulse = pulse_mark([a for a in world.agents if a.project.root == p.root])
+        _report("workspace", w.id, "pulse", pulse, old, sent, seq)
         _report("workspace", w.id, "ctx", "" if rows else _worst_mark(here), old, sent, seq)
         _report("workspace", w.id, "work", "" if rows else " ".join(filter(None, map(work_mark, here))), old, sent, seq)
         for i in range(SESSION_ROWS):
@@ -431,7 +445,7 @@ def sync(force: bool = False) -> None:
 
     for a in world.agents:
         if a.in_herdr:  # mirror panes report their own tokens
-            subs = work_mark(a)  # the $subagents token: ↳ sub-agents, ⟳ background tasks
+            subs = work_mark(a)  # the $subagents token: ↳N background work
             _report("pane", a.pane_id, "project", a.project.label, old, sent, seq)
             _report("pane", a.pane_id, "session", a.display, old, sent, seq)
             _report("pane", a.pane_id, "subagents", subs, old, sent, seq)

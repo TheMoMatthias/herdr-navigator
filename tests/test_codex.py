@@ -350,7 +350,7 @@ def test_herdr_codex_pane_carries_subagents_and_jobs(tmp_path, monkeypatch):
     agents = [a for v in model.build().projects for a in v.agents]
     [a] = [a for a in agents if a.pane_id == "p1"]
     assert [s.name for s in a.subagents] == ["Hilbert"] and a.jobs == 1
-    assert sync.work_mark(a) == "↳1 ⟳1"
+    assert sync.work_mark(a) == "↳2"
 
 
 def test_work_counts_include_codex_sessions_the_daemon_has_seen(tmp_path):
