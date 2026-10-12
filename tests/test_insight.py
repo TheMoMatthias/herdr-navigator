@@ -336,8 +336,8 @@ def test_sidebar_marks_full_context():
     from navigator.sync import ctx_mark
     assert ctx_mark(NS(context=None)) == ""
     assert ctx_mark(NS(context=Context(100_000, 1_000_000))) == "▰▱▱▱"
-    assert ctx_mark(NS(context=Context(250_000, 1_000_000))) == "▰▱▱▱⠀"   # same bar, yellow
-    assert ctx_mark(NS(context=Context(800_000, 1_000_000))) == "▰▰▰▱⠀⠀"
+    assert ctx_mark(NS(context=Context(250_000, 1_000_000))) == "▰▱▱▱​"   # same bar, yellow
+    assert ctx_mark(NS(context=Context(800_000, 1_000_000))) == "▰▰▰▱​​"
 
 
 def test_idle_for_an_hour_is_inactive(tmp_path, monkeypatch):
@@ -444,16 +444,17 @@ def test_spaces_pulse_sits_on_the_projects_own_space(tmp_path, monkeypatch):
           NS(id="w2", label="LEAD", cwd=root + "/x", project=wt, linked_worktree=True),
           NS(id="w3", label="SOLO", cwd=root + "/b/y", project=other, linked_worktree=True)]
     agents = [model.Agent(cli="claude", status="idle", project=main, pane_id="w1:p1", workspace_id="w1", name="R"),
-              model.Agent(cli="claude", status="working", project=wt, pane_id="w2:p1", workspace_id="w2", name="LEAD"),
+              model.Agent(cli="claude", status="working", project=wt, pane_id="w2:p1", workspace_id="w2", name="LEAD", jobs=2),
               model.Agent(cli="claude", status="working", project=other, pane_id="w3:p1", workspace_id="w3", name="SOLO")]
     world = model.World([], agents, ws, [], {}, "", {}, "", {})
     monkeypatch.setattr(model, "build", lambda *k, **kw: world)
     monkeypatch.setattr(herdr, "request", lambda m, p, **kw: {})
     monkeypatch.setattr(herdr, "run", lambda *args, **kw: {})
-    monkeypatch.setattr(sync, "agent_tree", lambda agents, folded=None: [])
     monkeypatch.setattr(sync, "ensure_view", lambda: None)
     sync.sync(force=True)
     sent = sync._load_sent()
     assert sent.get("workspace:w1:pulse") == "●"   # the repo's Space: its worktree session works
+    assert not sent.get("workspace:w1:work")       # ↳ stays with the session:
+    assert sent.get("workspace:w2:work") == "↳2"  # the Space named after it
     assert not sent.get("workspace:w2:pulse")       # not again on the worktree Space
     assert sent.get("workspace:w3:pulse") == "●"   # a worktree whose repo has no Space keeps its own

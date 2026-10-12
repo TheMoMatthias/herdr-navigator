@@ -95,11 +95,11 @@ UI = {
 MUTED = "#a89984"
 TREE = {"fg": MUTED}
 
-# A session's context (sync.ctx_mark): a 4-cell bar, green; the level's invisible braille
-# blanks turn it yellow (one) or red (two).
+# A session's context (sync.ctx_mark): a 4-cell bar, green; the level's zero-width spaces turn
+# it yellow (one) or red (two).
 def CTX_TOKEN(name: str) -> dict:
-    return {"token": name, "fg": "#56d364", "rules": [{"contains": "⠀⠀", "fg": "#fb4934", "bold": True},
-                                                      {"contains": "⠀", "fg": "#fabd2f"}]}
+    return {"token": name, "fg": "#56d364", "rules": [{"contains": sync.ZW * 2, "fg": "#fb4934", "bold": True},
+                                                      {"contains": sync.ZW, "fg": "#fabd2f"}]}
 
 
 # What a session has running besides itself (sync.work_mark): ↳N sub-agents and background tasks.
@@ -122,14 +122,15 @@ def PULSE_TOKEN(name: str) -> dict:  # rules: most blanks first, "contains" matc
             "rules": [{"contains": sync.PAD * k, "fg": _pulse_shade(k)} for k in range(sync.PULSE_SHADES - 1, 0, -1)]}
 
 
-# one row per session inside the Space ($s1..$s8 from sync.py, its context mark $c1..$c8, what
-# it has running $b1..$b8);
-# empty rows disappear
+# The Spaces panel is about where work happens: a project's own Space carries the working dot
+# for the whole project; then one row per session inside the Space ($s1..$s8 from sync.py) with
+# what that session runs in the background ($b1..$b8); empty rows disappear. A Space named
+# after its only session shows that ↳ on its heading ($work). Context lives on the Agents panel.
 SPACE_ROWS = [
-    ["state_icon", "workspace", {"token": "$agents", "dim": True}, CTX_TOKEN("$ctx"), WORK_TOKEN("$work"),
+    ["state_icon", "workspace", {"token": "$agents", "dim": True}, WORK_TOKEN("$work"),
      PULSE_TOKEN("$pulse")],  # last: its frames change width (sync.PULSE_FRAMES)
     ["branch", "git_status"],
-    *[[{"token": f"$s{i}", **TREE}, CTX_TOKEN(f"$c{i}"), WORK_TOKEN(f"$b{i}")] for i in range(1, 9)],
+    *[[{"token": f"$s{i}", **TREE}, WORK_TOKEN(f"$b{i}")] for i in range(1, 9)],
 ]
 # herdr's Agents panel as a tree by project (tokens and order from sync.agent_tree): a heading
 # row on the first agent of each project, then one "├─ ◐ NAME · state" line per session. No
@@ -257,6 +258,8 @@ def install(doc, added: dict) -> list[str]:
                 sec = tomlkit.table()
                 sidebar[name] = sec
             sec["rows"] = _rows(rows)
+            if name == "agents" and "rows_by_agent" in sec:
+                del sec["rows_by_agent"]  # per-CLI line colours from an earlier build: one colour for all
             added.setdefault("sidebar", []).append(name)
         else:
             notes.append(f"kept your own [ui.sidebar.{name}] rows (add $agents/$s1..$s8/$project tokens yourself)")

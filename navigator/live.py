@@ -46,6 +46,7 @@ class SubAgent:
     mtime: float
     activity: str = ""
     workflow: str = ""  # run id when the agent works for a dynamic workflow (counted once, as its task), not for the session
+    parent: str = ""    # the agent that spawned it (a teammate's helper): counted with that agent, not again
 
 
 @dataclass
@@ -275,7 +276,8 @@ def work_counts(now: float) -> list[tuple[str, int, int, int]]:
         tr = _transcript_of(r.session_id)
         if tr:
             bg = background(tr, r.started_at)
-            own = [f for f, _ in _subagent_files(tr, now, bg.agents, bg.runs) if not _workflow_of(f)]
+            own = [f for f, _ in _subagent_files(tr, now, bg.agents, bg.runs)
+                   if not _workflow_of(f) and not _meta(f).get("parentAgentId")]
             out.append((r.session_id, len(own), len(bg.runs), bg.jobs))
     return out + _codex_counts(now)
 
@@ -297,15 +299,19 @@ def _workflow_of(f: Path) -> str:
     return f.parent.name if f.parent.parent.name == "workflows" else ""
 
 
+def _meta(f: Path) -> dict:
+    try:
+        d = json.loads(f.with_suffix(".meta.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return d if isinstance(d, dict) else {}
+
+
 def claude_subagents(transcript: str, now: float, keep: set[str] = frozenset(),
                      runs: set[str] = frozenset()) -> list[SubAgent]:
     out = []
     for f, m in _subagent_files(transcript, now, keep, runs):
-        meta = {}
-        try:
-            meta = json.loads(f.with_suffix(".meta.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            pass
+        meta = _meta(f)
         out.append(SubAgent(
             name=meta.get("name") or meta.get("agentType") or f.stem.removeprefix("agent-")[:12],
             description=meta.get("description", ""),
@@ -314,6 +320,7 @@ def claude_subagents(transcript: str, now: float, keep: set[str] = frozenset(),
             mtime=m,
             activity=activity(str(f)),
             workflow=_workflow_of(f),
+            parent=str(meta.get("parentAgentId") or ""),
         ))
     return sorted(out, key=lambda s: -s.mtime)
 

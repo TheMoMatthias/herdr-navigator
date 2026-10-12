@@ -183,15 +183,19 @@ back when you log on.
   opened first and the rest wait until its refresh has landed. Many sessions refreshing the
   token at once log each other out.
 - **▶ Open ticked** does the same thing right now.
-- **⚙ Settings › Accounts** shows who is signed in to each CLI. To add a second account: 💾 *Save current
-  login* first (so you can switch back), then 🔑 *Sign in with another account*. Sign out too (Claude, Codex,
-  OpenCode and Gemini by default; add any CLI under `[login.<cli>]`). Sign-in opens in a new tab.
-  When the CLI has saved the new credentials, the Navigator comes back with the Relaunch dialog.
-  **Profiles** switch accounts without signing out. 💾 saves the current login as a named profile,
-  and ⇄ switches to another. History stays shared, because only the login files are swapped
-  (`[login.<cli>] files` and `json_keys`). The active profile's refreshed tokens are saved back
-  before every switch. Profiles are stored in the plugin's state directory on this machine. On
-  macOS, Claude keeps its login in the Keychain, so Claude profiles there are not supported yet.
+- **⚙ Settings › Accounts** shows who is signed in to each CLI. **Pick a saved account** from the
+  dropdown to switch to it: its login is copied in and the CLI's sessions relaunch on it on their
+  own (idle ones at once, busy ones as soon as their turn ends, never mid-turn). If that saved
+  login no longer works (its refresh token expired, or it does not come up as its account), the
+  sign-in for that account opens instead. 🔑 *Add another account* opens the CLI's login in a new
+  tab; once it is done, the new account is saved as a profile and the sessions relaunch on it.
+  Sign out too (Claude, Codex, OpenCode and Gemini by default; add any CLI under `[login.<cli>]`).
+  Logins are saved on their own, by account (email): before every switch, sign-in and sign-out,
+  and whenever the CLI renews its token, so switching back never restores a token that has since
+  been replaced. 💾 *Save as…* saves the current login under a name of your own. History stays
+  shared, because only the login files are swapped (`[login.<cli>] files` and `json_keys`).
+  Profiles are stored in the plugin's state directory on this machine. On macOS, Claude keeps its
+  login in the Keychain, so Claude profiles there are not supported yet.
 - **Relaunch, one way everywhere.** *↻ Relaunch…* on the Agents and Sessions tabs, *Relaunch it…*
   in an agent's or a session's menu, *Relaunch all sessions* in the F5 pane menu, and the offer
   after a sign-in all open the same dialog: pick every CLI or one, see what restarts, include busy
@@ -294,19 +298,22 @@ in **Agents** as `❓` with the question and its options, also for sessions in o
 Always visible in herdr:
 
 - **Tab bar:** `⚠ other-project waiting for you (Ctrl+Alt+I) │ project: 2 working, 1 idle │ 3 sessions outside herdr (F3) │ F1 Navigator · F2 Sessions · F3 Agents · F5 Pane menu · F6 Layout · F9 Settings · Ctrl+Alt+R Back` (most urgent first, plain words)
-- **Sidebar, spaces:** one group per repo. The repo's own checkout comes first (its second
-  line shows the branch, e.g. `main`), and the active worktrees are indented under it, named
-  after the session working there. `!1 ?1 ✓1` counts the sessions that are blocked, waiting for a reply and done (idle and
-  inactive ones are not counted); a pulsing cyan `●` at the end of the repo's heading means a session anywhere in the project
-  (its own checkout, a worktree, another window) is working
-  (the Agents panel's project headings carry the same).
+- **Sidebar, spaces** — *where work happens:* one group
+  per repo. The repo's own checkout comes first (its second line shows the branch, e.g. `main`),
+  and the active worktrees are indented under it, named after the session working there; each
+  Space lists its sessions by name. `!1 ?1 ✓1` counts the sessions that are blocked, waiting for a
+  reply and done (idle and inactive ones are not counted). Each session shows what it runs in the background (`↳3`) after its name. The repo's
+  heading carries a pulsing cyan `●` while a session anywhere in the project (its own checkout,
+  a worktree, another window) is working; a worktree Space carries it itself only when its repo
+  has no Space open.
   One Space per folder: a second Space opened on a folder that has one (herdr's sidebar
   `new` does that) joins it as a tab, running sessions included (`merge_duplicates` in
   `[workspaces]`, on by default).
   `↗ NAME` lists sessions in other windows that have no mirror (only when mirrors are off).
-- **Sidebar, agents:** the session name, its state, what it runs in the background
-  (`↳3`, in blue: sub-agents, shell jobs, monitors and dynamic workflows, one count for all) and, on the second line, `project ⎇ worktree` and the CLI. `↗ other window`
-  marks a mirror. The Spaces rows carry the same `↳3` after each session.
+- **Sidebar, agents** — *who works, and who needs you:* one tree per project (heading with the
+  same tally and pulse), one line per session: its context bar, its state and what
+  it runs in the background (`↳3`, in blue: sub-agents, shell jobs, monitors and dynamic
+  workflows, one count for all). `↗` marks a mirror of a session in another window.
 - **Background jobs, workflows and sub-agents (Claude Code):** a background shell job (or
   monitor) and a dynamic workflow count from their start until their completion notice, and a
   running workflow's agents belong to its task and are not counted twice; a background sub-agent counts until it finishes, even when

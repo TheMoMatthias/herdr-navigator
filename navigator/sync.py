@@ -149,8 +149,10 @@ def side_counts(agents: list) -> str:
 
 # Context in use: a 4-cell bar (▰▰▱▱) of the window after every session, in its own token so
 # herdr colours it (setup.CTX_TOKEN): green, yellow from 200K, red from 700K. herdr colours by
-# the text, so the level rides along as trailing braille blanks (invisible) the rules match.
-CTX_LEVEL = {"ok": "", "warn": PAD, "full": PAD * 2}
+# the text, so the level rides along as zero-width spaces the rules match: they take no cell,
+# so every bar has the same width (braille blanks did, and pushed a yellow bar's row apart).
+ZW = "\u200b"
+CTX_LEVEL = {"ok": "", "warn": ZW, "full": ZW * 2}
 
 
 def ctx_mark(a) -> str:
@@ -158,23 +160,12 @@ def ctx_mark(a) -> str:
     return c.bar() + CTX_LEVEL[c.level] if c else ""
 
 
-def _worst_mark(agents: list) -> str:
-    """The mark of the fullest context among these agents ("" when none is known)."""
-    known = [a for a in agents if getattr(a, "context", None)]
-    order = {"ok": 0, "warn": 1, "full": 2}
-    top = max(known, key=lambda a: (order[a.context.level], a.context.used), default=None)
-    return ctx_mark(top) if top else ""
-
-
-def session_lines(label: str, agents: list, folded: bool = False) -> list[str]:
-    return [r[0] for r in session_rows(label, agents, folded)]
-
-
 def work_count(a) -> int:
     """Everything a session has running in the background, one number for every CLI: its own
     sub-agents plus its background tasks (shell jobs, monitors, dynamic workflows; a workflow's
-    agents belong to its task and are not counted again)."""
-    own = sum(1 for s in a.subagents if not getattr(s, "workflow", ""))
+    agents belong to its task, and an agent another agent spawned to that agent: neither is
+    counted again)."""
+    own = sum(1 for s in a.subagents if not getattr(s, "workflow", "") and not getattr(s, "parent", ""))
     return own + getattr(a, "workflows", 0) + getattr(a, "jobs", 0)
 
 
@@ -195,21 +186,25 @@ def work_mark(a) -> str:
     return f"↳{n}" if n else ""
 
 
-def session_rows(label: str, agents: list, folded: bool = False) -> list[tuple[str, str, str]]:
-    """The indented lines a Space shows under itself: one per session, urgent first. A worktree
+def session_lines(label: str, agents: list, folded: bool = False) -> list[str]:
+    return [r[0] for r in session_rows(label, agents, folded)]
+
+
+def session_rows(label: str, agents: list, folded: bool = False) -> list[tuple[str, str]]:
+    """(line, ↳ mark) per session: the indented lines a Space shows under itself: one per session, urgent first. A worktree
     Space already named after its only session shows none (it would just repeat the name). A
     folded project keeps only the sessions that need you, plus a "+N folded" line."""
     agents = sorted(agents, key=lambda a: (model.rank(a), a.display.lower()))
     if len(agents) == 1 and agents[0].display.strip().lower() == label.strip().lower():
         return []
     hidden = [a for a in agents if a.status not in model.NEEDS_YOU] if folded else []
-    lines = [(f"{'↗' if not a.in_herdr else SIDE_ICON.get(a.status, '·')} {a.display[:room(16, 30)]}", ctx_mark(a), work_mark(a))
+    lines = [(f"{'↗' if not a.in_herdr else SIDE_ICON.get(a.status, '·')} {a.display[:room(16, 30)]}", work_mark(a))
              for a in agents if a not in hidden]
     if hidden:
-        lines.append((f"+{len(hidden)} folded", "", ""))
+        lines.append((f"+{len(hidden)} folded", ""))
     if len(lines) > SESSION_ROWS:
-        lines = lines[:SESSION_ROWS - 1] + [(f"+{len(lines) - SESSION_ROWS + 1} more", "", "")]
-    return [(("└─ " if i == len(lines) - 1 else "├─ ") + t, m, w) for i, (t, m, w) in enumerate(lines)]
+        lines = lines[:SESSION_ROWS - 1] + [(f"+{len(lines) - SESSION_ROWS + 1} more", "")]
+    return [(("└─ " if i == len(lines) - 1 else "├─ ") + t, w) for i, (t, w) in enumerate(lines)]
 
 
 def agent_tree(agents: list, folded: dict | None = None) -> list[tuple]:
@@ -350,8 +345,9 @@ def sync(force: bool = False) -> None:
     global _SEQ
     _SEQ = (str(n) for n in itertools.count(int(started * 1000) * 1000))  # rises across runs and reports
 
-    # the working dot sits on the project's own Space, as on the Agents panel's project heading;
-    # a worktree Space shows it only when its project has no Space of its own open
+    # The working dot sits on the project's own Space, as on the Agents panel's project heading;
+    # a worktree Space shows it only when its project has no Space of its own open. ↳ stays with
+    # each session (its row, or the heading of a Space named after its only session).
     primaries = {x.project.root for x in world.workspaces if x.project and not x.linked_worktree}
     for w in world.workspaces:
         if not w.project:
@@ -371,20 +367,21 @@ def sync(force: bool = False) -> None:
         outside = [a for a in mine if not a.in_herdr and not a.mirror_pane]
         rows = session_rows(w.label, here + outside, folded.get(p.root, False))
         lines = [r[0] for r in rows]
-        # a Space named after its only session shows no session row: its context mark goes on the heading
         _report("workspace", w.id, "agents", side_counts(here), old, sent, seq)
         if w.linked_worktree and p.root in primaries:
-            pulse = ""
+            whole = []
         elif w.linked_worktree:
-            pulse = pulse_mark(here + outside)
+            whole = here + outside
         else:  # the whole project: every Space of it, and its sessions in other windows
-            pulse = pulse_mark([a for a in world.agents if a.project.root == p.root])
-        _report("workspace", w.id, "pulse", pulse, old, sent, seq)
-        _report("workspace", w.id, "ctx", "" if rows else _worst_mark(here), old, sent, seq)
-        _report("workspace", w.id, "work", "" if rows else " ".join(filter(None, map(work_mark, here))), old, sent, seq)
+            whole = [a for a in world.agents if a.project.root == p.root]
+        _report("workspace", w.id, "pulse", pulse_mark(whole), old, sent, seq)
+        _report("workspace", w.id, "work", "" if rows else " ".join(filter(None, map(work_mark, here))),
+                old, sent, seq)
+        for gone in ("ctx", "git"):  # "" clears what an earlier build sent
+            _report("workspace", w.id, gone, "", old, sent, seq)
         for i in range(SESSION_ROWS):
-            _report("workspace", w.id, f"c{i + 1}", rows[i][1] if i < len(rows) else "", old, sent, seq)
-            _report("workspace", w.id, f"b{i + 1}", rows[i][2] if i < len(rows) else "", old, sent, seq)
+            _report("workspace", w.id, f"c{i + 1}", "", old, sent, seq)
+            _report("workspace", w.id, f"b{i + 1}", rows[i][1] if i < len(rows) else "", old, sent, seq)
         _report("workspace", w.id, "outside", "", old, sent, seq)  # now part of the session rows
         for i in range(SESSION_ROWS):
             _report("workspace", w.id, f"s{i + 1}", lines[i] if i < len(lines) else "", old, sent, seq)
@@ -451,6 +448,8 @@ def sync(force: bool = False) -> None:
         _report("pane", a.pane_id, "line", line, old, sent, seq)
         _report("pane", a.pane_id, "ctx", ctx_mark(a), old, sent, seq)
         _report("pane", a.pane_id, "lane", lane, old, sent, seq)
+        for gone in ("since", "cli"):  # "" clears what an earlier build sent
+            _report("pane", a.pane_id, gone, "", old, sent, seq)
     if force:  # otherwise the daemon checks every VIEW_EVERY: each probe redraws herdr's UI
         ensure_view()
 

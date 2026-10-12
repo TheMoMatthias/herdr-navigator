@@ -605,7 +605,7 @@ def test_quiet_background_subagent_still_listed(tmp_path):
     assert [s.name for s in live.claude_subagents(str(tr), time.time(), {"a1"})] == ["a1"]
 
 
-def test_work_mark_in_session_rows():
+def test_work_mark_counts_all_background_work():
     from types import SimpleNamespace as NS
     from navigator import model, sync
     p = projects.Project("/r", "R")
@@ -614,7 +614,7 @@ def test_work_mark_in_session_rows():
     assert sync.work_mark(a) == "↳5"
     assert sync.work_mark(model.Agent("claude", "idle", p, name="B", pane_id="p2")) == ""
     rows = sync.session_rows("x", [a, model.Agent("claude", "idle", p, name="B", pane_id="p2")])
-    assert [r[2] for r in rows] == ["↳5", ""]
+    assert rows == [("├─ ◐ LEAD", "↳5"), ("└─ ○ B", "")]  # ↳ on each session's own Spaces row
 
 
 def test_work_counts_follow_jobs_for_the_daemon(tmp_path):
@@ -691,3 +691,23 @@ def test_working_project_gets_a_pulsing_dot(tmp_path, monkeypatch):
     sync._save_sent({"workspace:w1:pulse": "●"}, time.time(), True)  # the pane's project stopped working
     sync.pulse_tick()
     assert ("pane", "w6:pF", {"gpulse": None}) in calls and ("workspace", "w1", {"pulse": sync.PULSE_FRAMES[3]}) in calls
+
+
+def test_agent_spawned_by_an_agent_counts_with_its_parent(tmp_path):
+    """A background teammate's own helper (meta parentAgentId, spawnDepth 1) is part of the
+    teammate: LEAD-5 showed ↳6 for 3 workflows + 1 teammate + its helper."""
+    import json
+    from navigator import model, sync
+    tr = tmp_path / "S.jsonl"
+    tr.write_text("{}\n")
+    d = tmp_path / "S" / "subagents"
+    d.mkdir(parents=True)
+    for aid, meta in (("aplan-r4-x", {"name": "plan-r4", "agentType": "plan-r4", "requestShape": "background"}),
+                      ("a9e5", {"agentType": "general-purpose", "parentAgentId": "aplan-r4-x", "spawnDepth": 1})):
+        (d / f"agent-{aid}.jsonl").write_text("{}\n")
+        (d / f"agent-{aid}.meta.json").write_text(json.dumps(meta))
+    subs = live.claude_subagents(str(tr), time.time())
+    assert sorted((s.name, s.parent) for s in subs) == [("general-purpose", "aplan-r4-x"), ("plan-r4", "")]
+    a = model.Agent("claude", "working", projects.Project("/r", "R"), name="L", pane_id="p1", workflows=3,
+                    subagents=subs)
+    assert sync.work_mark(a) == "↳4"
