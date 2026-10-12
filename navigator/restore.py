@@ -432,34 +432,8 @@ def _children(pid: int) -> list[tuple[int, str]]:
     """Direct child processes (pid, name) of `pid`."""
     if not pid:
         return []
-    if os.name == "nt":
-        import ctypes
-        from ctypes import wintypes
-
-        class PE(ctypes.Structure):
-            _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD),
-                        ("th32ProcessID", wintypes.DWORD), ("th32DefaultHeapID", ctypes.c_void_p),
-                        ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
-                        ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", ctypes.c_long),
-                        ("dwFlags", wintypes.DWORD), ("szExeFile", ctypes.c_wchar * 260)]
-        k32 = ctypes.windll.kernel32
-        k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
-        snap = k32.CreateToolhelp32Snapshot(0x2, 0)
-        out = []
-        e = PE()
-        e.dwSize = ctypes.sizeof(PE)
-        ok = k32.Process32FirstW(snap, ctypes.byref(e))
-        while ok:
-            if e.th32ParentProcessID == pid and e.th32ProcessID != pid:
-                out.append((int(e.th32ProcessID), e.szExeFile))
-            ok = k32.Process32NextW(snap, ctypes.byref(e))
-        k32.CloseHandle(snap)
-        return [c for c in out if c[1].lower() != "conhost.exe"]
-    try:
-        r = subprocess.run(["pgrep", "-l", "-P", str(pid)], capture_output=True, text=True, timeout=5)
-    except (OSError, subprocess.SubprocessError):
-        return []
-    return [(int(a), b) for a, _, b in (ln.partition(" ") for ln in r.stdout.splitlines()) if a.isdigit()]
+    from . import live
+    return [(c, n) for c, pp, n in live.process_table() if pp == pid and c != pid and n.lower() != "conhost.exe"]
 
 
 def _started_at(pid: int) -> float:

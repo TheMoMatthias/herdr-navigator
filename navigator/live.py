@@ -272,20 +272,81 @@ def work_counts(now: float) -> list[tuple[str, int, int, int]]:
     """(session id, sub-agents, workflows, background jobs) per running Claude session: cheap enough to
     ask every few seconds (only appended transcript lines are read, sub-agents are a listing)."""
     out = []
-    for r in _claude_registry(now):
+    reg = _claude_registry(now)
+    shells = child_shells({r.pid for r in reg}, now)
+    for r in reg:
         tr = _transcript_of(r.session_id)
         if tr:
             bg = background(tr, r.started_at)
             own = [f for f, _ in _subagent_files(tr, now, bg.agents, bg.runs)
                    if not _workflow_of(f) and not _meta(f).get("parentAgentId")]
-            out.append((r.session_id, len(own), len(bg.runs), _jobs(r, bg)))
+            out.append((r.session_id, len(own), len(bg.runs), _jobs(r, bg, shells)))
     return out + _codex_counts(now)
 
 
-def _jobs(r: "Running", bg: Background) -> int:
-    """Background jobs: Claude Code's own registry says "shell" while one runs after the turn
-    ended, so a job launched before the scanned tail of a long transcript still counts."""
-    return max(bg.jobs, 1 if r.status == "shell" else 0)
+def process_table() -> list[tuple[int, int, str]]:
+    """(pid, parent pid, name) of every process: one snapshot, a few milliseconds."""
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        class PE(ctypes.Structure):
+            _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD),
+                        ("th32ProcessID", wintypes.DWORD), ("th32DefaultHeapID", ctypes.c_void_p),
+                        ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
+                        ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", ctypes.c_long),
+                        ("dwFlags", wintypes.DWORD), ("szExeFile", ctypes.c_wchar * 260)]
+        k32 = ctypes.windll.kernel32
+        k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+        snap = k32.CreateToolhelp32Snapshot(0x2, 0)
+        out = []
+        e = PE()
+        e.dwSize = ctypes.sizeof(PE)
+        ok = k32.Process32FirstW(snap, ctypes.byref(e))
+        while ok:
+            out.append((int(e.th32ProcessID), int(e.th32ParentProcessID), e.szExeFile))
+            ok = k32.Process32NextW(snap, ctypes.byref(e))
+        k32.CloseHandle(snap)
+        return out
+    import subprocess
+    try:
+        r = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,comm="], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    out = []
+    for ln in r.stdout.splitlines():
+        p = ln.split(None, 2)
+        if len(p) == 3 and p[0].isdigit() and p[1].isdigit():
+            out.append((int(p[0]), int(p[1]), os.path.basename(p[2])))
+    return out
+
+
+SHELLS = {"bash", "sh", "zsh", "fish", "dash", "powershell", "pwsh", "cmd"}
+SHELL_MIN_AGE = 5.0  # a statusline or hook run is a shell for a moment: not a job
+
+
+def child_shells(pids: set[int], now: float) -> dict[int, int]:
+    """Shells each of `pids` has running now (older than SHELL_MIN_AGE): a CLI's background
+    jobs as the process tree sees them, including ones its sub-agents left running, which no
+    transcript records."""
+    if not pids:
+        return {}
+    from .restore import _started_at
+    out: dict[int, int] = {}
+    for pid, ppid, name in process_table():
+        if ppid in pids and pid != ppid and os.path.splitext(name.lower())[0] in SHELLS:
+            started = _started_at(pid)
+            if not started or now - started >= SHELL_MIN_AGE:
+                out[ppid] = out.get(ppid, 0) + 1
+    return out
+
+
+def _jobs(r: "Running", bg: Background, shells: dict[int, int]) -> int:
+    """Background jobs: those the transcript records, or the shells the process runs, whichever
+    is more (a busy session's newest shell is its own foreground command). Claude Code's registry
+    says "shell" while one runs after the turn, so that alone counts one."""
+    n = shells.get(r.pid, 0) - (1 if r.status == "busy" else 0)
+    return max(bg.jobs, n, 1 if r.status == "shell" else 0)
 
 
 _TRANSCRIPTS: dict[str, str] = {}
@@ -367,6 +428,7 @@ def running(sessions: list[Session]) -> list[Running]:
             r.transcript = str(hits[0]) if hits else ""
     # Codex: recently written top-level threads; children attach to their parent
     children = codex_children(sessions, now)
+    shells = child_shells({r.pid for r in out if r.cli == "claude"}, now)
     for s in sessions:
         age = now - s.mtime
         if s.cli != "codex" or s.subagent or age > max(CODEX_BUSY_SECONDS, CODEX_IDLE_SECONDS):
@@ -387,7 +449,7 @@ def running(sessions: list[Session]) -> list[Running]:
             r.activity = activity(r.transcript)
             if r.cli == "claude":
                 bg = background(r.transcript, r.started_at)
-                r.jobs, r.workflows = _jobs(r, bg), len(bg.runs)
+                r.jobs, r.workflows = _jobs(r, bg, shells), len(bg.runs)
                 r.subagents = claude_subagents(r.transcript, now, bg.agents, bg.runs)
             elif r.cli == "codex":
                 r.jobs = codex_jobs(r.transcript, now)
