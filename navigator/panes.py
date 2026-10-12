@@ -42,17 +42,22 @@ def current(snap: dict | None = None, names: dict[str, str] | None = None) -> Ta
     if not lay:
         return None
     info = {p["pane_id"]: p for p in snap.get("panes", [])}
+    me = os.environ.get("NAV_SELF_PANE", "")  # the Navigator's own pane (opennav) is not part of the map
+    here = os.environ.get("HERDR_ACTIVE_PANE_ID", "") if me else ""
     boxes = []
     for p in lay.get("panes", []):
+        if me and p["pane_id"] == me:
+            continue
         r = p.get("rect", {})
         i = info.get(p["pane_id"], {})
         label = (names or {}).get(p["pane_id"]) or i.get("label") or i.get("agent") \
             or os.path.basename((i.get("cwd") or "").rstrip("\\/")) or p["pane_id"]
         boxes.append(PaneBox(p["pane_id"], r.get("x", 0), r.get("y", 0), r.get("width", 1), r.get("height", 1),
-                             bool(p.get("focused")), label, i.get("agent_status", "") if i.get("agent") else ""))
+                             p["pane_id"] == here if here else bool(p.get("focused")), label,
+                             i.get("agent_status", "") if i.get("agent") else ""))
     a = lay.get("area", {})
     return TabLayout(tab_id, lay.get("workspace_id", ""), (a.get("width", 1), a.get("height", 1)),
-                     bool(lay.get("zoomed")), boxes)
+                     bool(lay.get("zoomed")) and not me, boxes)
 
 
 def neighbor(layout: TabLayout, pane_id: str, direction: str) -> str | None:

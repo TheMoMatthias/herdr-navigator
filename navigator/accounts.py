@@ -104,7 +104,8 @@ def status(cli: str) -> str:
 def _here_workspace() -> tuple[str, str]:
     snap = herdr.snapshot()
     ws = snap.get("focused_workspace_id", "")
-    pane = next((p for p in snap.get("panes", []) if p.get("pane_id") == snap.get("focused_pane_id")), {})
+    here = os.environ.get("HERDR_ACTIVE_PANE_ID") or snap.get("focused_pane_id")
+    pane = next((p for p in snap.get("panes", []) if p.get("pane_id") == here), {})
     return ws, pane.get("cwd") or str(Path.home())
 
 

@@ -711,3 +711,62 @@ def test_agent_spawned_by_an_agent_counts_with_its_parent(tmp_path):
     a = model.Agent("claude", "working", projects.Project("/r", "R"), name="L", pane_id="p1", workflows=3,
                     subagents=subs)
     assert sync.work_mark(a) == "↳4"
+
+
+def test_f1_opens_here_even_while_open_elsewhere(monkeypatch):
+    """F1 opens the Navigator as a zoomed pane over the pane you are in (never herdr's modal
+    popup); pressed there again it closes; pressed in another workspace it moves there."""
+    from navigator import herdr, opennav
+    w = {"panes": ["w1:p1", "w2:p1"], "focus": "w1:p1", "n": 0}
+    calls = []
+
+    def run(*args, **kw):
+        calls.append(args)
+        if args[:3] == ("plugin", "pane", "open"):
+            w["n"] += 1
+            pid = f"nav{w['n']}"
+            w["covered"] = w["focus"]
+            w["panes"].append(pid)
+            w["focus"] = pid
+            return {"plugin_pane": {"pane": {"pane_id": pid}}}
+        if args[:3] == ("plugin", "pane", "close"):
+            w["panes"].remove(args[3])
+            if w["focus"] == args[3]:
+                w["focus"] = w["covered"]                # herdr hands focus back to the covered pane
+        if args[:3] == ("plugin", "pane", "open"):
+            pass
+        return {}
+    monkeypatch.setattr(herdr, "run", run)
+    monkeypatch.setattr(herdr, "snapshot", lambda: {"focused_pane_id": w["focus"], "focused_workspace_id": "w1",
+                                                    "panes": [{"pane_id": x} for x in w["panes"]]})
+    assert opennav.toggle("projects") == "opened"
+    opened = calls[-1]
+    assert "zoomed" in opened and "w1:p1" in opened and "NAV_FROM_PANE=w1:p1" in opened and "popup" not in opened
+    w["focus"] = "w2:p1"                                 # clicked another space, Navigator still open
+    assert opennav.toggle("projects") == "moved" and "nav1" not in w["panes"] and "w2:p1" in calls[-1]
+    assert opennav.toggle("projects") == "closed" and not any(x.startswith("nav") for x in w["panes"])
+    assert opennav.toggle("agents") == "opened"
+    assert opennav.toggle("settings") == "moved"       # another tab key while on it: switch, keep it open
+    assert "NAV_TAB=settings" in calls[-1] and "w2:p1" in calls[-1]
+    doc = tomlkit.document()
+    setup.install(doc, {})
+    f1 = next(c for c in doc["keys"]["command"] if "f1" in list(c["key"]))
+    assert f1["type"] == "shell" and "opennav projects" in f1["command"]
+
+
+def test_navigator_pane_acts_on_the_pane_it_covers(monkeypatch):
+    from navigator import opennav, panes
+    monkeypatch.setenv("NAV_FROM_PANE", "w1:p1")
+    monkeypatch.setenv("HERDR_PANE_ID", "w1:nav")
+    monkeypatch.setenv("HERDR_TAB_ID", "w1:t1")
+    opennav.as_pane()
+    import os
+    assert os.environ["HERDR_ACTIVE_PANE_ID"] == "w1:p1" and "HERDR_PANE_ID" not in os.environ
+    snap = {"focused_tab_id": "w1:t1", "panes": [{"pane_id": "w1:p1", "label": "A"}, {"pane_id": "w1:nav", "label": "Navigator"}],
+            "layouts": [{"tab_id": "w1:t1", "workspace_id": "w1", "zoomed": True, "area": {"width": 10, "height": 5},
+                         "panes": [{"pane_id": "w1:p1", "rect": {}, "focused": False},
+                                   {"pane_id": "w1:nav", "rect": {}, "focused": True}]}]}
+    lay = panes.current(snap)
+    assert [b.pane_id for b in lay.panes] == ["w1:p1"] and lay.panes[0].focused and not lay.zoomed
+    for k in ("NAV_SELF_PANE", "HERDR_ACTIVE_PANE_ID"):
+        monkeypatch.delenv(k, raising=False)

@@ -288,10 +288,9 @@ def install(doc, added: dict) -> list[str]:
         keys["command"] = cmds
     for c in [c for c in cmds if _is_ours_command(c)]:
         cmds.remove(c)
-    for key, tab, desc in POPUPS:
+    for key, tab, desc in POPUPS:  # opened by opennav: works while the Navigator is open elsewhere
         t = tomlkit.table()
-        t.update({"key": key, "type": "popup", "command": launcher("app", tab),
-                  "width": "94%", "height": "90%", "description": desc})
+        t.update({"key": key, "type": "shell", "command": launcher("opennav", tab), "description": desc})
         cmds.append(t)
     for key, mod, width, height, desc in MENUS:
         t = tomlkit.table()
