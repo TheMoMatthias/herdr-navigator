@@ -83,12 +83,42 @@ def start() -> bool:
     env.pop("HERDR_PLUGIN_EVENT", None)
     flags = (getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
              | getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    try:
-        subprocess.Popen([str(py), "-m", "navigator.daemon"], cwd=str(ROOT), env=env, creationflags=flags,
-                         close_fds=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL, start_new_session=os.name != "nt")
+    if os.name == "nt" and _start_via_wmi(py, env):
         return True
-    except OSError:
+    cmd = [str(py), "-m", "navigator.daemon"]
+    attempts = [flags | getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0), flags] if os.name == "nt" else [flags]
+    for creationflags in attempts:
+        try:
+            subprocess.Popen(cmd, cwd=str(ROOT), env=env, creationflags=creationflags, close_fds=True,
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, start_new_session=os.name != "nt")
+            return True
+        except OSError:
+            continue
+    return False
+
+
+def _start_via_wmi(py: Path, env: dict) -> bool:
+    """Start the daemon through Windows' process service, so it belongs to no caller.
+
+    herdr kills a tab-bar command together with every process it started, however detached
+    (measured: a direct child, one that broke away from the job, and one orphaned through
+    `start` all died within a second). A process WMI creates has none of those ties. It gets a
+    fresh environment, so the variables the daemon needs travel on its command line."""
+    keep = ("PYTHONPATH", "PYTHONUTF8", "HERDR_PLUGIN_STATE_DIR", "HERDR_PLUGIN_CONFIG_DIR", "HERDR_PLUGIN_ID",
+            "HERDR_SOCKET_PATH", "HERDR_BIN_PATH", "HERDR_CONFIG_PATH", "NAV_HERDR_CLI")
+    sets = "".join(f'set "{k}={env[k]}"&& ' for k in keep if env.get(k))
+    inner = f'{sets}start "" /b "{py}" -m navigator.daemon'
+    line = f'cmd.exe /d /c "{inner}"'.replace("'", "''")
+    ps = ("$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments "
+          f"@{{CommandLine='{line}'; CurrentDirectory='{str(ROOT).replace(chr(39), chr(39) * 2)}'}}; "
+          "exit $r.ReturnValue")
+    try:
+        r = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", ps],
+                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           timeout=8, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        return r.returncode == 0
+    except (OSError, subprocess.SubprocessError):
         return False
 
 
