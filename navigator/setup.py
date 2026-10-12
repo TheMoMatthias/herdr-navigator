@@ -129,7 +129,8 @@ def PULSE_TOKEN(name: str) -> dict:  # rules: most blanks first, "contains" matc
 SPACE_ROWS = [
     ["state_icon", "workspace", {"token": "$agents", "dim": True}, WORK_TOKEN("$work"),
      PULSE_TOKEN("$pulse")],  # last: its frames change width (sync.PULSE_FRAMES)
-    ["branch", "git_status"],
+    # No git row: the folder's branch (beweis/lead4 under an MPV2-LEAD5 session) read as a
+    # second, stale session; the branch shows in the Navigator.
     *[[{"token": f"$s{i}", **TREE}, WORK_TOKEN(f"$b{i}")] for i in range(1, 9)],
 ]
 # herdr's Agents panel as a tree by project (tokens and order from sync.agent_tree): a heading
