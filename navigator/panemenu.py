@@ -68,6 +68,8 @@ class PaneMenu(App):
         for op, label in ENTRIES:
             if op is None:
                 opts.append(None)
+            elif not self.pane:  # nothing to act on: nothing selectable
+                opts.append(Option(label, id=op, disabled=True))
             elif op == "compact" and not self.agent:
                 opts.append(Option("⇣ Compact (no agent in this pane)", id=op, disabled=True))
             else:

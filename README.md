@@ -38,8 +38,8 @@ everything your coding agents are doing:
 * **Get back and get to what matters:** `Ctrl+Alt+R` flips to the pane you were just in,
   `F7` lists where you were last, and `Ctrl+Alt+I` jumps to the next agent that needs you
   (blocked first, then finished, oldest first).
-* **Talk to agents from one place:** read an agent's latest output, send it a message, or
-  answer its prompt (`⏎` / `Esc` / `^C`) without switching panes.
+* **Talk to agents from one place:** see what an agent needs from you (a question, a
+  permission or an approval), answer it with one click, or send it a message, without switching panes.
 * **Saved project layouts:** save a tab as a named layout. Restoring it rebuilds the panes
   and starts the agents again: each resumes its own session if that session isn't running
   elsewhere, otherwise a fresh agent starts in its place.
@@ -85,7 +85,7 @@ herdr plugin uninstall momatthias.navigator
 | `F7` · `Ctrl+B › Shift+O` | **Recent.** Agents (and other panes) in the order you last visited them |
 | `F9` · `Ctrl+B › ,` | **Settings.** Logon restore, accounts, phone alerts, prompts, font size, updates |
 | `F10` · `Ctrl+B › F` | Fold / unfold the focused pane's project in herdr's sidebar (`Ctrl+B › Shift+F`: all) |
-| `Ctrl+B › Shift+C` | `/compact` the focused agent **with your saved instructions** (also: the pane menu, or ⇣ Compact in Agents) |
+| `Ctrl+B › Shift+C` | `/compact` the focused agent **with your saved instructions** (also: the pane menu, or Agents › ☰ ▾ › Compact) |
 | `F5` · `Ctrl+B › .` | **Pane menu** over the current pane: compact this agent · split right / down · zoom · move the pane left / right / up / down · even out all splits · move to a new tab · arrange panes… (the Layout map) · new agent session here… · fold this project. Click an entry, or arrows + Enter; Esc closes |
 
 **Why a key and not right-click.** herdr 0.9.3 builds its right-click menus (terminal, Space,
@@ -97,8 +97,8 @@ Swap, Rename and Close.
 **Compact without retyping.** Write once what a compaction must keep (⚙ Settings › Prompts ›
 *Compact instructions*, or `[compact] instructions` in navigator.toml). Every Compact then sends
 `/compact <your instructions>` to Claude Code (other CLIs get a plain `/compact`, Gemini and Qwen
-`/compress`): the ⇣ Compact
-button, the agent row menu, every ☑ ticked agent at once, and `Ctrl+B › Shift+C` on the focused
+`/compress`): Agents › ☰ ▾ ›
+Compact, the agent row menu, every ● selected agent at once, and `Ctrl+B › Shift+C` on the focused
 agent inside herdr.
 
 The Navigator stays open after what you click: resuming, starting a session, ticking, relaunching
@@ -118,11 +118,13 @@ Inside the Navigator:
   you can do with it, and **`?`** explains the tab you are on.
 - **⚙ Settings** holds everything you set up once, in sections: *Logon restore*, *Accounts*,
   *Phone alerts*, *Prompts*, *General* and *Keys*. Changes save on their own when you leave a
-  field or tick a box (into `navigator.toml`, comments kept).
+  field or tick a box (into `navigator.toml`, comments kept). The Projects toolbar has only
+  *+ New agent ▾* and the filter: open, sidebar, sessions, restore layout and finish worktree
+  (`f`) are in the row menu. The top bar names only who needs you and any full context.
 
 - **Click a row once** to select it; **click it again** (or press Enter) to open it.
-- **Click ☐** (or press Space) to show a project in herdr's sidebar, and click ☑ to hide it.
-  The sidebar holds only the projects you tick. A ticked repo's active worktrees open as
+- **Space** (or the row menu's *Sidebar*) shows a project in herdr's sidebar, marked `●`, and
+  hides it again. The sidebar holds only the projects you mark. A ticked repo's active worktrees open as
   indented children of the repo's workspace, and **F5** picks up worktrees that became active
   since then.
 - Hiding a project never kills anything. A workspace that still has an agent or a running
@@ -132,17 +134,18 @@ Inside the Navigator:
   it live, but typing still happens in that window. Resuming it a second time would fork the
   conversation, so the mirror's **▶ Resume here** button unlocks only after the other window
   exits.
-- In **Agents**: the lower half shows what the selected agent last did. `m` types a
-  message to it; the `⏎ Enter` / `Esc` / `^C` buttons answer a question or approval it's
-  waiting on. `g` jumps to the next agent that needs you. Sessions in other windows are read
+- In **Agents**: the lower part says what the selected agent needs from you (its question,
+  or the command or file it asks permission for, with one button per choice), else what it is
+  doing and its background work. `m` types a message to it; Enter, Esc and Stop (Ctrl+C) are in
+  its `☰ ▾` menu. `g` jumps to the next agent that needs you. Sessions in other windows are read
   only, so type into their own window.
-- **Saved layouts:** in Layout, name the tab and press 💾 to save it for its
+- **Saved layouts:** in Layout, name the tab and press *Save* to save it for its
   project. ▦ Restore (or `l` in Projects) rebuilds it as a *new* tab in the project's
   workspace, creating the workspace if needed.
 - In **Layout**, the top row reshapes the whole tab in one click, and **＋ New tab** opens
   presets. On the map, drag a pane onto another to swap them (middle) or place it beside
   (edges). Click a pane to select it and double-click to jump into it. The buttons on the
-  right (Pane, Swap, Size, More) act on the selected pane; hover any button to see what it
+  right (Pane, Size, More) act on the selected pane; hover any button to see what it
   does.
   Keys: arrows move the selection, `v`/`s` split, `z` zooms, `=` evens out, `t` moves the pane to a
   new tab, `n` renames it and `Del` closes it (press twice). `Shift+arrows` swap panes and
@@ -158,14 +161,15 @@ its recent sessions; the *… older sessions* row shows the rest. Search finds e
 Press **Enter** to resume a session in its project, and use the box to decide which sessions come
 back when you log on.
 
-- **☑ Ticks ▾** changes many at once: tick everything running now, keep only what runs now,
-  untick everything, or put everything back to automatic.
-- **↻ Relaunch…** opens the Relaunch dialog (see below).
+- **⏻ Logon: on · N ▾** shows whether logon restore is on and how many sessions it reopens; its
+  menu opens the ticked ones now, ticks everything running, keeps only what runs now, unticks
+  everything, puts everything back to automatic, opens the rules, turns logon on or off, and
+  relaunches open sessions (the Relaunch dialog, see below).
 - In **Agents**, right-click an agent to tick its session for logon (or untick it), relaunch it,
   compact it or hand off its answer.
 
-- **☑ / ☐** in front of each session is its tick. A bright box is your own choice; a dim one
-  was set by the auto-tick, which keeps the newest 3 sessions of each project lane (the main
+- **☑ / ☐** in front of each session is its tick (the only place ☑ is used). `☑ auto` was set
+  by the auto-tick, which keeps the newest 3 sessions of each project lane (the main
   checkout, and every worktree separately) that you worked in during the last 3 days. Click
   the box (or press Space) to tick or untick. The project row's box switches the whole
   project on or off.
@@ -182,7 +186,7 @@ back when you log on.
   and a notification gives the summary. If the Claude token has expired, one Claude session is
   opened first and the rest wait until its refresh has landed. Many sessions refreshing the
   token at once log each other out.
-- **▶ Open ticked** does the same thing right now.
+- *Open the N ticked now* in the Logon menu does the same thing right now.
 - **⚙ Settings › Accounts** shows who is signed in to each CLI. **Pick a saved account** from the
   dropdown to switch to it: its login is copied in and the CLI's sessions relaunch on it on their
   own (idle ones at once, busy ones as soon as their turn ends, never mid-turn). If that saved
@@ -229,8 +233,8 @@ folder, optionally a **new git worktree** (created by herdr, so it is grouped un
 and, for Claude, model, effort, permission mode and Remote Control. The options stick to the
 session, so later relaunches use them too.
 
-**Send to many:** in Agents, tick agents with ☐ (or Space). `Send` then types the message, or
-presses ⏎ / Esc / ^C, in every ticked agent at once.
+**Send to many:** in Agents, select agents with a click in the first column or Space (marked ●). `Send` then types the message, or
+presses Enter / Esc / Stop from `☰ ▾`, in every selected agent at once.
 
 ### Working with many agents
 
@@ -241,7 +245,7 @@ presses ⏎ / Esc / ^C, in every ticked agent at once.
   and herdr's own agent list says "inactive"; `inactive_after_minutes` in `[sidebar]`, 0 = off).
   So a session that just paused and one nobody has touched for hours look different.
 - **Answer without leaving.** `⚑ Next` (`g`) selects the next agent that needs you and
-  puts you in the message box, its last words in the preview. When it shows numbered choices
+  puts you in the message box, with what it asks for shown below. When it shows numbered choices
   (a permission prompt or a question), **Answer: [1 Yes] [2 …] [3 No]** buttons press that number.
 - **Nested by project.** Agents are grouped under their project (`▾ AlgoTrader ⏳1 ○6`), the
   `Where` column says which checkout. `←`/`→`, a click on `▾` or Enter on the header folds a

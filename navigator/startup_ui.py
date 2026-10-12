@@ -1,7 +1,7 @@
 """The Navigator's Sessions tab: search and resume, what reopens at logon, accounts, relaunching.
 
 Rows are grouped by project. The box in front of a row is its tick: ☑ reopens at logon, ☐ does
-not. A bright box is your own choice, a dim one the auto-tick's (newest sessions per lane).
+not; "auto" after a ☑ marks the auto-tick's choice (newest sessions per lane), no word is yours.
 Click the box (or Space) to tick/untick, double-click (or Enter) to open a session now,
 right-click (or .) for everything else.
 """
@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import os
 import subprocess
-import sys
 import time
 from pathlib import Path
 
@@ -79,14 +78,68 @@ class ContextMenu(ModalScreen):
             self.dismiss(None)
 
 
-LEGEND = Text.assemble(
-    ("Symbols  ", "bold"),
-    ("⚠", "bold #fe8019"), " waits for approval   ", ("⏳", "bold #fe8019"), " asks you   ", ("✔", "bold"),
-    " done   ", ("◐", "dim"), " working   ", ("○", "dim"), " parked\n         ", ("❓", "bold #fe8019"), " asks a question   ", ("↗", "dim"), " other window   ",
-    ("●", "bold"), " running here\n         ",
-    ("⎇", "dim"), " worktree   ", ("↳", "dim"), " background work   ", ("▲", "bold #fe8019"), " context almost full   ",
-    ("▸", ""), " tool it runs   ", ("☑", "bold"), " on   ", ("☐", "dim"), " off   ",
-    ("▾ ▸", "bold"), " fold   ", ("▾", ""), " opens a menu")
+_WARN = "bold #fe8019"
+# One symbol, one meaning. The tabs below pick the ones they actually show (legend_for).
+_SYM = {
+    "blocked": ("⚠", _WARN, "waits for approval"),
+    "reply": ("⏳", _WARN, "asks you"),
+    "done": ("✔", "bold", "done"),
+    "working": ("◐", "dim", "working"),
+    "idle": ("○", "dim", "parked"),
+    "inactive": ("◌", "dim", "inactive"),
+    "question": ("❓", _WARN, "asks a question"),
+    "other": ("↗", "dim", "other window"),
+    "here": ("●", "bold", "running here"),
+    "sidebar": ("●", "bold", "in herdr's sidebar"),
+    "send": ("●", "bold", "picked for Send"),
+    "wt": ("⎇", "dim", "worktree"),
+    "bg": ("↳", "dim", "background work"),
+    "full": ("▲", _WARN, "context almost full"),
+    "tool": ("▸", "", "tool it runs"),
+    "on": ("☑", "bold", "on"),
+    "off": ("☐", "dim", "off"),
+    "opts": ("✎", "dim", "launch options"),
+    "fold": ("▾ ▸", "bold", "fold"),
+    "menu": ("▾", "", "opens a menu"),
+    "you": ("◀", "bold", "you are here"),
+    "zoom": ("⛶", "dim", "zoomed"),
+    "live": ("●", "bold", "connected"),
+}
+_STATES = ("blocked", "reply", "done", "working", "idle")
+_TAB_SYMBOLS = {
+    "projects": ("sidebar", "wt", "fold", "menu") + _STATES,
+    "agents": _STATES + ("inactive", "question", "other", "send", "wt", "bg", "full", "fold", "menu"),
+    "sessions": ("on", "off", "here", "other", "question", "wt", "opts", "fold", "menu"),
+    "layout": _STATES + ("you", "zoom"),
+    "usage": ("wt",),
+    "settings": ("live", "menu"),
+}
+_TAB_SYMBOLS["panes"] = _TAB_SYMBOLS["layout"]      # the Layout TabPane's id
+_PER_LINE = 5
+
+
+def _legend(names) -> Text:
+    out = Text()
+    for i, name in enumerate(names):
+        glyph, style, meaning = _SYM[name]
+        if i:
+            out.append("\n         " if i % _PER_LINE == 0 else "   ")
+        else:
+            out.append("Symbols  ", style="bold")
+        out.append(glyph, style=style)
+        out.append(" " + meaning)
+    return out
+
+
+def legend_for(tab: str) -> Text:
+    """The ? help's symbol key for one tab ("projects", "agents", "sessions", "layout", "usage",
+    "settings"): only the symbols that tab shows. An unknown tab gets every symbol."""
+    names = _TAB_SYMBOLS.get(tab)
+    return _legend(names) if names else LEGEND
+
+
+LEGEND = _legend(("blocked", "reply", "done", "working", "idle", "question", "other", "here", "wt", "bg",
+                  "full", "tool", "on", "off", "fold", "menu"))
 
 
 class RelaunchSheet(ModalScreen):
@@ -102,7 +155,7 @@ class RelaunchSheet(ModalScreen):
     #rls .bar { margin: 0; }
     """
     BINDINGS = [("escape", "close", "Close")]
-    MARK = {"waiting": ("·", "dim"), "running": ("⏳", "bold"), "ok": ("✔", "bold green"),
+    MARK = {"waiting": ("·", "dim"), "running": ("◐", "bold"), "ok": ("✔", "bold green"),
             "unsure": ("⚠", "bold #fe8019"), "failed": ("✗", "bold red")}
 
     def __init__(self, world, cli: str = "", panes: list[str] | None = None) -> None:
@@ -132,7 +185,8 @@ class RelaunchSheet(ModalScreen):
     def on_mount(self) -> None:
         self.query_one("#rls-ack").display = False
         self.show_plan()
-        self.query_one("#rls-go").focus()
+        if not self.query_one("#rls-go", Button).disabled:
+            self.query_one("#rls-go").focus()
 
     def targets(self) -> dict:
         return restore.relaunch_targets(self.cli, self.world, self.panes)
@@ -167,6 +221,9 @@ class RelaunchSheet(ModalScreen):
         busy = self.query_one("#rls-busy", Button)
         busy.label = ("☑" if self.busy else "☐") + f" Include busy ones ({len(t['busy'])})"
         busy.display = bool(t["busy"])
+        f = self.focused
+        if not go and (f is None or f.disabled or not f.display):  # the focus sat on a button that is gone
+            self.query_one("#rls-cancel").focus()
         for c in [""] + self.clis:
             try:
                 self.query_one(f"#rls-cli-{c}", Button).variant = "primary" if c == self.cli else "default"
@@ -225,6 +282,7 @@ class RelaunchSheet(ModalScreen):
         bid = ev.button.id or ""
         if bid.startswith("rls-cli-"):
             self.cli = bid[8:]
+            self.busy = False  # "include busy" was for the previous CLI's list
             self.show_plan()
         elif bid == "rls-busy":
             self.busy = not self.busy
@@ -248,17 +306,23 @@ class HelpScreen(ModalScreen):
     """
     BINDINGS = [("escape", "dismiss(None)", "Close"), ("question_mark", "dismiss(None)", "Close")]
 
-    def __init__(self, title: str, body: str) -> None:
+    def __init__(self, title: str, body: str, tab: str = "") -> None:
         super().__init__()
-        self.title_, self.body = title, body
+        self.title_, self.body, self.tab = title, body, tab
 
     def compose(self) -> ComposeResult:
         with Vertical(id="hp"):
             yield Static(self.title_, id="hp-title")
             yield Static(self.body)
-            yield Static(LEGEND, id="hp-legend")
+            yield Static(legend_for(self.tab or self._active_tab()), id="hp-legend")
             yield Static("Keys 1–6 switch tabs · the footer shows the keys that work right now · "
                          "⚙ Settings › Keys lists every key · Esc closes", id="hp-foot")
+
+    def _active_tab(self) -> str:
+        try:
+            return self.app.active_tab()
+        except Exception:
+            return ""
 
     def on_click(self) -> None:
         self.dismiss(None)
@@ -380,9 +444,9 @@ class StartTable(DataTable):
             self.key = key
 
     BINDINGS = [("j", "cursor_down"), ("k", "cursor_up"),
-                Binding("space", "box", "Logon on/off"), Binding("enter", "select_cursor", "Resume / fold", key_display="⏎"),
+                Binding("space", "box", "Logon on/off"), Binding("enter", "select_cursor", "Open", key_display="⏎"),
                 Binding("left", "fold(False)", "Fold", show=False), Binding("right", "fold(True)", "Unfold", show=False),
-                Binding("period", "menu", "Menu", key_display="."),
+                Binding("full_stop", "menu", "Menu", key_display="."),
                 Binding("shift+f10", "menu", "Menu", show=False)]
 
     def action_fold(self, open_: bool) -> None:
@@ -411,6 +475,7 @@ class StartTable(DataTable):
     async def _on_click(self, event: events.Click) -> None:
         meta = event.style.meta if event.style else {}
         row = meta.get("row", -1)
+        event.prevent_default()  # DataTable's own click would select again: a second fold/open
         if row is None or row < 0:
             await super()._on_click(event)
             return
@@ -427,39 +492,39 @@ class StartTable(DataTable):
             t, k = self._last
             if k == key and time.monotonic() - t < 0.5:
                 self.post_message(self.Open(key))
+                self._last = (0.0, "")  # a triple click must not open twice
+                return
             self._last = (time.monotonic(), key)
 
 
 class StartupPane(Vertical):
     DEFAULT_CSS = """
-    #start-sum { width: 1fr; color: $text-muted; padding: 0 0 0 1; }
     #start-table { height: 1fr; }
     #st-search { width: 1fr; min-width: 16; }
     #st-cli { width: 16; margin: 0 1; }
     """
 
+    FOLD_TIP = "Fold or unfold every project (← → fold one)"
+
     def __init__(self, **kw) -> None:
         super().__init__(**kw)
         self.world: model.World | None = None
+        self.filtering = False
         self.groups: list[startup.ProjectRows] = []
         self.rows_by_key: dict[str, startup.Row] = {}
         self.full: set[str] = set()          # projects showing every session, not just the recent ones
         self.open_now: dict[str, bool] = {}  # which project rows are unfolded in the current view
+        self.n_ticked: int | None = None     # sessions that reopen at logon (the Logon button shows it)
+        self.logon_tip = ""
 
     def compose(self) -> ComposeResult:
         with Horizontal(classes="bar"):
-            yield Field(placeholder="🔍 Search every session: title, prompt, project, branch  ( / )", id="st-search")
+            yield Field(placeholder="search title, prompt, branch  /", id="st-search")
             yield Choice([], prompt="every CLI", id="st-cli")
-            yield Btn("⊟ Fold all", id="st-fold", tooltip="Fold or unfold every project (← → fold one)")
-        with Horizontal(classes="bar"):
-            yield Btn("▶ Open ticked", id="st-open", variant="primary",
-                      tooltip="Open every ticked session that is not running yet, now")
-            yield Btn("☑ Logon list ▾", id="st-ticks", tooltip="Choose many at once what reopens at logon")
-            yield Btn("↻ Relaunch…", id="st-relaunch",
-                      tooltip="After switching account: restart open sessions in their panes, under the new account")
-            yield Btn("⏻ Logon: off", id="st-autostart",
-                      tooltip="Reopen the ticked sessions every time you log on (⚙ Settings › Logon for more)")
-            yield Static("", id="start-sum")
+            yield Btn("⊟ Fold all", id="st-fold", tooltip=self.FOLD_TIP)
+            yield Btn("⏻ Logon ▾", id="st-logon",
+                      tooltip="What reopens at logon: open the ticked now, tick or untick many, turn logon on or off, "
+                              "relaunch after switching account")
         yield StartTable(id="start-table")
 
     def on_mount(self) -> None:
@@ -467,10 +532,11 @@ class StartupPane(Vertical):
         self.sync_autostart()
 
     # ---- filling ------------------------------------------------------------------------------
-    def _is_open(self, g, running: int, filtering: bool) -> bool:
+    def _is_open(self, g, running: int, filtering: bool, folded: dict | None = None) -> bool:
         if filtering:
             return True
-        folded = startup.ui_state().get("sessions_folded", {})
+        if folded is None:
+            folded = startup.ui_state().get("sessions_folded", {})
         root = g.project.root
         if root in folded:
             return not folded[root]
@@ -497,6 +563,8 @@ class StartupPane(Vertical):
             hay = " ".join((s.title, s.last_prompt, s.project.label, s.branch, s.cli)).lower()
             return (not cli or s.cli == cli) and all(tok in hay for tok in q)
         filtering = bool(q or cli)
+        self.filtering = filtering
+        folded = startup.ui_state().get("sessions_folded", {})  # once per draw, not per project
         n_ticked = sum(len(g.ticked) for g in self.groups)
         n_mine = sum(1 for g in self.groups for r in g.ticked if r.pinned)
         n_open = sum(1 for g in self.groups for r in g.ticked if r.session.id in live)
@@ -506,19 +574,14 @@ class StartupPane(Vertical):
             if not found:
                 continue
             running = [r for r in g.rows if r.session.id in live]
-            is_open = self._is_open(g, len(running), filtering)
+            is_open = self._is_open(g, len(running), filtering, folded)
             self.open_now[root] = is_open
             chevron = Text("▾" if is_open else "▸", style="bold")
-            box = Text("☑" if g.on else "☐", style=("bold" if g.pinned else "dim") )
+            box = Text("☑" if g.on else "☐", style="bold" if g.on else "dim")
             label = Text(g.project.name[:24], style="bold" if g.on else "bold")
-            stats = []
-            if g.on:
-                stats.append(f"{len(g.ticked)} ticked")
-            else:
-                stats.append("off at logon")
+            stats = [f"{len(g.ticked)}/{len(g.rows)}" if g.on else f"off · {len(g.rows)}"]
             if running:
                 stats.append(f"{len(running)} running")
-            stats.append(f"{len(g.rows)} in all")
             label.append("   " + " · ".join(stats), style="dim")
             if not g.auto:
                 label.append(" · auto-tick off", style="dim")
@@ -536,19 +599,17 @@ class StartupPane(Vertical):
                 k = f"S|{startup.skey(s)}"
                 self.rows_by_key[k] = r
                 a = live.get(s.id)
-                ticked_here = r.ticked and g.on
                 now = ""
                 if a:  # running: here (●), in another window (↗), or asking you something (❓)
                     now = Text("●", style="bold") if a.in_herdr else Text("↗", style="bold")
                     if a.question:
                         now = Text("❓", style="bold #fe8019")
-                tick = Text("☑" if r.ticked else "☐",
-                            style=("bold" if r.pinned else "dim") )
-                title = Text(s.title[:40])
+                tick = Text("☑" if r.ticked else "☐", style="bold" if r.ticked else "dim")
                 if r.ticked and not r.pinned:
-                    title.append("  auto", style="dim italic")
+                    tick.append(" auto", style="dim")
+                title = Text(s.title[:40])
                 if r.prefs:
-                    title.append("  ✎ options", style="dim")
+                    title.append("  ✎", style="dim")
                 lane = Text(f"⎇ {s.project.worktree}"[:15], style="dim") if s.project.worktree else ""
                 t.add_row("", tick, now, cli_tag(s.cli), title, lane, age(s.mtime), key=k)
             hidden = len(found) - len(rows)
@@ -561,21 +622,23 @@ class StartupPane(Vertical):
             except Exception:
                 pass
         cap = int(settings.load().restore.get("max_sessions", 30))
-        sumtext = Text.assemble(("At logon ", "dim"), (f"{min(n_ticked, cap)} reopen", "bold"),
-                                (f" ({n_mine} yours, {n_ticked - n_mine} auto)", "dim"),
-                                (f" · {n_open} of them run now", "dim"))
-        if n_ticked > cap:
-            sumtext.append(f" · capped at {cap}", style="bold #fe8019")
-        self.query_one("#start-sum", Static).update(sumtext)
+        self.n_ticked = min(n_ticked, cap)
+        self.logon_tip = (f"At logon {self.n_ticked} reopen ({n_mine} yours, {n_ticked - n_mine} auto) · "
+                          f"{n_open} of them run now" + (f" · capped at {cap}" if n_ticked > cap else ""))
+        self.sync_autostart()
         fold = self.query_one("#st-fold", Button)
         fold.label = "⊞ Unfold all" if not any(self.open_now.values()) else "⊟ Fold all"
+        fold.disabled = filtering  # while filtering everything shows: folding would be saved unseen
+        fold.tooltip = "Clear the search to fold" if filtering else self.FOLD_TIP
 
     def fold(self, key: str, open_: bool | None) -> None:
         """Fold or unfold a project (from its row or any of its session rows)."""
         if key.startswith("M|"):
-            self.full.add(key[2:])
-            self.refresh_rows()
-            return
+            if open_ is not False:
+                self.full.add(key[2:])
+                self.refresh_rows()
+                return
+            key = "P|" + key[2:]  # ← on the "older sessions" row folds its project
         root = key[2:] if key.startswith("P|") else None
         if root is None and key in self.rows_by_key:
             root = self.rows_by_key[key].session.project.root
@@ -596,6 +659,8 @@ class StartupPane(Vertical):
         self._cursor_to(f"P|{root}")
 
     def fold_all(self) -> None:
+        if self.filtering:
+            return
         want_open = not any(self.open_now.values())
         startup.set_ui("sessions_folded", {g.project.root: not want_open for g in self.groups})
         self.full.clear()
@@ -609,25 +674,44 @@ class StartupPane(Vertical):
             pass
 
     # ---- bulk ticks -----------------------------------------------------------------------------
-    def ticks_menu(self, widget) -> None:
-        running = [r for g in self.groups for r in g.rows if self.world and r.session.id in self.world.live_sessions]
-        items = [("-head", "What reopens at logon"),
-                 ("t-running", f"☑ Add the {len(running)} running now"),
-                 ("t-only-running", f"☑ Exactly the {len(running)} running now, nothing else"),
-                 ("t-none", "☐ Nothing (untick everything)"),
-                 ("t-auto", "↺ Back to automatic (newest per lane)"),
-                 ("t-rules", "… Automatic rules (Settings)")]
+    def logon_items(self) -> list[tuple[str, str]]:
+        live = self.world.live_sessions if self.world else {}
+        running = [r for g in self.groups for r in g.rows if r.session.id in live]
+        to_open = [r for r in startup.selected(self.world.sessions) if r.session.id not in live] if self.world else []
+        on_ = autostart.installed()
+        return [("-head", "What reopens at logon"),
+                ("t-open", f"▶ Open the {len(to_open)} ticked now"),
+                ("t-running", f"☑ Tick the {len(running)} running now"),
+                ("t-only-running", f"☑ Only the {len(running)} running now"),
+                ("t-none", "☐ Untick all"),
+                ("t-auto", "↺ Back to automatic (newest per lane)"),
+                ("t-rules", "… Automatic rules (Settings)"),
+                ("-head2", "Logon"),
+                ("t-logon", "⏻ Turn logon off" if on_ else "⏻ Turn logon on"),
+                ("t-relaunch", "↻ Relaunch open sessions…")]
+
+    def logon_menu(self, widget) -> None:
         r = widget.region
-        self.app.push_screen(ContextMenu(items, (r.x, r.y + 1)), lambda c: c and c[0] != "-" and self.on_ticks(c))
+        self.app.push_screen(ContextMenu(self.logon_items(), (r.x, r.y + 1)),
+                             lambda c: c and c[0] != "-" and self.on_ticks(c))
 
     def on_ticks(self, choice: str | None) -> None:
-        if not choice or not self.world:
+        if choice == "t-logon":
+            self.toggle_logon()
             return
-        live = self.world.live_sessions
-        rows = [r for g in self.groups for r in g.rows]
+        if choice == "t-relaunch":
+            self.app.open_relaunch()
+            return
         if choice == "t-rules":
             self.app.run_worker(self.app.open_settings("logon"))
             return
+        if not choice or not self.world:
+            return
+        if choice == "t-open":
+            self.open_ticked()
+            return
+        live = self.world.live_sessions
+        rows = [r for g in self.groups for r in g.rows]
         if choice == "t-auto":
             startup.reset_all()
         elif choice == "t-running":
@@ -675,14 +759,15 @@ class StartupPane(Vertical):
 
     def sync_autostart(self) -> None:
         on_ = autostart.installed()
-        b = self.query_one("#st-autostart", Button)
-        b.label = "⏻ Logon restore: on" if on_ else "⏻ Logon restore: OFF"
+        b = self.query_one("#st-logon", Button)
+        n = f" · {self.n_ticked}" if self.n_ticked is not None else ""
+        b.label = f"⏻ Logon: on{n} ▾" if on_ else "⏻ Logon: OFF ▾"
         b.variant = "default" if on_ else "warning"
+        b.tooltip = self.logon_tip or "What reopens at logon"
         try:
             from .settings_ui import SettingsPane
             pane = self.app.query_one(SettingsPane)
             pane.query_one("#lg-auto").value = on_
-            pane.show_logon_status()
         except Exception:
             pass
 
@@ -731,9 +816,9 @@ class StartupPane(Vertical):
         live = self.world.live_sessions.get(r.session.id) if self.world else None
         items = []
         if live and live.in_herdr:
-            items += [("s-goto", "→ Go to it"), ("s-relaunch", "↻ Relaunch it…")]
+            items += [("s-goto", "→ Open"), ("s-relaunch", "↻ Relaunch it…")]
         elif not live:
-            items += [("s-open", "▶ Open it now")]
+            items += [("s-open", "▶ Open")]
         items += [("s-tick", "☐ Untick" if r.ticked else "☑ Tick for logon")]
         if r.pinned:
             items += [("s-auto", "↺ Back to automatic")]
@@ -785,7 +870,9 @@ class StartupPane(Vertical):
                             data["sessions"].pop(startup.skey(r.session), None)
                 startup.save(data)
             elif choice == "p-open":
-                self.open_rows_bg([r for r in g.ticked if not (self.world and r.session.id in self.world.live_sessions)])
+                keys = {startup.skey(r.session) for r in startup.selected(self.world.sessions)} if self.world else set()
+                self.open_rows_bg([r for r in g.ticked if startup.skey(r.session) in keys
+                                   and not (self.world and r.session.id in self.world.live_sessions)], only=True)
                 return
             self.refresh_rows()
             return
@@ -795,12 +882,15 @@ class StartupPane(Vertical):
         s = r.session
         if choice == "s-open":
             self.open_session(key)
-        elif choice == "s-goto":
-            a = self.world.live_sessions.get(s.id)
-            self.app.finish(lambda: (model.herdr.focus_agent(a.pane_id), f"→ {a.pane_id}")[1], jump=True)
-        elif choice == "s-relaunch":
-            a = self.world.live_sessions.get(s.id)
-            self.app.open_relaunch(s.cli, [a.pane_id])
+        elif choice in ("s-goto", "s-relaunch"):
+            a = self.world.live_sessions.get(s.id) if self.world else None
+            if not a:  # it stopped since the menu opened
+                self.app.notify("It is no longer running.", severity="warning")
+                self.refresh_rows()
+            elif choice == "s-goto":
+                self.app.finish(lambda: (model.herdr.focus_agent(a.pane_id), f"→ {a.pane_id}")[1], jump=True)
+            else:
+                self.app.open_relaunch(s.cli, [a.pane_id])
         elif choice == "s-tick":
             startup.set_tick(key[2:], not r.ticked)
             self.refresh_rows()
@@ -822,16 +912,28 @@ class StartupPane(Vertical):
         self.app.notify("Used the next time it is opened or relaunched.", title="Launch options saved")
         self.refresh_rows()
 
+    @work(thread=True, exclusive=True, group="logon")
+    def toggle_logon(self) -> None:
+        """Logon restore on/off (the old ⏻ button); PowerShell takes seconds, so off the UI thread."""
+        msg = autostart.uninstall() if autostart.installed() else autostart.install()
+        self.app.call_from_thread(self._logon_done, msg)
+
+    def _logon_done(self, msg: str) -> None:
+        self.sync_autostart()
+        self.app.notify(msg, severity="error" if msg.startswith("✗") else "information")
+
     def open_ticked(self) -> None:
         if self.world:
             self.open_rows_bg([r for r in startup.selected(self.world.sessions)
                                if r.session.id not in self.world.live_sessions])
 
-    def open_rows_bg(self, rows: list[startup.Row]) -> None:
+    def open_rows_bg(self, rows: list[startup.Row], only: bool = False) -> None:
+        """`only`: open just these rows (a project's), not everything ticked."""
         if not rows:
             self.app.notify("Nothing to open: everything ticked is running.")
             return
-        background("navigator.restore", "now")
+        background("navigator.restore", "now",
+                   *(["--only=" + ",".join(startup.skey(r.session) for r in rows)] if only else []))
         self.app.notify(f"▶ opening {len(rows)} sessions in the background (restore.log has the details)",
                         timeout=6)
         self.app.set_timer(6, self.app.load_world)
@@ -868,16 +970,8 @@ class StartupPane(Vertical):
     def _button(self, ev: Button.Pressed) -> None:
         bid = ev.button.id or ""
         ev.stop()
-        if bid == "st-autostart":
-            msg = autostart.uninstall() if autostart.installed() else autostart.install()
-            self.sync_autostart()
-            self.app.notify(msg, severity="error" if msg.startswith("✗") else "information")
-        elif bid == "st-open":
-            self.open_ticked()
-        elif bid == "st-relaunch":
-            self.app.open_relaunch()
-        elif bid == "st-ticks":
-            self.ticks_menu(ev.button)
+        if bid == "st-logon":
+            self.logon_menu(ev.button)
         elif bid == "st-fold":
             self.fold_all()
 
@@ -1087,6 +1181,7 @@ class UsagePane(Vertical):
     #usage-sum { height: 1; padding: 0 1; color: $text-muted; }
     #usage-table { height: 1fr; }
     """
+    REFRESH = 60  # seconds before showing the tab again re-reads the transcripts
 
     def compose(self) -> ComposeResult:
         yield Static("Reading transcripts…", id="usage-sum")
@@ -1094,18 +1189,27 @@ class UsagePane(Vertical):
 
     def on_mount(self) -> None:
         self.query_one("#usage-table", DataTable).add_columns("Project / session", "CLI", "Today", "7 days", "Output", "Cache reads", "Last")
-        self.loaded = False
+        self.collected = 0.0
 
     def load(self, world) -> None:
-        if not getattr(self, "loaded", False):
-            self.loaded = True
+        if time.time() - getattr(self, "collected", 0.0) > self.REFRESH:  # first time, or shown again later
+            self.collected = time.time()
             self._collect(world)
 
     @work(thread=True, exclusive=True, group="usage")
     def _collect(self, world) -> None:
         from . import usage
-        data = usage.collect()
+        try:
+            data = usage.collect()
+        except Exception as e:  # a worker error would kill the app
+            self.app.call_from_thread(self._failed, e)
+            return
         self.app.call_from_thread(self._show, world, data)
+
+    def _failed(self, e: Exception) -> None:
+        sm = self.query_one("#usage-sum", Static)
+        sm.update(f"Couldn't read transcripts: {e}")
+        sm.display = True
 
     def _show(self, world, data) -> None:
         from datetime import date, timedelta
@@ -1113,20 +1217,24 @@ class UsagePane(Vertical):
         from . import usage
         today = date.today().isoformat()
         week = (date.today() - timedelta(days=usage.DAYS - 1)).isoformat()
-        by_id = {s.id: s for s in world.sessions}
-        groups: dict[str, list] = {}
+        by_id = {(s.cli, s.id): s for s in world.sessions}
+        groups: dict[str, list] = {}   # by project root: two repos can share a folder name
+        names: dict[str, str] = {}
         for (cli, sid), su in data.items():
             wk = su.period(week)
             if not wk.total:
                 continue
-            s = by_id.get(sid)
-            proj = s.project.name if s else "other / hidden"   # worktrees count toward their repo
+            s = by_id.get((cli, sid))
+            proj = s.project.root if s else "other / hidden"   # worktrees count toward their repo
+            names[proj] = s.project.name if s else proj
             groups.setdefault(proj, []).append((su, s, su.period(today), wk))
         t = self.query_one("#usage-table", DataTable)
+        keep = t.coordinate_to_cell_key(t.cursor_coordinate).row_key.value if t.row_count else None
         t.clear()
         grand_today, grand_week = usage.Tally(), usage.Tally()
         work_ = lambda t_: t_.fresh + t_.out
         order = sorted(groups.items(), key=lambda kv: -sum(work_(x[3]) for x in kv[1]))
+        tallies = []
         for proj, rows in order:
             pt, pw = usage.Tally(), usage.Tally()
             for _, _, td, wk in rows:
@@ -1134,7 +1242,12 @@ class UsagePane(Vertical):
                 pw.add(wk)
             grand_today.add(pt)
             grand_week.add(pw)
-            t.add_row(Text(proj, style="bold"), "", usage.human(work_(pt)) if work_(pt) else "",
+            tallies.append((proj, rows, pt, pw))
+        bold = lambda v: Text(v, style="bold")
+        t.add_row(bold("Total"), "", bold(usage.human(work_(grand_today))), bold(usage.human(work_(grand_week))),
+                  bold(usage.human(grand_week.out)), bold(usage.human(grand_week.cached)), "", key="T|total")
+        for proj, rows, pt, pw in tallies:
+            t.add_row(Text(names[proj], style="bold"), "", usage.human(work_(pt)) if work_(pt) else "",
                       Text(usage.human(work_(pw)), style="bold"), usage.human(pw.out),
                       Text(usage.human(pw.cached), style="dim"), "", key=f"P|{proj}")
             for su, s, td, wk in sorted(rows, key=lambda x: -work_(x[3]))[:8]:
@@ -1143,9 +1256,10 @@ class UsagePane(Vertical):
                     title.append(f"  ⎇ {s.project.worktree}"[:20], style="dim")
                 t.add_row(title, cli_tag(su.cli), usage.human(work_(td)) if work_(td) else "",
                           usage.human(work_(wk)), usage.human(wk.out), Text(usage.human(wk.cached), style="dim"),
-                          age(s.mtime) if s else "", key=f"S|{su.sid}")
-        self.query_one("#usage-sum", Static).update(Text.assemble(
-            ("Tokens worked (new input + output)   today ", "dim"), (usage.human(work_(grand_today)), "bold"),
-            ("  ·  7 days ", "dim"), (usage.human(work_(grand_week)), "bold"),
-            (f"  ·  of it output {usage.human(grand_week.out)}", "dim"),
-            (f"   ·   cache reads {usage.human(grand_week.cached)} (cheap, shown apart)", "dim")))
+                          age(s.mtime) if s else "", key=f"S|{su.cli}|{su.sid}")
+        if keep:
+            try:
+                t.move_cursor(row=t.get_row_index(keep))
+            except Exception:
+                pass
+        self.query_one("#usage-sum", Static).display = False

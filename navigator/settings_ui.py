@@ -4,13 +4,15 @@ A section list on the left, the section on the right:
   Logon      reopen ticked sessions at logon, and how the auto-tick picks them
   Accounts   sign in / out per CLI, switch between saved logins
   Alerts     phone alerts: Telegram, ntfy, a webhook (Discord, Slack...), WhatsApp
-  Prompts    one-click prompts and the hand-off text
+  Prompts    one-click prompts, the compact instructions and the hand-off text
   General    sidebar, workspaces, which sessions are listed
+  Updates    check GitHub for a newer version and switch to it
   Keys       every key, the Navigator's and herdr's
 Changes save on their own when you leave a field or tick a box: into navigator.toml, comments kept.
 """
 from __future__ import annotations
 
+import math
 import os
 import subprocess
 import sys
@@ -26,8 +28,9 @@ from textual.widgets.option_list import Option
 from . import accounts, autostart, profiles, prompts, settings
 from .ui import Btn, Choice, Field, Tick
 
-SECTIONS = [("logon", "⏻  Logon restore"), ("accounts", "◉  Accounts"), ("alerts", "◔  Phone alerts"),
-            ("prompts", "☰  Prompts"), ("general", "⚙  General"), ("updates", "⟳  Updates"), ("keys", "⌨  Keys")]
+CHANNEL_NAME = {"telegram": "Telegram", "ntfy": "ntfy", "webhook": "Webhook", "whatsapp": "WhatsApp"}
+SECTIONS = [("logon", "Logon restore"), ("accounts", "Accounts"), ("alerts", "Phone alerts"),
+            ("prompts", "Prompts"), ("general", "General"), ("updates", "Updates"), ("keys", "Keys")]
 
 
 def open_file(path: Path) -> None:
@@ -39,24 +42,36 @@ def open_file(path: Path) -> None:
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def _int(value: str, default: int) -> int:
+def _int(value: str, default, lo: int = 0):
     try:
-        return max(0, int(float(value)))
-    except ValueError:
+        return max(lo, int(float(value)))
+    except (ValueError, OverflowError):
         return default
 
 
-def _num(value: str, default: float) -> float:
+def _num(value: str, default):
     try:
-        return max(0.0, float(value))
+        n = float(value)
     except ValueError:
         return default
+    return max(0.0, n) if math.isfinite(n) else default
+
+
+def _default_handoff() -> str:
+    import tomllib
+    return tomllib.loads(settings.DEFAULT_TOML)["handoff"]["template"]
+
+
+def _version_line() -> Text:
+    from . import updater
+    return Text.assemble(("Installed ", "dim"), (updater.installed_version(), "bold"),
+                         ("   ·   from ", "dim"), (str(updater.ROOT), "dim"))
 
 
 class SettingsPane(Horizontal):
     DEFAULT_CSS = """
     SettingsPane { height: 1fr; }
-    #set-nav { width: 22; height: 1fr; border: none; border-right: tall $primary 30%; padding: 0; }
+    #set-nav { width: 18; height: 1fr; border: none; border-right: tall $primary 30%; padding: 0; }
     #set-body { width: 1fr; height: 1fr; padding: 0 2; }
     #set-body > VerticalScroll { height: 1fr; }
     .acct { height: auto; margin: 0 0 1 0; padding: 0 0 0 1; border-left: tall $primary 40%; }
@@ -64,9 +79,9 @@ class SettingsPane(Horizontal):
     .acct-row.last { margin: 0; }
     .acct-name { width: 10; text-style: bold; }
     .acct-who { width: 1fr; color: $text-muted; }
-    .acct-row Select { width: 1fr; max-width: 34; }
+    .acct-row Select { width: 1fr; max-width: 26; }
     .acct-row Button { margin: 0 1 0 0; min-width: 3; width: auto; }
-    #al-status, #logon-status, #acct-note { height: auto; margin: 0 0 1 0; }
+    #acct-note { height: auto; margin: 0 0 1 0; }
     #al-tg-status { height: auto; margin: 0 0 1 20; }
     #prompt-table { height: auto; max-height: 14; margin: 0 0 1 0; }
     #keys-body { padding: 0; }
@@ -98,14 +113,9 @@ class SettingsPane(Horizontal):
         self.app.render_keys()  # built on first opening: fill Settings › Keys now
         nav = self.query_one("#set-nav", OptionList)
         nav.highlighted = [k for k, _ in SECTIONS].index(self.section)
-        self.show_logon_status()
         self.show_alert_status()
         self.fill_prompts()
-        a = settings.load().alerts
-        if a.get("telegram_bot_token") and not a.get("telegram_chat_id"):
-            self.tg_status("Token saved, chat not connected yet: press Connect.", "yellow")
-        elif a.get("telegram_chat_id"):
-            self.tg_status("● Connected.", "green")
+        self.tg_idle()
 
     def show_section(self, key: str) -> None:
         if key not in dict(SECTIONS):
@@ -123,17 +133,16 @@ class SettingsPane(Horizontal):
 
     @on(OptionList.OptionHighlighted, "#set-nav")
     def _nav(self, ev: OptionList.OptionHighlighted) -> None:
+        if ev.option_index != self.query_one("#set-nav", OptionList).highlighted:
+            return  # a stale event (the list's own first highlight): answering it would ping-pong
         self.show_section(ev.option.id or "logon")
 
     # ---- logon restore ----------------------------------------------------------------------
     def _logon(self) -> ComposeResult:
         r = settings.load().restore
-        yield Static(Text.assemble(("Reopen your sessions when you log on", ""), ("   ·   changes save on their own", "dim not bold")), classes="section-title")
-        yield Static("", id="logon-status")
+        yield Static("Reopen your sessions when you log on", classes="section-title")
         yield Tick("Reopen the ticked sessions every time I log on", autostart.installed(), id="lg-auto")
-        yield Static("Tick or untick sessions in the Sessions tab (3). The ones you did not choose yourself are "
-                     "ticked automatically: the newest few per lane (the main checkout and each worktree).",
-                     classes="hint")
+        yield Static("Tick in Sessions (3). The rest are auto-ticked:", classes="hint")
         with Horizontal(classes="form-row"):
             yield Static("Auto-tick newest", classes="lbl")
             yield Field(str(r.get("per_lane", 3)), id="lg-per-lane", classes="num")
@@ -155,37 +164,46 @@ class SettingsPane(Horizontal):
         yield Tick("Claude: Remote Control on (use sessions from your phone)",
                    bool(r.get("claude_remote_control", False)), id="lg-rc")
         with Horizontal(classes="bar"):
-            yield Btn("▶ Open ticked now", id="lg-open", tooltip="Open every ticked session that is not running yet")
-            yield Btn("📄 Restore log", id="lg-log", tooltip="What the last restore did")
-
-    def show_logon_status(self) -> None:
-        on_ = autostart.installed()
-        t = Text.assemble(("● on" if on_ else "○ off", "bold green" if on_ else "dim"),
-                          ("  ·  " + ("a logon task reopens the ticked sessions in herdr" if on_
-                                      else "nothing reopens at logon"), "dim"))
-        self.query_one("#logon-status", Static).update(t)
+            yield Btn("Restore log", id="lg-log", tooltip="What the last restore did")
 
     @on(Checkbox.Changed, "#lg-auto")
     def _autostart(self, ev: Checkbox.Changed) -> None:
-        if ev.value == autostart.installed():
+        self._set_autostart(ev.value)
+
+    @work(thread=True, exclusive=True, group="autostart")
+    def _set_autostart(self, want: bool) -> None:
+        """PowerShell takes seconds: off the UI thread."""
+        if want == autostart.installed():
             return
-        msg = autostart.install() if ev.value else autostart.uninstall()
+        msg = autostart.install() if want else autostart.uninstall()
+        self.app.call_from_thread(self._autostart_done, msg)
+
+    def _autostart_done(self, msg: str) -> None:
         self.app.notify(msg, severity="error" if msg.startswith("✗") else "information")
-        self.show_logon_status()
         self.app.query_one("StartupPane").sync_autostart()
 
     def _saved(self, what: str) -> None:
         self.app.notify(f"✓ {what} saved", timeout=1.5)
 
+    def _number(self, wid: str, saved, lo: int = 0):
+        """A number field's value, written back as used. Not a number: the saved value stays (and shows)."""
+        inp = self.query_one(wid, Input)
+        raw = inp.value.strip()
+        val = _num(raw, None) if isinstance(saved, float) else _int(raw, None, lo)
+        if val is None:
+            self.app.notify(f"'{raw}' is not a number: kept {saved}.", severity="warning")
+            val = saved
+        inp.value = str(val)
+        return val
+
     def save_logon(self) -> None:
         r = settings.load().restore
-        v = lambda i: self.query_one(i, Input).value.strip()
         new = {
-            "per_lane": _int(v("#lg-per-lane"), int(r["per_lane"])),
-            "window_days": _int(v("#lg-window"), int(r["window_days"])),
-            "max_sessions": _int(v("#lg-max"), int(r["max_sessions"])),
-            "gap_seconds": _num(v("#lg-gap"), float(r["gap_seconds"])),
-            "logon_delay_seconds": _int(v("#lg-delay"), int(r["logon_delay_seconds"])),
+            "per_lane": self._number("#lg-per-lane", int(r["per_lane"])),
+            "window_days": self._number("#lg-window", int(r["window_days"])),
+            "max_sessions": self._number("#lg-max", int(r["max_sessions"])),
+            "gap_seconds": self._number("#lg-gap", float(r["gap_seconds"])),
+            "logon_delay_seconds": self._number("#lg-delay", int(r["logon_delay_seconds"])),
             "claude_name": self.query_one("#lg-name", Checkbox).value,
             "claude_remote_control": self.query_one("#lg-rc", Checkbox).value,
         }
@@ -198,24 +216,21 @@ class SettingsPane(Horizontal):
     # ---- accounts -----------------------------------------------------------------------------
     def _accounts(self) -> ComposeResult:
         yield Static("Accounts per CLI", classes="section-title")
-        yield Static("Pick a saved account to switch to it; its sessions relaunch on it. A saved login that "
-                     "no longer works opens the sign-in instead. 🔑 adds another account. Logins are saved "
-                     "on their own.", classes="hint", id="acct-note")
+        yield Static("Pick an account to switch; its sessions relaunch on it.", classes="hint", id="acct-note")
         for cli in accounts.clis():
             with Vertical(classes="acct"):
                 with Horizontal(classes="acct-row"):
                     yield Static(cli, classes="acct-name")
                     yield Static("…", id=f"acct-who-{cli}", classes="acct-who")
-                if profiles.supported(cli):
-                    with Horizontal(classes="acct-row"):
-                        yield Choice([], prompt="switch account", id=f"acct-prof-{cli}")
-                        yield Btn("💾 Save as…", id=f"acct-save-{cli}",
-                                  tooltip="Save the current login under a name of your choice")
                 with Horizontal(classes="acct-row last"):
-                    yield Btn("🔑 Sign in with another account", id=f"acct-in-{cli}")
+                    if profiles.supported(cli):
+                        yield Choice([], prompt="switch account", id=f"acct-prof-{cli}")
+                        yield Btn("Save as…", id=f"acct-save-{cli}",
+                                  tooltip="Save the current login under a name of your choice")
+                    yield Btn("🔑 Add another account", id=f"acct-in-{cli}")
                     yield Btn("Sign out", id=f"acct-out-{cli}")
 
-    @work(thread=True, group="accounts")
+    @work(thread=True, exclusive=True, group="accounts")
     def load_accounts(self) -> None:
         for cli in accounts.clis():
             who = accounts.status(cli)
@@ -226,8 +241,7 @@ class SettingsPane(Horizontal):
         act = profiles.active(cli)
         out_ = who.startswith("not ") or who in ("?", "")
         self.query_one(f"#acct-who-{cli}", Static).update(
-            Text.assemble(("○ " if out_ else "● ", "bold red" if out_ else "bold green"), who,
-                          (f"  ·  profile {act}" if act else "", "cyan")))
+            Text.assemble(("○ " if out_ else "● ", "bold red" if out_ else "bold green"), who))
         sign_in = self.query_one(f"#acct-in-{cli}", Button)
         sign_in.label = "🔑 Sign in" if out_ else "🔑 Add another account"
         sign_in.variant = "primary" if out_ else "default"
@@ -238,6 +252,20 @@ class SettingsPane(Horizontal):
             sel.set_options([(profiles.label(cli, n).split(" · ")[0][:40] or n, n) for n in profiles.names(cli)])
             if act in profiles.names(cli):
                 sel.value = act
+
+    def confirm_sign_out(self, cli: str, button: Button) -> None:
+        from .startup_ui import ContextMenu
+        r = button.region
+        self.app.push_screen(ContextMenu([("-h", f"Sign out of {cli}?"), ("out", "Sign out")], (r.x, r.y + 1)),
+                             lambda c: c == "out" and self._sign_out(cli))
+
+    def _sign_out(self, cli: str) -> None:
+        def out() -> str:
+            msg = accounts.sign_out(cli)
+            if (msg or "").startswith("✗"):
+                return msg
+            return f"{cli}: sign-out opened in a new tab. Finish it there, then sign in with the account you want."
+        self.app.finish(out, busy=f"Opening the {cli} sign-out in a new tab…", after=self.load_accounts)
 
     def save_profile(self, cli: str) -> None:
         from .startup_ui import Prompt
@@ -272,39 +300,32 @@ class SettingsPane(Horizontal):
     def _alerts(self) -> ComposeResult:
         c = settings.load().alerts
         g = lambda k: str(c.get(k, "") or "")
-        yield Static(Text.assemble(("Alerts to your phone", ""), ("   ·   changes save on their own", "dim not bold")), classes="section-title")
-        yield Static("", id="al-status")
+        yield Static("Alerts to your phone", classes="section-title")
         yield Static("When an agent has waited on you too long, and after the logon restore. Messages carry only "
                      "a session's name, its project and how long it waited. Use any number of channels.",
                      classes="hint")
-        yield Static(Text.assemble(("Telegram", "bold"), ("   1. In Telegram open @BotFather, send /newbot, copy the "
-                                                         "token.  2. Paste it below: the Navigator checks it and "
-                                                         "opens your bot.  3. Press Start there. A confirmation "
-                                                         "arrives in the chat.", "dim")), classes="hint")
         with Horizontal(classes="form-row"):
-            yield Static("Bot token", classes="lbl")
-            yield Field(g("telegram_bot_token"), password=True, placeholder="paste the token from @BotFather",
+            yield Static("Telegram", id="al-lbl-telegram", classes="lbl")
+            yield Field(g("telegram_bot_token"), password=True, placeholder="bot token from @BotFather",
                         id="al-tg")
             yield Btn("Connect", id="al-tg-connect", variant="primary",
                       tooltip="Check the token, open your bot, wait for Start, send a confirmation")
         yield Static("", id="al-tg-status")
-        yield Static(Text.assemble(("ntfy", "bold"), ("   Free app (ntfy.sh), no account: subscribe to the same "
-                                                     "topic in the app.", "dim")), classes="hint")
         with Horizontal(classes="form-row"):
-            yield Static("ntfy topic", classes="lbl")
-            yield Field(g("ntfy_topic"), placeholder="a name only you know", id="al-ntfy")
+            yield Static("ntfy", id="al-lbl-ntfy", classes="lbl")
+            yield Field(g("ntfy_topic"), placeholder="topic: a name only you know, the same in the free ntfy app",
+                        id="al-ntfy")
             yield Btn("Random", id="al-ntfy-random")
-        yield Static(Text.assemble(("Webhook", "bold"), ("   Discord, Slack, Teams, Mattermost, Google Chat: an "
-                                                        "incoming-webhook URL.", "dim")), classes="hint")
         with Horizontal(classes="form-row"):
-            yield Static("Webhook URL", classes="lbl")
-            yield Field(g("webhook_url"), password=True, placeholder="https://…", id="al-hook")
-        yield Static(Text.assemble(("WhatsApp", "bold"), ("   Through CallMeBot (free, unofficial): get your API "
-                                                         "key at callmebot.com.", "dim")), classes="hint")
+            yield Static("Webhook", id="al-lbl-webhook", classes="lbl")
+            yield Field(g("webhook_url"), password=True,
+                        placeholder="incoming-webhook URL (Discord, Slack, Teams, Mattermost, Google Chat)",
+                        id="al-hook")
         with Horizontal(classes="form-row"):
-            yield Static("WhatsApp", classes="lbl")
+            yield Static("WhatsApp", id="al-lbl-whatsapp", classes="lbl")
             yield Field(g("whatsapp_phone"), placeholder="phone, +49…", id="al-wa-phone", classes="short")
-            yield Field(g("whatsapp_apikey"), password=True, placeholder="CallMeBot API key", id="al-wa-key")
+            yield Field(g("whatsapp_apikey"), password=True, placeholder="CallMeBot API key (callmebot.com)",
+                        id="al-wa-key")
         with Horizontal(classes="form-row"):
             yield Static("Alert after waiting", classes="lbl")
             yield Field(str(c.get("blocked_minutes", 10)), id="al-min", classes="num")
@@ -314,15 +335,15 @@ class SettingsPane(Horizontal):
                    bool(c.get("toast_reply", True)), id="al-toast")
         with Horizontal(classes="bar"):
             yield Btn("Send test", id="al-test", variant="primary", tooltip="A test message to every channel set up")
+            yield Static("", id="al-status", classes="note")
 
     def show_alert_status(self, extra: str = "") -> None:
+        """A ● on the label of every channel that is set up; `extra` (the test result) beside Send test."""
         from . import alerts
-        t = Text()
         for ch, ok in alerts.channels().items():
-            t.append(f"{'☑' if ok else '☐'} {ch}   ", style="bold green" if ok else "dim")
-        if extra:
-            t.append("\n" + extra, style="bold")
-        self.query_one("#al-status", Static).update(t)
+            self.query_one(f"#al-lbl-{ch}", Static).update(
+                Text.assemble(("● " if ok else "  ", "bold green"), CHANNEL_NAME[ch]))
+        self.query_one("#al-status", Static).update(Text(extra, style="bold"))
 
     def save_alerts(self) -> None:
         from . import alerts
@@ -334,13 +355,15 @@ class SettingsPane(Horizontal):
             return
         alerts.save(new)
         self.show_alert_status()
+        if not new["telegram_bot_token"]:
+            self.tg_idle()
         self._saved("Alerts")
 
     def _alert_values(self) -> dict:
         v = lambda i: self.query_one(i, Input).value.strip()
         return {"telegram_bot_token": v("#al-tg"), "ntfy_topic": v("#al-ntfy"), "webhook_url": v("#al-hook"),
                 "whatsapp_phone": v("#al-wa-phone"), "whatsapp_apikey": v("#al-wa-key"),
-                "blocked_minutes": _int(v("#al-min"), 10),
+                "blocked_minutes": self._number("#al-min", int(settings.load().alerts.get("blocked_minutes", 10))),
                 "on_restore": self.query_one("#al-restore", Checkbox).value,
                 "toast_reply": self.query_one("#al-toast", Checkbox).value}
 
@@ -352,10 +375,29 @@ class SettingsPane(Horizontal):
         self.app.call_from_thread(self.show_alert_status, msg)
 
     def tg_status(self, text: str, style: str = "") -> None:
-        self.query_one("#al-tg-status", Static).update(Text(text, style=style))
+        st = self.query_one("#al-tg-status", Static)
+        st.update(Text(text, style=style))
+        st.display = bool(text)
+
+    def tg_idle(self) -> None:
+        """What rests under the token field: the steps while Telegram is not connected, nothing once it is
+        (the dot on its label says so)."""
+        a = settings.load().alerts
+        if a.get("telegram_chat_id"):
+            self.tg_status("")
+        elif a.get("telegram_bot_token"):
+            self.tg_status("Token saved, chat not connected yet: press Connect.", "yellow")
+        else:
+            self.tg_status("1. In Telegram open @BotFather, send /newbot, copy the token.  2. Paste it above: the "
+                           "Navigator checks it and opens your bot.  3. Press Start there. A confirmation "
+                           "arrives in the chat.", "dim")
+
+    def connect_telegram(self, token: str) -> None:
+        """Start the connect worker. The fields are read here, on the UI thread, not in the worker."""
+        self._connect_worker(token, self._alert_values())
 
     @work(thread=True, exclusive=True, group="telegram")
-    def connect_telegram(self, token: str) -> None:
+    def _connect_worker(self, token: str, fields: dict) -> None:
         """Check the token, open the bot in Telegram, wait until you pressed Start, then confirm
         in the chat. Telegram lets a bot write to you only after you wrote to it first."""
         import time
@@ -393,7 +435,7 @@ class SettingsPane(Horizontal):
             if not chat:
                 say(f"No Start from you within 5 minutes. Press Start in @{bot}, then Connect.", "yellow")
                 return
-        values = {**self._alert_values(), "telegram_bot_token": token, "telegram_chat_id": chat}
+        values = {**fields, "telegram_bot_token": token, "telegram_chat_id": chat}
         alerts.save(values)
         ok = alerts._send_telegram("✅ herdr navigator connected",
                                    "Alerts arrive here: an agent waiting on you, and the logon restore's result.")
@@ -411,16 +453,20 @@ class SettingsPane(Horizontal):
         if not ev.input.has_focus:  # the saved value filling the field at start-up is not a paste
             return
         tok = ev.value.strip()
-        cur = settings.load().alerts
-        if (alerts.looks_like_telegram_token(tok) and tok != getattr(self, "_tg_tried", "")
-                and not (tok == cur.get("telegram_bot_token") and cur.get("telegram_chat_id"))):
+        if alerts.looks_like_telegram_token(tok) and self._tg_new(tok):
             self._tg_tried = tok
             self.connect_telegram(tok)
+
+    def _tg_new(self, tok: str) -> bool:
+        """False for a token already tried, or already connected: a paste then Enter connects once."""
+        cur = settings.load().alerts
+        return not (tok == getattr(self, "_tg_tried", "")
+                    or (tok == cur.get("telegram_bot_token") and cur.get("telegram_chat_id")))
 
     # ---- prompts ------------------------------------------------------------------------------
     def _prompts(self) -> ComposeResult:
         yield Static("One-click prompts", classes="section-title")
-        yield Static("Agents › ☰ Prompts sends one to the selected agent, or to every ☑ ticked agent.",
+        yield Static("Agents › ☰ ▾ › Prompts sends one to the selected agent, or to every ● selected one.",
                      classes="hint")
         yield DataTable(id="prompt-table", cursor_type="row", zebra_stripes=True)
         with Horizontal(classes="form-row"):
@@ -429,13 +475,14 @@ class SettingsPane(Horizontal):
             yield Field(placeholder="the text to send", id="pr-text")
             yield Btn("＋ Add", id="pr-add", variant="primary")
         with Horizontal(classes="bar"):
-            yield Btn("🗑 Delete selected", id="pr-del", tooltip="Prompts you added here; the file's own stay")
+            yield Btn("Delete selected", id="pr-del", tooltip="Prompts you added here; the file's own stay")
         yield Static("Compact instructions", classes="section-title")
-        yield Static("⇣ Compact and prefix+shift+c in herdr send /compact plus this to Claude Code, so the summary "
-                     "keeps what matters. Other CLIs get a plain /compact. Empty = plain everywhere.", classes="hint")
+        yield Static("Added to /compact for Claude Code. Empty = plain /compact.", classes="hint")
         with Horizontal(classes="form-row"):
             yield Static("Keep", classes="lbl")
-            yield Field(str(settings.load().compact.get("instructions", "")), id="pr-compact")
+            yield Field(str(settings.load().compact.get("instructions", "")), id="pr-compact",
+                        tooltip="What the summary should keep. Used by ⇣ Compact and by prefix+shift+c in herdr; "
+                                "other CLIs get a plain /compact")
         yield Static("Hand-off text", classes="section-title")
         yield Static("What ⇢ Hand off sends to the other agent. {name} {cli} {project} {answer}", classes="hint")
         with Horizontal(classes="form-row"):
@@ -456,13 +503,9 @@ class SettingsPane(Horizontal):
     # ---- general ------------------------------------------------------------------------------
     def _general(self) -> ComposeResult:
         s = settings.load()
-        yield Static(Text.assemble(("General", ""), ("   ·   changes save on their own", "dim not bold")), classes="section-title")
-        yield Tick("Sidebar: open worktrees that have a running agent", s.open_active_worktrees, id="gn-wt")
-        yield Tick("Sidebar: mirror agents that run outside herdr (read-only)", s.mirror_outside, id="gn-mirror")
+        yield Static("General", classes="section-title")
         yield Tick("Name new workspaces after their project automatically", s.auto_name, id="gn-autoname")
         yield Tick("Hide sub-agent sessions in the lists", s.hide_subagents, id="gn-hidesub")
-        yield Tick("Sidebar: sort Spaces by running, need, recent", s.sort_spaces,
-                   id="gn-sortspaces")
         from . import termfont
         size = termfont.get()
         with Horizontal(classes="form-row"):
@@ -477,19 +520,23 @@ class SettingsPane(Horizontal):
             yield Static("of the last", classes="unit")
             yield Field(str(s.max_age_days), id="gn-age", classes="num")
             yield Static("days", classes="unit")
+        yield Static("Sidebar", classes="section-title")
+        yield Tick("Open worktrees that have a running agent", s.open_active_worktrees, id="gn-wt")
+        yield Tick("Mirror agents that run outside herdr (read-only)", s.mirror_outside, id="gn-mirror")
+        yield Tick("Sort Spaces by running, needs you, recent", s.sort_spaces, id="gn-sortspaces")
         with Horizontal(classes="form-row"):
             yield Static("herdr sidebar width", classes="lbl")
             yield Btn("◂ narrower", id="sbw-minus")
             yield Btn("wider ▸", id="sbw-plus")
         with Horizontal(classes="bar"):
-            yield Btn("📂 Open settings file", id="gn-file",
+            yield Btn("Open settings file", id="gn-file",
                       tooltip="navigator.toml: launch commands, projects, hidden sessions, context windows…")
         yield Static(Text(f"Settings: {settings.settings_path()}\nState:    {settings.state_dir()}", style="dim"))
 
     def save_general(self) -> None:
         val = lambda i: self.query_one(i, Checkbox).value
         s = settings.load()
-        age = _int(self.query_one("#gn-age", Input).value, s.max_age_days)
+        age = self._number("#gn-age", s.max_age_days, lo=1)
         new = (val("#gn-wt"), val("#gn-mirror"), val("#gn-autoname"), val("#gn-hidesub"), age, val("#gn-sortspaces"))
         if new == (s.open_active_worktrees, s.mirror_outside, s.auto_name, s.hide_subagents, s.max_age_days,
                    s.sort_spaces):
@@ -505,14 +552,22 @@ class SettingsPane(Horizontal):
         self.app.load_world()
 
     def save_compact(self) -> None:
-        text = " ".join(self.query_one("#pr-compact", Input).value.split())
+        field = self.query_one("#pr-compact", Input)
+        text = " ".join(field.value.split())
         if text != str(settings.load().compact.get("instructions", "")):
             settings.save_values("compact", {"instructions": text})
             self._saved("Compact instructions")
+        if field.value != text:
+            field.value = text  # show what was saved
 
     def save_handoff(self) -> None:
-        text = self.query_one("#pr-handoff", Input).value.replace("\\n", "\n")
-        if text.strip() and text != settings.load().handoff:
+        field = self.query_one("#pr-handoff", Input)
+        text = field.value.replace("\\n", "\n")
+        if not text.strip():  # emptied: back to the default, shown again
+            text = _default_handoff()
+            field.value = text.replace("\n", "\\n")
+            self.app.notify("Reset to the default", timeout=3)
+        if text != settings.load().handoff:
             settings.save_values("handoff", {"template": text})
             self._saved("Hand-off text")
 
@@ -548,19 +603,15 @@ class SettingsPane(Horizontal):
 
     # ---- updates ------------------------------------------------------------------------------
     def _updates(self) -> ComposeResult:
-        from . import updater
         yield Static("Updates", classes="section-title")
-        yield Static(Text.assemble(("Installed ", "dim"), (updater.installed_version(), "bold"),
-                                   ("   ·   from ", "dim"), (str(updater.ROOT), "dim")), id="up-version")
+        yield Static(_version_line(), id="up-version")
         yield Static("Checking GitHub…", id="up-status")
         with Horizontal(classes="bar"):
             yield Btn("⬇ Update now", id="up-go", variant="primary", disabled=True,
                       tooltip="Fetch the latest version and switch to it (never over local changes)")
             yield Btn("⟳ Check again", id="up-check")
         yield Static("", id="up-new")
-        yield Static("After an update, close the Navigator (Esc) and open it again to use the new version. "
-                     "Updates only fast-forward: local changes or local commits stop them, nothing is overwritten.",
-                     classes="hint")
+        yield Static("Fast-forward only: local changes block it.", classes="hint")
 
     @work(thread=True, exclusive=True, group="updates")
     def check_updates(self) -> None:
@@ -600,17 +651,14 @@ class SettingsPane(Horizontal):
         bad = msg.startswith("✗")
         self.app.call_from_thread(self.app.notify, msg + ("" if bad else "  Close (Esc) and reopen the Navigator."),
                                   title="Update", severity="error" if bad else "information", timeout=12)
-        self.app.call_from_thread(self.query_one("#up-version", Static).update,
-                                  Text.assemble(("Installed ", "dim"), (updater.installed_version(), "bold")))
-        self.check_updates()
+        self.app.call_from_thread(self.query_one("#up-version", Static).update, _version_line())
+        self.app.call_from_thread(self.check_updates)
 
     # ---- buttons ------------------------------------------------------------------------------
     def on_button_pressed(self, ev) -> None:
         bid = ev.button.id or ""
         ev.stop()
-        if bid == "lg-open":
-            self.app.query_one("StartupPane").open_ticked()
-        elif bid == "lg-log":
+        if bid == "lg-log":
             log = settings.state_dir() / "restore.log"
             if log.exists():
                 open_file(log)
@@ -620,10 +668,9 @@ class SettingsPane(Horizontal):
             self.save_profile(bid[10:])
         elif bid.startswith("acct-in-"):
             cli = bid[8:]
-            self.app.finish(lambda: accounts.sign_in(cli))
+            self.app.finish(lambda: accounts.sign_in(cli), after=self.load_accounts)
         elif bid.startswith("acct-out-"):
-            cli = bid[9:]
-            self.app.finish(lambda: accounts.sign_out(cli))
+            self.confirm_sign_out(bid[9:], ev.button)
         elif bid == "al-ntfy-random":
             from . import alerts
             self.query_one("#al-ntfy", Input).value = alerts.random_topic()
@@ -632,7 +679,9 @@ class SettingsPane(Horizontal):
             self.save_alerts()
             self.run_test_send()
         elif bid == "al-tg-connect":
-            self.connect_telegram(self.query_one("#al-tg", Input).value.strip())
+            tok = self.query_one("#al-tg", Input).value.strip()
+            self._tg_tried = tok
+            self.connect_telegram(tok)
         elif bid == "pr-add":
             name = self.query_one("#pr-name", Input).value.strip()
             text = self.query_one("#pr-text", Input).value.strip()
@@ -669,7 +718,15 @@ class SettingsPane(Horizontal):
 
     @on(Input.Submitted, "#al-tg")
     def _tg_enter(self, ev: Input.Submitted) -> None:
-        self.connect_telegram(ev.value.strip())
+        tok = ev.value.strip()
+        if tok and not self._tg_new(tok):
+            return  # the paste already connects, or it is connected
+        self._tg_tried = tok
+        self.connect_telegram(tok)
+
+    @on(Input.Submitted, "#pr-name")
+    def _pr_name_enter(self) -> None:
+        self.query_one("#pr-text", Input).focus()
 
     @on(Input.Submitted, "#pr-text")
     def _pr_enter(self) -> None:

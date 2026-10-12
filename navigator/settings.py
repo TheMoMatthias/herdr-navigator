@@ -169,6 +169,8 @@ whatsapp_apikey = ""
 blocked_minutes = 10
 # Alert with the logon restore's result.
 on_restore = true
+# Alert with a reply when an agent finishes (Settings › Alerts checkbox).
+toast_reply = true
 
 # Sign in / sign out per CLI (Navigator › ⚙ Settings › Accounts). `watch` is the file the CLI
 # rewrites when the sign-in succeeds; the Navigator then offers to relaunch that CLI's sessions.
@@ -302,8 +304,18 @@ def settings_path() -> Path:
     return config_dir() / "navigator.toml"
 
 
-@lru_cache(maxsize=1)
 def load() -> Settings:
+    """The settings, re-read whenever navigator.toml changes (the resident daemon outlives edits)."""
+    path = settings_path()
+    try:
+        mtime = path.stat().st_mtime_ns
+    except OSError:
+        mtime = 0
+    return _load(str(path), mtime)
+
+
+@lru_cache(maxsize=1)
+def _load(_key: str, _mtime_ns: int) -> Settings:
     path = settings_path()
     if not path.exists():
         try:
@@ -339,6 +351,9 @@ def load() -> Settings:
         login={k: {**defaults["login"].get(k, {}), **v} for k, v in
                {**defaults["login"], **raw.get("login", {})}.items()},
     )
+
+
+load.cache_clear = _load.cache_clear  # type: ignore[attr-defined]
 
 
 def save_values(section: str, values: dict) -> None:

@@ -41,14 +41,16 @@ def run(op: str) -> str:
     if op.startswith("move-"):
         return panes.swap(pane, op[5:])
     if op == "even":
-        return panes.equalize(tab)
+        return panes.equalize(tab) if tab else "✗ no tab here"
     if op == "newtab":
         return panes.to_new_tab(pane)
     if op == "arrange":  # the Navigator's Layout map, this pane selected
         entry = "navigator" if os.name == "nt" else "navigator-unix"
-        herdr.run("plugin", "pane", "open", "--plugin", settings.PLUGIN_ID, "--entrypoint", entry,
-                  "--placement", "overlay", "--focus", "--env", "NAV_TAB=panes", "--env", f"NAV_PANE={pane}",
-                  check=False)
+        try:
+            herdr.run("plugin", "pane", "open", "--plugin", settings.PLUGIN_ID, "--entrypoint", entry,
+                      "--placement", "overlay", "--focus", "--env", "NAV_TAB=panes", "--env", f"NAV_PANE={pane}")
+        except herdr.HerdrError as e:
+            return "✗ couldn't open the layout map: " + str(e)[:120]
         return ""
     return f"✗ unknown pane action {op}"
 

@@ -252,14 +252,6 @@ def test_telegram_setup_explains_a_missing_start(tmp_path):
         srv.server_close()
 
 
-def test_preview_drops_the_cli_input_box_and_status_line():
-    from navigator.app import conversation_lines
-    raw = "\n".join(["● Done: tests pass.", "", "  ⎿ 81 passed", "─" * 40 + " NAME ─",
-                     "❯ ", "  Model: Opus | [███░░] 36%", "  ⏵⏵ bypass permissions on"])
-    assert conversation_lines(raw) == ["● Done: tests pass.", "  ⎿ 81 passed"]
-    assert conversation_lines("just text") == ["just text"]
-
-
 def test_prompt_options_reads_a_permission_prompt():
     from navigator.app import prompt_options
     raw = "\n".join(["Bash command", "  rm -rf build", "Do you want to proceed?",
@@ -268,19 +260,6 @@ def test_prompt_options_reads_a_permission_prompt():
                                    ("3", "No, and tell Claude (esc)")]
     assert prompt_options("1. only one line") == []
     assert prompt_options("step 1. first\nnothing else") == []
-
-
-def test_preview_drops_both_rules_of_the_input_box():
-    from navigator.app import conversation_lines
-    raw = "\n".join(["● It asks: upgrade to 64 GB?", "─" * 40 + " STORAGE ─", "❯ ", "─" * 50,
-                     "  Model: Opus | 36%"])
-    assert conversation_lines(raw) == ["● It asks: upgrade to 64 GB?"]
-
-
-def test_preview_keeps_a_rule_inside_the_answer():
-    from navigator.app import conversation_lines
-    raw = "\n".join(["Part one", "─" * 40, "Part two", "", "─" * 40 + " X ─", "❯ ", "─" * 40, "status"])
-    assert conversation_lines(raw) == ["Part one", "Part two"]
 
 
 def test_alerts_cover_agents_that_need_a_reply(tmp_path):

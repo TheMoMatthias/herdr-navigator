@@ -295,12 +295,15 @@ def _wait_panes_resumed(timeout: float = 120) -> bool:
     return False
 
 
-def todo(sessions: list[Session] | None = None, everything: bool = False) -> tuple[list[startup.Row], list[str]]:
-    """(rows to open, reasons for the ones left out)."""
+def todo(sessions: list[Session] | None = None, everything: bool = False,
+         only: set[str] | None = None) -> tuple[list[startup.Row], list[str]]:
+    """(rows to open, reasons for the ones left out). `only` (session keys) narrows it to those."""
     from .sessions import load_sessions
     sessions = sessions if sessions is not None else load_sessions()
     rows = startup.selected(sessions) if not everything else [
         r for g in startup.plan(sessions) for r in g.rows]
+    if only is not None:
+        rows = [r for r in rows if startup.skey(r.session) in only]
     live = running_ids()
     out, skipped = [], []
     for r in rows:
@@ -806,7 +809,8 @@ def main() -> None:
     if cmd == "boot":
         print(boot())
     elif cmd == "now":
-        rows, skipped = todo()
+        only = next((set(a[7:].split(",")) - {""} for a in sys.argv[2:] if a.startswith("--only=")), None)
+        rows, skipped = todo(only=only)
         summary = open_now(rows) if rows else "nothing to open"
         notify("Sessions opened", summary)
         print(summary, *skipped, sep="\n")
@@ -836,7 +840,7 @@ def main() -> None:
         notify("Relaunch", summary)
         print(summary)
     else:
-        print("usage: restore boot | now | dry-run | relaunch [cli]")
+        print("usage: restore boot | now [--only=keys] | dry-run | relaunch [cli]")
 
 
 if __name__ == "__main__":

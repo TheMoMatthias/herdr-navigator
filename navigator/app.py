@@ -4,7 +4,7 @@ sub-agents and session resume.
 Every row, tab and button is clickable; every action also has a key, and the footer always
 shows the keys that work right now (click them too). Click a row once to select it, click it
 again (or press Enter) to open it, so a stray click never launches anything. Clicking the
-☐/☑ box of a project puts it on (or takes it off) herdr's sidebar.
+● box of a project puts it on (or takes it off) herdr's sidebar.
 """
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from rich.text import Text
 from textual import events, on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.coordinate import Coordinate
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.widget import Widget
@@ -27,7 +28,7 @@ from . import keys as keymap
 from . import arrange, attention, history, launch, layouts, model, panes, settings, sidebar, sync, uiwidth
 from .model import STATE_ICON, Agent, World, age, summarize
 from .settings_ui import SettingsPane
-from .startup_ui import ContextMenu, Digest, FinishWorktree, NewSession, Prompt, StartupPane, UsagePane
+from .startup_ui import ContextMenu, Digest, FinishWorktree, HelpScreen, NewSession, Prompt, StartupPane, UsagePane
 from . import ui
 from .ui import Btn, Field
 
@@ -83,44 +84,37 @@ WT_SEP = "|wt|"
 # "?" shows what the current tab is for and how to work it.
 HELP = {
     "projects": ("Projects: where your work lives",
-                 "Every project and its worktrees, newest first. ☑ in front = shown in herdr's sidebar.\n\n"
-                 "Click a row to select it, click it again or press Enter to go there.\n"
-                 "▾/▸ (or ← →) folds a project's worktrees. Type in 🔍 to filter.\n"
-                 "+ New agent ▾ starts Claude, Codex… here; its last entry asks for a name, a new worktree, model.\n"
-                 "☰ Sessions lists this project's sessions to resume or tick for logon.\n"
-                 "⎇ Finish worktree (on a worktree row) checks it is clean, then closes and removes it.\n"
-                 "Right-click a row (or press .) for all of this in a menu."),
+                 "Every project and its worktrees, newest first. ● = in herdr's sidebar.\n\n"
+                 "Click a row to select, click again or Enter to open (also the agents and sessions on the right).\n"
+                 "← → fold. / filters. + New agent ▾ starts a CLI here.\n"
+                 "Keys: r sessions · Space sidebar · l restore layout · f finish worktree.\n"
+                 "Right-click (or .) for all of it."),
     "agents": ("Agents: everything running now",
-               "Every agent, inside herdr or in another window (↗), nested under its project. ← → or ▾ folds a project\n"
-               "(a folded one still shows who needs you). Those that need you come first, longest wait first:\n"
-               "⚠ waits for an approval or has a question open · ✔ finished.\n"
-               "○ Parked = idle, nothing asked. Waits = how long it has been waiting. ◌ Inactive = parked with nothing new for an hour. ↳N = work running in the background (sub-agents, shell jobs, monitors, dynamic workflows). Ctx = context in use against where the session auto-compacts (its CLI setting, else the model window) (▰▰▱▱): green, yellow from 200K or 70%, red from 700K or 85% (time to compact).\n\n"
-               "⚑ Next (g) selects the next one that needs you and puts you in the message box.\n"
-               "Answer: when it shows numbered options (a question or a permission prompt), click one.\n"
-               "Enter or a second click jumps to the agent's pane. Tick ☐ several to send to all of them.\n"
-               "⇅ Sort: Recent lists the places you visited last, shells included (what F7 opens).\n"
-               "Right-click (or .) an agent: relaunch it, reopen it at logon, hand off its answer."),
+               "Every agent, in herdr or another window (↗), under its project. ← → folds a project\n"
+               "(a folded one still shows who needs you).\n"
+               "⚠ approval or question · ✔ finished · ○ parked · ◌ quiet an hour. Waits: time waited.\n"
+               "↳N: background work. Ctx: context used; yellow 70 %, red 85 %.\n\n"
+               "⚑ Next (g): the next that needs you; m writes to it. Below: what it asks, one button per choice.\n"
+               "Enter or a second click opens its pane. Space selects several (●) to send to all.\n"
+               "⇅ Recent lists where you were last (F7).\n"
+               "Filters: b needs you · w working · i parked · o elsewhere · a all.\n"
+               "Right-click (or .): relaunch, logon, hand off, watch."),
     "sessions": ("Sessions: resume anything, choose what reopens at logon",
-                 "Every past session of every CLI, by project. Search finds any of them.\n\n"
-                 "Enter on a session resumes it in its project (a running one: jumps there).\n"
-                 "☑ = reopens at logon. Click the box or press Space. Dim ☑ 'auto' = picked automatically\n"
-                 "(the newest few per lane); your own clicks are bright and stay.\n"
-                 "Project rows: ▸/▾ or ← → folds them, the box switches the whole project on or off at logon.\n"
-                 "☑ Ticks ▾: tick what runs now, untick everything, back to automatic.\n"
-                 "↻ Relaunch ▾ restarts open sessions in their panes (after signing in to another account).\n"
-                 "Right-click (or .) a session: launch options (model, effort, Remote Control), resume command."),
+                 "Every past session of every CLI, by project. / searches.\n\n"
+                 "Enter resumes (a running one: jumps there).\n"
+                 "☑ = reopens at logon: click or Space; 'auto' = picked for you.\n"
+                 "Project rows: ▸/▾ or ← → fold; their box ticks the whole project.\n"
+                 "⏻ Logon ▾: open ticked now, tick running, untick all, automatic, relaunch.\n"
+                 "Right-click (or .): launch options, resume command."),
     "panes": ("Layout: arrange the panes of the current tab",
-              "The map is to scale. Click a pane to select it, double-click to go there.\n"
-              "Drag a pane onto another: the middle swaps them, an edge puts it beside.\n"
-              "The shapes on top rearrange the whole tab; ＋ New tab ▾ opens a ready-made layout.\n"
-              "Save a layout under a name to restore it for this project later (Projects › ▦ Layout)."),
+              "Click a pane to select, double-click to open. Drag onto another: middle swaps, edge puts beside.\n"
+              "Shift+arrows swap · Ctrl+arrows size. Shapes rearrange the tab; ＋ New tab ▾ opens a layout.\n"
+              "Saved layouts restore from Projects (l)."),
     "usage": ("Usage: tokens per project and session",
-              "Today and the last 7 days, from the Claude and Codex transcripts (cache reads included)."),
+              "Today and 7 days, from Claude and Codex transcripts. Cache reads (cheap) shown apart."),
     "settings": ("Settings: what you set up once",
-                 "Pick a section on the left. Changes save on their own when you leave a field.\n"
-                 "Logon restore: what reopens when you log on. Accounts: sign in, switch accounts.\n"
-                 "Phone alerts: Telegram, ntfy, webhook, WhatsApp. Prompts: one-click prompts.\n"
-                 "General: sidebar and lists. Keys: every key the Navigator and herdr know."),
+                 "Logon: what reopens · Accounts: sign in, switch · Alerts: phone · Prompts: one-click prompts\n"
+                 "General: sidebar, lists · Keys: every key."),
 }
 
 
@@ -136,7 +130,7 @@ def ctx_text(a) -> Text:
     return Text(f"{c.bar()} {c.short:>5}", style=CTX_STYLE[c.level])
 
 
-AGENT_FILTERS = (("All", ""), ("⏳ Needs you", "needs"), ("◐ Working", "working"), ("○ Parked", "idle"),
+AGENT_FILTERS = (("All", ""), ("⚠ Needs you", "needs"), ("◐ Working", "working"), ("○ Parked", "idle"),
                  ("↗ Elsewhere", "outside"))
 
 
@@ -158,20 +152,24 @@ def prompt_options(raw: str) -> list[tuple[str, str]]:
     return found if len(found) >= 2 else []
 
 
-def conversation_lines(raw: str) -> list[str]:
-    """The agent's own output from a pane read: everything above the CLI's input box (the last
-    horizontal rule) and without blank or rule-only lines."""
-    lines = raw.splitlines()
-    rule = lambda ln: ln.strip().startswith("──") and ln.count("─") >= 20
-    for i in range(len(lines) - 1, -1, -1):  # the lowest rule: the input box (and its status lines below)
-        if rule(lines[i]):
-            lines = lines[:i]
-            # a box: a second rule just above, with only the prompt line between them
-            box = [j for j in range(len(lines) - 1, max(-1, len(lines) - 5), -1) if rule(lines[j])]
-            if box and all(ln.strip().startswith(("❯", ">", "›")) or not ln.strip() for ln in lines[box[0] + 1:]):
-                lines = lines[:box[0]]
-            break
-    return [l for l in lines if l.strip() and not set(l.strip()) <= set("─━═-")]
+def pending_request(raw: str) -> list[str]:
+    """What a numbered prompt at the bottom of a pane asks for: the lines just above its choices
+    ("Bash command", "rm -rf build", "Do you want to proceed?"), without box borders. Empty when
+    the pane shows no numbered prompt."""
+    import re
+    lines = raw.splitlines()[-40:]
+    pat = re.compile(r"^\s*(?:[❯>›→]\s*)?1[.)]\s+\S")
+    first = next((i for i in range(len(lines) - 1, -1, -1) if pat.match(lines[i])), -1)
+    if first < 0:
+        return []
+    out: list[str] = []
+    for ln in reversed(lines[max(0, first - 14):first]):
+        t = ln.strip().strip("│┃|").rstrip()
+        if t.startswith(("╭", "╰", "┌", "└")) or (t.count("─") >= 20 and set(t) <= set("─━═-╌ ")):
+            break  # the top of the prompt's box
+        if t.strip():
+            out.append(t.strip())
+    return out[::-1][-8:]
 
 
 def NL_JOIN(lines: list[str]) -> str:
@@ -198,28 +196,12 @@ class TopBar(Static):
         self.post_message(self.Clicked())
 
 
-STATE_WORDS = (("blocked", "waiting on you", "bold #fe8019"), ("reply", "need a reply", "bold #fe8019"),
-               ("done", "done", "bold"), ("working", "working", "dim"), ("idle", "parked", "dim"),
-               ("inactive", "inactive", "dim italic"))
-
-
-def counts_text(counts) -> Text:
-    """'⚠ 1 waiting on you · ◐ 2 working · ○ 9 idle': the glyph plus the word it stands for."""
-    out = Text()
-    for state, word, style in STATE_WORDS:
-        if counts.get(state):
-            if out:
-                out.append(" · ", style="dim")
-            out.append(f"{STATE_ICON[state]} {counts[state]} {word}", style=style)
-    return out
-
-
 class ClickTwiceTable(DataTable):
     """Row table: a click on a new row selects it, a second click opens it.
     A click in the first column posts BoxClicked instead (the sidebar checkbox)."""
 
     BINDINGS = [Binding("j", "cursor_down", "Down", show=False), Binding("k", "cursor_up", "Up", show=False),
-                Binding("space", "box", "Tick"), Binding("period", "menu", "Menu", key_display="."),
+                Binding("space", "box", "Tick"), Binding("full_stop", "menu", "Menu", key_display="."),
                 Binding("left", "fold(False)", "Fold", show=False), Binding("right", "fold(True)", "Unfold", show=False),
                 Binding("shift+f10", "menu", "Menu", show=False)]
 
@@ -260,18 +242,15 @@ class ClickTwiceTable(DataTable):
             self.table = table
             self.row_key = row_key
 
+    touched = True  # False on #saved-table until the user clicks or presses a key there
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key != "enter":
+            self.touched = True
+
     def on_mount(self) -> None:
-        self._hl_at = 0.0
         self.cursor_type = "row"
         self.zebra_stripes = True
-
-    def watch_cursor_coordinate(self, old, new) -> None:  # type: ignore[override]
-        super().watch_cursor_coordinate(old, new)
-        if old.row != new.row:
-            self._hl_at = time.monotonic()
-
-    def fresh_highlight(self) -> bool:
-        return time.monotonic() - getattr(self, "_hl_at", 0.0) < 0.25
 
     async def _on_click(self, event: events.Click) -> None:
         meta = event.style.meta if event.style else {}
@@ -280,12 +259,15 @@ class ClickTwiceTable(DataTable):
             rk = self.coordinate_to_cell_key(self.cursor_coordinate).row_key.value
             self.post_message(self.Menu(self, rk, (event.screen_x, event.screen_y)))
             event.stop()
+            event.prevent_default()  # else DataTable's own click runs too: a second toggle/open
             return
-        if meta.get("column") == 0 and meta.get("row", -1) >= 0 and self.id == "proj-table":
+        if meta.get("column") == 0 and meta.get("row", -1) >= 0 and self.id == "proj-table" \
+                and str(self.get_row_at(meta["row"])[0]).strip():  # a row without ▸/▾ is no fold target
             self.move_cursor(row=meta["row"])
             rk = self.coordinate_to_cell_key(self.cursor_coordinate).row_key.value
             self.post_message(self.Fold(self, rk))
             event.stop()
+            event.prevent_default()  # else DataTable's own click runs too: a second toggle/open
             return
         box_col = 1 if self.id == "proj-table" else 0
         if meta.get("column") == box_col and meta.get("row", -1) >= 0 and self.id in ("proj-table", "agent-table"):
@@ -294,7 +276,18 @@ class ClickTwiceTable(DataTable):
             rk = self.coordinate_to_cell_key(self.cursor_coordinate).row_key.value
             self.post_message(self.BoxClicked(self, rk))
             event.stop()
+            event.prevent_default()  # else DataTable's own click runs too: a second toggle/open
             return
+        if not self.touched:  # Saved layouts: the first click only picks, it never restores
+            self.touched = True
+            if meta.get("row", -1) == self.cursor_row:
+                event.stop()
+                event.prevent_default()
+                return
+        if meta.get("row", -1) >= 0 and meta["row"] == self.cursor_row and "column" in meta:
+            # Textual compares the whole cell: a second click in another cell of this row must open it too
+            self.cursor_coordinate = Coordinate(meta["row"], meta["column"])
+        event.prevent_default()  # run DataTable's click once, not again via the MRO
         await super()._on_click(event)
 
 
@@ -415,7 +408,7 @@ class LayoutMap(Widget):
                         style[y][x] = "bold" if b.focused else "dim"
             inner = max(1, x1 - x0 - 2)
             icon = model.STATE_ICON.get(b.status, "") if b.status else ""
-            lines = [f"{icon} {b.label}".strip()[:inner], (b.pane_id + ("  ◀ you" if b.focused else ""))[:inner]]
+            lines = [f"{icon} {b.label}".strip()[:inner]] + (["◀ you"[:inner]] if b.focused else [])
             if self._drop and b.pane_id == self._drop[0]:
                 lines.append(panes.ZONE_LABEL[self._drop[1]][:inner])
             cy = y0 + max(1, (y1 - y0) // 2 - 1)
@@ -470,10 +463,10 @@ class Navigator(App):
     .empty-note { height: auto; padding: 1 2; color: $text-muted; display: none; }
     .empty-note.show { display: block; }
     #proj-filter { width: 1fr; min-width: 12; margin: 0 0 0 1; }
-    #agent-detail { height: 40%; min-height: 9; max-height: 16; border-top: tall $primary 40%; padding: 0 0 0 0; }
-    #agent-preview { height: 1fr; padding: 0 1; }
+    #agent-detail { height: auto; min-height: 6; max-height: 14; border-top: tall $primary 40%; padding: 0 0 0 0; }
+    #agent-preview { height: auto; max-height: 10; padding: 0 1; }
+    #agent-detail > VerticalScroll { height: auto; max-height: 10; }
     #agent-send { margin: 0; }
-    #agent-keys { margin: 0; }
     #agent-msg { width: 1fr; margin: 0 1 0 0; }
     #pane-map { width: 1fr; height: 1fr; min-height: 8; }
     #pane-tools { width: 26; padding: 0 1; }
@@ -495,7 +488,6 @@ class Navigator(App):
     App.-narrow .form-row .lbl { width: 14; }
     App.-narrow .key-lbl { display: none; }
     App.-narrow #proj-detail { min-width: 28; }
-    App.-narrow #btn-layout, App.-narrow #btn-resume { display: none; }
     """
 
     BINDINGS = [
@@ -505,12 +497,12 @@ class Navigator(App):
         Binding("4", "tab('panes')", "Layout", show=False),
         Binding("5", "tab('usage')", "Usage", show=False),
         Binding("6", "tab('settings')", "Settings", show=False),
-        Binding("enter", "open", "Go", priority=False, key_display="⏎"),
+        Binding("enter", "open", "Open", priority=False, key_display="⏎"),
         Binding("space", "toggle_sidebar", "Sidebar"),
         Binding("r", "resume_project", "Sessions"),
         Binding("slash", "search", "Search", key_display="/"),
         Binding("m", "message", "Message"),
-        Binding("g", "attention", "Next waiting"),
+        Binding("g", "attention", "Next needs you"),
         Binding("question_mark", "help", "Help", key_display="?"),
         Binding("escape", "back", "Close"),
         # everything below works but stays out of the footer (buttons cover it)
@@ -521,10 +513,9 @@ class Navigator(App):
         Binding("u", "new('opencode')", "New OpenCode", show=False),
         Binding("y", "new('kilo')", "New Kilo", show=False),
         Binding("l", "restore_layout", "Restore layout", show=False),
-        Binding("p", "toggle_project", "This project/all", show=False),
+        Binding("f", "finish_worktree", "Finish worktree", show=False),
         Binding("b", "filter('needs')", "Needs you", show=False),
         Binding("w", "filter('working')", "Working", show=False),
-        Binding("d", "filter('needs')", "Needs you", show=False),
         Binding("i", "filter('idle')", "Parked", show=False),
         Binding("a", "filter('')", "All", show=False),
         Binding("o", "filter('outside')", "Elsewhere", show=False),
@@ -581,6 +572,7 @@ class Navigator(App):
         self.pane_layout = None
         self.pane_selected: str | None = None
         self.close_armed = ""
+        self.close_armed_at = 0.0
         self.marked: set[str] = set()          # Agents: panes picked for "send to many"
         from . import digest
         self.seen_before = digest.last_seen()  # for "while you were away"
@@ -592,14 +584,8 @@ class Navigator(App):
         with TabbedContent(initial=self.start_tab, id="tabs"):
             with TabPane("1 Projects", id="projects"):
                 with Horizontal(classes="bar"):
-                    yield Btn("▶ Open", id="btn-go", variant="primary", tooltip="Go to this project (Enter)")
                     yield Btn("+ New agent ▾", id="btn-new", tooltip="Start an agent here: pick a CLI, or set it up")
-                    yield Btn("☰ Sessions", id="btn-resume", tooltip="Its sessions: resume, tick for logon (r)")
-                    yield Btn("☑ Sidebar", id="btn-sidebar", tooltip="Show or hide it in herdr's sidebar (Space)")
-                    yield Btn("▦ Restore layout", id="btn-layout", tooltip="Restore its newest saved layout (l)")
-                    yield Btn("⎇ Finish worktree", id="btn-wt-finish",
-                              tooltip="Put this worktree away: check it, close it, remove the checkout")
-                    yield Field(placeholder="🔍 filter  ( / )", id="proj-filter")
+                    yield Field(placeholder="filter  /", id="proj-filter")
                 with Horizontal():
                     with Vertical():
                         yield Static("", id="proj-empty", classes="empty-note")
@@ -613,9 +599,6 @@ class Navigator(App):
                         yield Btn(label, id=f"flt-{f or 'all'}")
                     yield Static("", classes="grow")
                     yield Btn("⇅ Running", id="agent-sort", tooltip="Sort: running, then who needs you, then most recent; or where you were last")
-                    yield Btn("↻ Relaunch…", id="btn-relaunch-all",
-                              tooltip="After switching account: restart every open session in its pane, so it runs "
-                                      "under the account you are signed in with now (Remote Control included)")
                     yield Btn("⚑ Next", id="btn-attention", variant="warning",
                               tooltip="Select the next agent that needs you and type your answer (g)")
                 yield Static("", id="agent-empty", classes="empty-note")
@@ -627,25 +610,15 @@ class Navigator(App):
                         for i in range(1, 7):
                             yield Btn(str(i), id=f"ans-{i}", variant="warning")
                     with Horizontal(id="agent-send", classes="bar"):
-                        yield Field(placeholder="✉ Message to the selected agent, or to every ☑ ticked one  (m)",
-                                    id="agent-msg")
+                        yield Field(placeholder="Message  m", id="agent-msg")
                         yield Btn("Send", id="send-msg", variant="primary",
-                                  tooltip="Send to the selected agent, or to every ☑ ticked one")
-                        yield Btn("✕ Untick all", id="mark-clear", tooltip="Clear the ticks")
-                    with Horizontal(id="agent-keys", classes="bar"):
-                        yield Static("In the agent:", classes="key-lbl")
-                        yield Btn("⏎ Enter", id="key-enter", tooltip="Press Enter in the agent (accept)")
-                        yield Btn("Esc", id="key-esc", tooltip="Press Esc in the agent (cancel)")
-                        yield Btn("^C Stop", id="key-ctrl_c", variant="error", tooltip="Interrupt the agent")
-                        yield Btn("⇣ Compact", id="act-compact",
-                                  tooltip="/compact with your instructions (⚙ Settings › Prompts): free up its context")
-                        yield Btn("☰ Prompts ▾", id="act-prompts", tooltip="Saved prompts: send one in a click")
-                        yield Btn("⇢ Hand off ▾", id="act-handoff", tooltip="Send its last answer to another agent")
+                                  tooltip="Send to the selected agent, or to every ● selected one")
+                        yield Btn("☰ ▾", id="act-more",
+                                  tooltip="Enter, Esc, Stop, compact, hand off, saved prompts")
             with TabPane("3 Sessions", id="sessions"):
                 yield StartupPane(id="startup-pane")
             with TabPane("4 Layout", id="panes"):
                 with Horizontal(id="shape-bar", classes="bar"):
-                    yield Static("Arrange this tab:", classes="key-lbl")
                     for kind, label in arrange.SHAPES.items():
                         yield Btn(label, id=f"shape-{kind}", tooltip=f"Arrange this tab's panes: {label[2:].lower()}")
                     yield Btn("＋ New tab ▾", id="presets-toggle", tooltip="Open a new tab with a ready-made layout")
@@ -655,13 +628,13 @@ class Navigator(App):
                         yield Field(placeholder="New pane name, Enter saves (empty clears)", id="pane-rename")
                         with Horizontal(id="saved-row", classes="bar"):
                             yield Field(placeholder="Save this tab's layout as…", id="layout-name")
-                            yield Btn("💾 Save", id="layout-save", tooltip="Save this tab's layout for the project")
+                            yield Btn("Save", id="layout-save", tooltip="Save this tab's layout for the project")
                             yield Btn("▦ Restore", id="layout-restore", tooltip="Restore the saved layout selected below")
-                            yield Btn("🗑 Delete", id="layout-delete", tooltip="Delete the selected saved layout")
+                            yield Btn("Delete", id="layout-delete", tooltip="Delete the selected saved layout")
                         yield ClickTwiceTable(id="saved-table")
                     with VerticalScroll(id="pane-tools"):
                         yield Static("", id="pane-selected")
-                        yield Btn("⇥ Go to pane      ⏎", id="pop-focus", variant="primary")
+                        yield Btn("⇥ Open            ⏎", id="pop-focus", variant="primary")
                         yield Static("", classes="gap")
                         yield Btn("◫ Split right     v", id="pop-split-right")
                         yield Btn("⊟ Split down      s", id="pop-split-down")
@@ -669,18 +642,13 @@ class Navigator(App):
                         yield Btn("= Even out        =", id="pop-equalize")
                         yield Static("", classes="gap")
                         with Horizontal(classes="bar"):
-                            yield Static("Swap")
-                            for d, a in (("left", "←"), ("up", "↑"), ("down", "↓"), ("right", "→")):
-                                yield Btn(a, id=f"pop-swap-{d}", tooltip=f"Swap with the pane {d} (Shift+arrow)")
-                        with Horizontal(classes="bar"):
                             yield Static("Size")
                             for d, a in (("left", "◂"), ("up", "▴"), ("down", "▾"), ("right", "▸")):
                                 yield Btn(a, id=f"pop-resize-{d}", tooltip=f"Resize {d} (Ctrl+arrow)")
                         yield Static("", classes="gap")
-                        yield Static("⇧+arrows swap · Ctrl+arrows size", classes="hint")
                         yield Btn("↦ To new tab      t", id="pop-newtab")
                         yield Btn("✎ Rename          n", id="pop-rename")
-                        yield Btn("🚨 Watch for errors", id="pane-watch",
+                        yield Btn("⚠ Watch errors", id="pane-watch",
                                   tooltip="Tell me (toast + phone) when this pane prints FAILED, a traceback, Error: …")
                         yield Btn("✕ Close pane    Del", id="pop-close", variant="error")
             # Usage and Settings are built the first time they are opened (ensure_tab): together
@@ -691,10 +659,11 @@ class Navigator(App):
 
     async def on_mount(self) -> None:
         await self.ensure_tab(self.start_tab)  # opened straight on Usage or Settings
-        self.query_one("#proj-table", DataTable).add_columns("", "Side", "Project", "Agents", "Last")
-        self.query_one("#agent-table", DataTable).add_columns("Send", "State", "CLI", "Agent", "Waits", "Ctx", "Project",
+        self.query_one("#proj-table", DataTable).add_columns("", "", "Project", "Agents", "Last")
+        self.query_one("#agent-table", DataTable).add_columns("", "State", "CLI", "Agent", "Waits", "Ctx", "Project",
                                                               "Doing")
         self.query_one("#saved-table", DataTable).add_columns("Saved layout", "Panes", "Saved")
+        self.query_one("#saved-table", ClickTwiceTable).touched = False
         self.render_keys()
         self.load_world()
         self.focus_table()
@@ -782,25 +751,17 @@ class Navigator(App):
         self.fill_saved()
 
     def render_topbar(self, world: World) -> None:
-        total = model.Counter(a.status for a in world.agents)
-        outside = sum(1 for a in world.agents if not a.in_herdr)
-        subs = sum(sync.work_count(a) for a in world.agents)
+        needs = sum(1 for a in world.agents if a.status in NEEDS_YOU)
         where = self.current_project.label if self.current_project else "—"
-        bar = Text.assemble(("▣ ", "bold"), (where, "bold"), ("   │   ", "dim"))
-        bar.append_text(counts_text(total) or Text("no agents running", style="dim"))
-        if outside:
-            bar.append(f" · ↗ {outside} in other windows", style="dim")
-        if subs:
-            bar.append(f" · ↳ {subs} in the background", style="dim")
+        bar = Text.assemble(("▣ ", "bold"), (where, "bold"))
+        if needs:
+            bar.append("   │   ", style="dim")
+            bar.append(f"⚠ {needs} need you", style=STATE_STYLE["blocked"])
         full = [a for a in world.agents if a.context and a.context.level == "full"]
-        warn = [a for a in world.agents if a.context and a.context.level == "warn"]
         if full:
             bar.append("   │   ", style="dim")
             bar.append(f"▲ context full: {', '.join(a.display[:18] for a in full[:2])}"
                        + (f" +{len(full) - 2}" if len(full) > 2 else ""), style=CTX_STYLE["full"])
-        if warn:
-            bar.append("   │   ", style="dim")
-            bar.append(f"▰▰▱▱ {len(warn)} filling up", style=CTX_STYLE["warn"])
         if world.error:
             bar.append(f"    herdr unreachable", style="red")
         self.query_one("#topbar", Static).update(bar)
@@ -834,14 +795,20 @@ class Navigator(App):
         b = next((b for b in lay.panes if b.pane_id == self.pane_selected), None) if lay else None
         info = Text()
         if b:
-            info.append(f"{b.label[:26]}\n", style="bold")
-            info.append(b.pane_id + ("  ⛶" if lay.zoomed else ""), style="dim")
+            info.append(b.label[:26], style="bold")
+            if lay.zoomed:
+                info.append("  ⛶", style="dim")
         self.query_one("#pane-selected", Static).update(info)
         from . import watch
-        on = bool(b and watch.for_pane(b.pane_id, watch.load()))
+        on = bool(b and self.error_watches(b.pane_id))
         btn = self.query_one("#pane-watch", Button)
-        btn.label = "✕ Stop error watch" if on else "🚨 Watch for errors"
+        btn.label = "✕ Stop error watch" if on else "⚠ Watch errors"
         btn.variant = "warning" if on else "default"
+
+    def error_watches(self, pane: str) -> list:
+        """The live error watches on a pane (one source, one kind: label and press agree)."""
+        from . import watch
+        return [(k, w) for k, w in watch.for_pane(pane) if w.get("kind") == "errors"]
 
     @on(LayoutMap.Picked)
     def _picked(self, ev) -> None:
@@ -872,8 +839,9 @@ class Navigator(App):
     def action_pane_op(self, op: str, arg: str = "") -> None:
         if not self.pane_selected:
             return
-        if op == "close" and self.close_armed != self.pane_selected:
+        if op == "close" and (self.close_armed != self.pane_selected or time.monotonic() - self.close_armed_at > 5):
             self.close_armed = self.pane_selected
+            self.close_armed_at = time.monotonic()
             self.notify(f"Close {self.pane_selected}? Its process ends. Press Del / ✕ again to confirm.",
                         severity="warning", timeout=5)
             return
@@ -893,7 +861,6 @@ class Navigator(App):
                 "resize": lambda: panes.resize(p, arg),
                 "equalize": lambda: panes.equalize(lay.tab_id),
                 "newtab": lambda: panes.to_new_tab(p),
-                "newws": lambda: panes.to_new_workspace(p),
                 "rename": lambda: panes.rename(p, arg),
                 "close": lambda: panes.close(p),
                 "preset": lambda: panes.preset(arg, lay.workspace_id, self._pane_cwd(p)),
@@ -932,11 +899,19 @@ class Navigator(App):
         p = self.world.project_of_workspace(self.pane_layout.workspace_id)
         return model.projects.Project(p.root, p.name, "", p.path) if p else None
 
+    def saved_project(self):
+        """The project saved layouts belong to: the shown tab's, else the one selected in Projects."""
+        p = self.layout_project()
+        if p:
+            return p
+        v, _ = self.selected()
+        return v.project if v else None
+
     def fill_saved(self) -> None:
         t = self.query_one("#saved-table", DataTable)
         t.clear()
         t.set_class(True, "empty")
-        p = self.layout_project() or (self.selected()[0].project if self.selected()[0] else None)
+        p = self.saved_project()
         if not p:
             return
         for name, spec in sorted(layouts.saved(p).items(), key=lambda kv: -kv[1].get("saved_at", 0)):
@@ -957,12 +932,14 @@ class Navigator(App):
 
     @on(DataTable.RowSelected, "#saved-table")
     def _saved_sel(self, ev: DataTable.RowSelected) -> None:
-        if not ev.data_table.fresh_highlight():
-            self.layout_op("restore", self.saved_selected())
+        self.layout_op("restore", self.saved_selected())
 
     @work(thread=True, exclusive=True, group="layout-op")
     def layout_op(self, op: str, name: str | None) -> None:
-        p = self.layout_project()
+        p = self.saved_project()
+        if op == "save" and not self.pane_layout:
+            self.call_from_thread(self.notify, "No herdr tab to save.", severity="warning")
+            return
         if op == "restore_project":
             v, _ = self.selected()
             p = v.project if v else None
@@ -970,7 +947,7 @@ class Navigator(App):
             name = max(data, key=lambda k: data[k].get("saved_at", 0)) if data else None
             op = "restore"
         if not p or not name:
-            self.call_from_thread(self.notify, "Nothing to do: pick a layout (or save one in tab 5 first).",
+            self.call_from_thread(self.notify, "Nothing to do: pick a layout (or save one in the Layout tab (4) first).",
                                   severity="warning")
             return
         try:
@@ -1016,6 +993,9 @@ class Navigator(App):
 
     @work(thread=True, exclusive=True, group="preview")
     def load_preview(self) -> None:
+        """The selected agent at a glance: what it needs from you (a question, a permission or an
+        approval, with one button per choice), else what it is doing. Its text is one click away
+        (Enter jumps to it), so the preview does not repeat it."""
         a, sub = self.agent_selected()
         out = Text()
         if a is None:
@@ -1023,54 +1003,72 @@ class Navigator(App):
             self.call_from_thread(self.show_answers, None, [])
             return
         opts: list[tuple[str, str]] = []
-        if a.question and sub < 0:
-            opts = [(str(i), o) for i, o in enumerate(a.question.options[:6], 1)]
-        word = {"blocked": "waiting on you", "reply": "needs a reply", "done": "finished",
-                "idle": "parked", "inactive": "inactive (nothing new for an hour)"}.get(a.status, a.status)
-        head = f"{a.display}  ·  {a.cli}  ·  {word}  ·  {a.project.label}"
-        if a.context:
-            head += f"  ·  context {a.context.short}" + (
-                f" of {a.context.window // 1000}K ({a.context.pct}%)" if a.context.window else "")
-        out.append(head + "\n", style="bold")
-        if a.in_herdr and sub < 0:
-            from . import watch
-            for _, w in watch.for_pane(a.pane_id, watch.load()):
-                out.append(watch.describe(w) + "  (right-click to stop)\n", style="dim")
-        if a.question and sub < 0:
-            q = a.question
-            out.append(f"❓ {q.text}\n", style="bold #fe8019")
-            for i, o in enumerate(q.options, 1):
-                out.append(f"   {i}. {o}\n", style="red")
-            if q.more:
-                out.append(f"   (+{q.more} more)\n", style="dim")
-            out.append("Click an answer below, or Enter to jump to its pane.\n\n", style="dim")
         if sub >= 0 and sub < len(a.subagents):
             sa = a.subagents[sub]
-            out.append(f"↳ sub-agent {sa.name} ({sa.kind}, {sa.model})\n{sa.description}\n{sa.activity}\n")
-        elif a.in_herdr:
+            out.append(f"↳ {sa.name}", style="bold")
+            out.append(f"  {sa.kind} · {sa.model}\n", style="dim")
+            for ln in (sa.description, sa.activity):
+                if ln:
+                    out.append(clip(ln, 300) + "\n")
+            self.call_from_thread(self.query_one("#agent-preview", Static).update, out)
+            self.call_from_thread(self.show_answers, None, [])
+            return
+        head = Text()
+        head.append(f"{model.STATE_ICON.get(a.status, '?')} ", style=STATE_STYLE.get(a.status, ""))
+        head.append(a.display[:40], style="bold")
+        state = {"blocked": "needs your answer", "reply": "waiting for your reply", "done": "finished: check it",
+                 "working": "working", "idle": "idle", "inactive": "inactive"}.get(a.status, a.status)
+        head.append(f"  {state}", style=STATE_STYLE.get(a.status, "dim"))
+        if a.status in NEEDS_YOU and a.waiting_since:
+            head.append(f" · {model.age(a.waiting_since)}", style="dim")
+        if a.context:
+            head.append(f"   context {a.context.short}" + (f" ({a.context.pct}%)" if a.context.window else ""),
+                        style="dim")
+        out.append_text(head)
+        out.append("\n")
+        ask: list[str] = []
+        if a.question:
+            ask = [f"❓ {a.question.text}"]
+            opts = [(str(n), o) for n, o in enumerate(a.question.options[:6], 1)]
+            if not a.in_herdr:
+                ask += [f"   {n}. {o}" for n, o in opts]
+        elif a.in_herdr and a.status in ("blocked", "reply"):
             try:
                 raw = model.herdr.run("agent", "read", a.pane_id, "--source", "recent-unwrapped",
                                       "--lines", "40").get("raw", "")
-            except Exception as e:
-                raw = f"(could not read: {e})"
-            if not opts and a.status == "blocked":
-                opts = prompt_options(raw)
-            out.append(NL_JOIN(conversation_lines(raw)[-12:]))
+            except Exception:
+                raw = ""
+            opts = prompt_options(raw)
+            ask = pending_request(raw) if opts else []
+            if not ask and a.status == "reply":
+                ask = ["It finished its turn and waits for your next message."]
+        if ask:
+            out.append(NL_JOIN(ask[:1]) + "\n", style="bold #fe8019")
+            if len(ask) > 1:
+                out.append(NL_JOIN("  " + ln for ln in ask[1:]) + "\n")
+        elif a.status == "working":
+            doing = a.activity or a.title or ""
+            if doing:
+                out.append(clip(doing, 200) + "\n", style="dim")
+        work = []
+        if a.subagents:
+            work.append(f"{len(a.subagents)} sub-agent{'s' * (len(a.subagents) > 1)}")
+        if a.workflows:
+            work.append(f"{a.workflows} workflow{'s' * (a.workflows > 1)}")
+        if a.jobs:
+            work.append(f"{a.jobs} background job{'s' * (a.jobs > 1)}")
+        if work:
+            out.append("↳ " + ", ".join(work) + "\n", style="#83a598")
+        if a.in_herdr:
+            from . import watch
+            for _, w in watch.for_pane(a.pane_id, watch.load()):
+                out.append(watch.describe(w) + "  (right-click to stop)\n", style="dim")
         else:
-            from . import mirror
-            s = next((s for s in self.world.sessions if s.id == a.session_id), None)
-            path = s.path if s else ""
-            if not path and a.session_id:
-                hits = list(model.live._claude_root().glob(f"*/{a.session_id}.jsonl"))
-                path = str(hits[0]) if hits else ""
-            for line in (mirror.feed(path, 10) if path else []):
-                out.append_text(line)
-                out.append("\n")
-            out.append("↗ runs in another window: type there. The mirror resumes it here once it exits.",
+            out.append("↗ runs in another window: answer there. The mirror resumes it here once it exits.\n",
                        style="dim")
             opts = []
         self.call_from_thread(self.query_one("#agent-preview", Static).update, out)
-        self.call_from_thread(self.show_answers, a if sub < 0 else None, opts)
+        self.call_from_thread(self.show_answers, a, opts)
 
     def show_answers(self, a, opts: list[tuple[str, str]]) -> None:
         """One button per numbered choice the agent offers; a click presses that number in it."""
@@ -1109,7 +1107,7 @@ class Navigator(App):
         self.run_send(a.pane_id, a.display, text, key)
 
     def send_compact(self) -> None:
-        """⇣ Compact: /compact plus your instructions, per agent (each CLI gets what it accepts)."""
+        """Compact: /compact plus your instructions, per agent (each CLI gets what it accepts)."""
         from . import compact
         targets = [a for a in (self.world.agents if self.world else []) if a.pane_id in self.marked]
         if not targets:
@@ -1140,6 +1138,9 @@ class Navigator(App):
     def new_menu(self, widget) -> None:
         """+ New agent ▾: one line per installed CLI, then the full dialog."""
         v, wt = self.selected()
+        if not v:
+            self.notify("Select a project first.", timeout=3)
+            return
         where = (v.project.name + (f" ⎇ {wt.label}" if wt else "")) if v else "here"
         items = [("-head", f"New agent in {where[:30]}")]
         for cli in installed_clis():
@@ -1157,6 +1158,38 @@ class Navigator(App):
             items.append(("save", "＋ Save the message as a prompt"))
         items.append(("edit", "✎ Where to edit them"))
         self.push_screen(ContextMenu(items, self._menu_at(widget)), self._prompt_chosen)
+
+    def confirm_stop(self, widget, label: str, go) -> None:
+        """Ctrl+C ends what the agent is doing: ask once."""
+        self.push_screen(ContextMenu([("-head", f"Stop {label}?"), ("go", "■ Stop it")], self._menu_at(widget)),
+                         lambda c: c == "go" and go())
+
+    def more_menu(self, widget) -> None:
+        """☰ ▾: the rarer things to do with the selected agent (or the ones selected for Send)."""
+        items = [("key:enter", "⏎ Press Enter (accept)"), ("key:esc", "Esc (cancel)"),
+                 ("key:ctrl+c", "■ Stop it (Ctrl+C)"), ("compact", "Compact its context"),
+                 ("handoff", "Hand off its answer…"), ("prompts", "Saved prompts…")]
+        if self.marked:
+            items.append(("clear", "Clear the Send selection"))
+
+        def chosen(c):
+            if c == "key:ctrl+c":
+                names = [a.display for a in (self.world.agents if self.world else []) if a.pane_id in self.marked]
+                one, _ = self.agent_selected()
+                label = ", ".join(names)[:40] if names else (one.display if one else "it")
+                self.confirm_stop(widget, label, lambda: self.send_to_agent(key="ctrl+c"))
+            elif c and c.startswith("key:"):
+                self.send_to_agent(key=c[4:])
+            elif c == "compact":
+                self.send_compact()
+            elif c == "handoff":
+                self.handoff_menu(widget)
+            elif c == "prompts":
+                self.prompts_menu(widget)
+            elif c == "clear":
+                self.marked = set()
+                self.fill_agents()
+        self.push_screen(ContextMenu(items, self._menu_at(widget)), chosen)
 
     def _prompt_chosen(self, choice: str | None) -> None:
         from . import prompts
@@ -1211,7 +1244,7 @@ class Navigator(App):
         except Exception as e:
             err = str(e)
             if "agent_blocked" in err:
-                err = f"{name} is waiting on a question or approval: answer it with ⏎ Enter / Esc, or jump there."
+                err = f"{name} needs you (a question or approval): answer it with the buttons or ☰ ▾, or open its pane."
             self.call_from_thread(self.notify, err[:300], title="not sent", severity="warning", timeout=8)
             return
         self.call_from_thread(self.notify, msg, timeout=3)
@@ -1220,7 +1253,7 @@ class Navigator(App):
 
     def action_attention(self) -> None:
         """Select the next agent that needs you (after the selected one) and put you in the message
-        box, with its last words in the preview. Enter still jumps to its pane."""
+        box, with what it asks for shown below. Enter still jumps to its pane."""
         if not self.world:
             return
         if self.active_tab() != "agents":
@@ -1244,7 +1277,7 @@ class Navigator(App):
             return
         nxt = next((i for i in rows if i > t.cursor_row), rows[0])
         t.move_cursor(row=nxt)
-        self.query_one("#agent-msg", Input).focus()
+        self.call_after_refresh(self.query_one("#agent-msg", Input).focus)  # after the tab switch settles focus
 
     @work(thread=True, exclusive=True, group="pane-op")
     def run_shape(self, kind: str) -> None:
@@ -1260,16 +1293,16 @@ class Navigator(App):
         self.load_panes()
 
     def _pane_cwd(self, pane_id) -> str:
-        snap = model.herdr.snapshot()
-        return next((p.get("cwd", "") for p in snap.get("panes", []) if p.get("pane_id") == pane_id), "") \
-            or os.path.expanduser("~")
+        info = getattr(self, "_pane_info", {}).get(pane_id) or {}  # cached by load_panes
+        return info.get("cwd", "") or os.path.expanduser("~")
 
     # ---- projects -------------------------------------------------------------------------
-    def selected(self):
-        """(ProjectView, Worktree | None) for the highlighted project row."""
-        if not self.world or not self.selected_key:
+    def selected(self, key: str | None = None):
+        """(ProjectView, Worktree | None) for the highlighted project row (or for `key`)."""
+        key = key or self.selected_key
+        if not self.world or not key:
             return None, None
-        root, _, wt = self.selected_key.partition(WT_SEP)
+        root, _, wt = key.partition(WT_SEP)
         v = self.world.view(root)
         return v, (v.worktrees.get(wt) if v and wt else None)
 
@@ -1290,13 +1323,11 @@ class Navigator(App):
                     flt in w.label.lower() or any(flt in a.display.lower() for a in w.agents) for w in show):
                 continue
             here = self.current_project and v.project.root == self.current_project.root
-            box = Text("☑", style="bold") if v.in_sidebar else Text("☐", style="dim")
+            box = Text("●", style="bold") if v.in_sidebar else Text("")
             is_open = bool(flt) or not folded.get(v.project.root, False)
             self.proj_open[v.project.root] = is_open
             chevron = Text(("▾" if is_open else "▸") if show else "", style="bold")
             name = Text(v.project.name[:30], style="bold" if here else ("bold" if v.in_sidebar else ""))
-            if here:
-                name.append("  ◀ here", style="bold")
             if show and not is_open:
                 name.append(f"  ⎇{len(show)}", style="dim")
 
@@ -1324,9 +1355,9 @@ class Navigator(App):
     def show_project_detail(self) -> None:
         """The selected project: where it is, then its agents (jump) and sessions (resume) as rows."""
         v, wt = self.selected()
-        self.query_one("#btn-wt-finish", Button).display = bool(wt and wt.exists)
         info = self.query_one("#proj-info", Static)
         items = self.query_one("#proj-items", DataTable)
+        keep = items.coordinate_to_cell_key(items.cursor_coordinate).row_key.value if items.row_count else None
         items.clear()
         if not items.columns:
             items.add_columns("", "", "")
@@ -1336,10 +1367,7 @@ class Navigator(App):
         agents = wt.agents if wt else v.agents
         sessions = wt.sessions if wt else v.sessions
         out = Text()
-        out.append(v.project.name, style="bold")
-        if wt:
-            out.append(f" ⎇ {wt.label}", style="bold")
-        out.append(f"\n{(wt.path if wt else v.project.path) or v.project.root}", style="dim")
+        out.append((wt.path if wt else v.project.path) or v.project.root, style="dim")
         extra = []
         if not wt and v.worktrees:
             quiet = [w for w in v.worktrees.values() if not w.agents]
@@ -1350,7 +1378,6 @@ class Navigator(App):
             extra.append("▦ layouts: " + ", ".join(saved_layouts))
         if extra:
             out.append("\n" + "   ".join(extra), style="dim")
-        out.append("\nClick a row twice (or Enter): go to the agent / resume the session", style="dim italic")
         info.update(out)
 
         def head(key: str, text: str) -> None:
@@ -1377,10 +1404,12 @@ class Navigator(App):
                               "", key=f"s:{s_.cli}:{s_.id}")
         if not agents and not rest:
             head("h:none", "Nothing yet: + New agent starts one here")
+        if keep is not None and keep in items.rows:  # a live refresh keeps your place in the list
+            items.move_cursor(row=items.get_row_index(keep))
 
     @on(DataTable.RowSelected, "#proj-items")
     def _proj_item(self, ev: DataTable.RowSelected) -> None:
-        if ev.data_table.fresh_highlight() or not self.world:
+        if not self.world:
             return
         key = ev.row_key.value or ""
         if key.startswith("a:"):
@@ -1399,14 +1428,13 @@ class Navigator(App):
 
     @on(DataTable.RowHighlighted, "#proj-table")
     def _proj_hl(self, ev: DataTable.RowHighlighted) -> None:
-        if ev.row_key is not None and ev.row_key.value:
+        if ev.row_key is not None and ev.row_key.value and ev.row_key.value != self.selected_key:
             self.selected_key = ev.row_key.value
             self.show_project_detail()
 
     @on(DataTable.RowSelected, "#proj-table")
     def _proj_sel(self, ev: DataTable.RowSelected) -> None:
-        if not ev.data_table.fresh_highlight():
-            self.action_open()
+        self.action_open()
 
     @on(ClickTwiceTable.BoxClicked)
     def _box(self, ev: ClickTwiceTable.BoxClicked) -> None:
@@ -1512,15 +1540,15 @@ class Navigator(App):
         v, wt = self.selected()
         if not v:
             return []
-        items = [("open", "▶ Open it"), ("new", "+ New agent here…"), ("sessions", "☰ Its sessions")]
+        items = [("open", "Open  ⏎"), ("new", "+ New agent here…  N"), ("sessions", "☰ Its sessions  r"),
+                 ("sidebar", ("Hide from herdr's sidebar" if v.in_sidebar else "Show in herdr's sidebar") + "  Space"),
+                 ("layout", "▦ Restore its saved layout  l")]
         if not wt:
-            items.append(("sidebar", "☐ Hide from herdr's sidebar" if v.in_sidebar else "☑ Show in herdr's sidebar"))
-            items.append(("layout", "▦ Restore its saved layout"))
             if any(w.agents or w.workspace for w in v.worktrees.values()):
                 open_ = getattr(self, "proj_open", {}).get(v.project.root, True)
                 items.append(("fold", "▸ Fold its worktrees" if open_ else "▾ Unfold its worktrees"))
         elif wt.exists:
-            items.append(("finish", "⎇ Finish this worktree…"))
+            items.append(("finish", "⎇ Finish this worktree…  f"))
         return items
 
     def on_project_menu(self, choice: str | None) -> None:
@@ -1532,14 +1560,16 @@ class Navigator(App):
 
     def agent_menu_items(self, a) -> list[tuple[str, str]]:
         from . import startup
-        items = [("goto", "→ Go to it")]
+        items = [("goto", "Open  ⏎")]
         if a.in_herdr:
-            items += [("msg", "✉ Message it…"), ("enter", "⏎ Press Enter (accept)"), ("esc", "Esc (cancel)"),
+            items += [("msg", "✉ Message it…  m"), ("enter", "⏎ Press Enter (accept)"), ("esc", "Esc (cancel)"),
                       ("stop", "^C Stop it"), ("compact", "⇣ Compact its context"), ("handoff", "⇢ Hand off its answer…"),
-                      ("relaunch", "↻ Relaunch it…"),
-                      ("mark", "☐ Untick for Send" if a.pane_id in self.marked else "☑ Tick for Send to many"),
-                      ("w-done", "🔔 Tell me when it finishes"),
-                      ("w-chain", "⛓ When it finishes, hand its answer to…")]
+                      ("prompts", "☰ Saved prompts…"), ("relaunch", "↻ Relaunch it…"),
+                      ("mark", "Unselect for Send" if a.pane_id in self.marked else "Select for Send to many  Space"),
+                      ("w-done", "Tell me when it finishes"),
+                      ("w-chain", "When it finishes, hand its answer to…")]
+            if self.marked:
+                items.append(("mark-clear", "Clear the Send selection"))
             from . import watch
             items += [(f"wx:{k}", f"✕ Stop: {watch.describe(w)}") for k, w in watch.for_pane(a.pane_id)]
         items.append(("new-beside", f"＋ New agent in {a.project.label[:30]}…"))
@@ -1559,13 +1589,21 @@ class Navigator(App):
             self.action_open()
         elif choice == "msg":
             self.action_message()
-        elif choice in ("enter", "esc", "stop"):
-            self.run_send(a.pane_id, a.display, "", {"enter": "enter", "esc": "esc", "stop": "ctrl+c"}[choice])
+        elif choice == "stop":
+            self.confirm_stop(self.query_one("#act-more", Button), a.display,
+                              lambda: self.run_send(a.pane_id, a.display, "", "ctrl+c"))
+        elif choice in ("enter", "esc"):
+            self.run_send(a.pane_id, a.display, "", choice)
         elif choice == "compact":
             from . import compact
             self.run_send(a.pane_id, a.display, compact.command(a.cli), "")
         elif choice == "handoff":
-            self.handoff_menu(self.query_one("#act-handoff", Button))
+            self.handoff_menu(self.query_one("#act-more", Button))
+        elif choice == "prompts":
+            self.prompts_menu(self.query_one("#act-more", Button))
+        elif choice == "mark-clear":
+            self.marked = set()
+            self.fill_agents()
         elif choice == "relaunch":
             self.open_relaunch(a.cli, [a.pane_id])
         elif choice == "w-done":
@@ -1610,9 +1648,8 @@ class Navigator(App):
 
     def new_agent_in(self, key: str, dialog: bool = True) -> None:
         """New agent in this project (or worktree), from Agents or from herdr's workspace menu."""
-        self.selected_key = key
         if dialog:
-            self.action_new_dialog()
+            self.action_new_dialog(key)
 
     def open_relaunch(self, cli: str = "", panes: list[str] | None = None) -> None:
         """Every relaunch (all, one CLI, one agent) goes through the same dialog."""
@@ -1622,9 +1659,9 @@ class Navigator(App):
         self.push_screen(RelaunchSheet(self.world, cli, panes))
 
     def action_help(self) -> None:
-        from .startup_ui import HelpScreen
-        title, body = HELP.get(self.active_tab(), ("", ""))
-        self.push_screen(HelpScreen(title, body))
+        tab = self.active_tab()
+        title, body = HELP.get(tab, ("", ""))
+        self.push_screen(HelpScreen(title, body, tab))
 
     def toggle_mark(self, key: str) -> None:
         """Mark agents to message several at once (only agents in herdr can be typed into)."""
@@ -1670,7 +1707,7 @@ class Navigator(App):
             rows.sort(key=lambda a: (first[a.project.root], a.project.name.lower(), model.rank(a),
                                      a.display.lower()))
         from . import startup, watch
-        folded = startup.ui_state().get("agents_folded", {}) if grouped else {}
+        folded = startup.ui_state().get("agents_folded", {}) if grouped and not self.agent_filter else {}
         watches, watch_icons = watch.load(), watch.KINDS
         group = None
         for a in rows:
@@ -1682,7 +1719,7 @@ class Navigator(App):
                 hidden = sum(1 for x in mine if x.status not in NEEDS_YOU) if shut else 0
                 t.add_row(Text("▸" if shut else "▾", style="bold"), "", "", head, "", "",
                           Text(summarize(model.Counter(x.status for x in mine)), style="dim"),
-                          Text(f"{hidden} more folded: → or click ▸ to show" if hidden else "", style="dim"),
+                          Text(f"+{hidden}" if hidden else "", style="dim"),
                           key="grp:" + group)
             if grouped and folded.get(group, False) and a.status not in NEEDS_YOU:
                 continue
@@ -1697,14 +1734,12 @@ class Navigator(App):
             if work := sync.work_mark(a):  # one count for all background work; agents also get rows below
                 who.append(f" {work}", style="#83a598")
             if grouped:  # the project is the group above; say only which checkout
-                proj = Text(("⎇ " + a.project.worktree)[:26] if a.project.worktree else "main",
-                            style="dim" if a.project.worktree else "dim")
+                proj = Text(("⎇ " + a.project.worktree)[:26] if a.project.worktree else "", style="dim")
             else:
                 proj = Text(a.project.label[:26], style="bold" if here else "")
             raw_doing = a.activity or a.title or ""
             doing = Text("❓ " + clip(a.question.text, 52), style="bold #fe8019") if a.question else clip(raw_doing, 56)
-            box = (Text("☑", style="bold") if a.pane_id in self.marked else Text("☐", style="dim")) \
-                if a.in_herdr else ""
+            box = Text("●", style="bold") if a.pane_id in self.marked else ""
             waits = Text(age(a.waiting_since), style=STATE_STYLE.get(a.status, "")) \
                 if a.status in NEEDS_YOU and a.waiting_since else ""
             if self.agent_sort == "recent":
@@ -1749,7 +1784,7 @@ class Navigator(App):
                 b.label = f"{name} {counts.get(f, 0)}"
                 b.variant = "primary" if f == (self.agent_filter or "all") else "default"
         self.query_one("#agent-bar").refresh(layout=True)  # a count grew a digit: re-measure the buttons
-        what = {"needs": "waiting on you", "working": "working", "idle": "parked",
+        what = {"needs": "needing you", "working": "working", "idle": "parked",
                 "outside": "running in other windows"}.get(self.agent_filter, "")
         self.set_empty("#agent-empty", "#agent-table",
                        ("Nothing needs you right now." if self.agent_filter == "needs" else
@@ -1771,12 +1806,10 @@ class Navigator(App):
         self.marked &= live
         send = self.query_one("#send-msg", Button)
         send.label = f"Send to {len(self.marked)}" if self.marked else "Send"
-        self.query_one("#mark-clear", Button).display = bool(self.marked)
 
     @on(DataTable.RowSelected, "#agent-table")
     def _agent_sel(self, ev: DataTable.RowSelected) -> None:
-        if not ev.data_table.fresh_highlight():
-            self.action_open()
+        self.action_open()
 
     # ---- keys -----------------------------------------------------------------------------
     def render_keys(self) -> None:
@@ -1807,12 +1840,6 @@ class Navigator(App):
         row("drag sidebar edge", "resize the sidebar")
         row("drag a split border", "resize panes")
         row("right-click pane / space", "herdr menu: split, zoom, rename, close")
-        row("Layout tab: drag a pane", "middle swaps · edge places it beside")
-        row("Sessions: Enter / click ☐", "resume it / tick it for logon (bright = yours, dim = auto)")
-        row("Sessions: right-click", "open, relaunch, launch options, back to automatic")
-        row("Agents tab: click ☐", "tick agents: Send, ⏎, ⇣ compact and ☰ prompts go to all of them")
-        row("Buttons with ▾", "open a small menu (new agent, prompts, hand off, new tab)")
-        row("⚙ Settings", "logon restore, accounts, phone alerts, prompts: they save on their own")
         self.query_one("#keys-body", Static).update(out)
 
     # ---- actions --------------------------------------------------------------------------
@@ -1881,18 +1908,18 @@ class Navigator(App):
             return tab in ("projects", "sessions")
         if action == "filter":
             return tab == "agents"
-        if action in ("pane_sel", "pane_op", "pane_rename", "shape"):
+        if action in ("pane_sel", "pane_op", "pane_rename"):
             return tab == "panes" and not typing
         if action == "message":
             return tab == "agents" and not typing
         if action == "attention":
-            return tab in ("agents", "projects", "recent") and not typing
-        if action == "restore_layout":
+            return tab in ("agents", "projects") and not typing
+        if action in ("restore_layout", "finish_worktree"):
             return tab == "projects" and not typing
         if action == "sidebar_width":
             return not typing
         if action == "open":
-            return tab in ("projects", "agents", "panes", "recent")
+            return tab in ("projects", "agents", "panes")
         return True
 
     def action_tab(self, name: str) -> None:
@@ -1915,6 +1942,11 @@ class Navigator(App):
     def action_back(self) -> None:
         f = self.focused
         if isinstance(f, Input):
+            if f.id == "pane-rename":  # hide the box, never leave the Navigator from it
+                f.remove_class("show")
+                f.value = ""
+                self.query_one("#pane-map", LayoutMap).focus()
+                return
             if any(isinstance(w, SettingsPane) for w in f.ancestors):
                 # a saved setting: Esc cancels the edit (blur would save it), it never empties it
                 orig = getattr(f, "_nav_orig", None)
@@ -1974,22 +2006,37 @@ class Navigator(App):
         else:
             self.finish(lambda: launch.new_agent(self.world, v.project, cli, focus=False), busy=f"▶ starting {cli}…")
 
+    def action_finish_worktree(self) -> None:
+        v, wt = self.selected()
+        if v and wt and wt.exists:
+            self.finish_worktree()
+        else:
+            self.notify("Select a worktree row first.", timeout=3)
+
     def finish_worktree(self) -> None:
-        from . import worktrees
         v, wt = self.selected()
         if not (v and wt and wt.exists):
             return
-        st = worktrees.status(wt.path, v.project.path or v.project.root, [a.display for a in wt.agents],
-                              [wt.workspace.id] if wt.workspace else [])
+        self.check_worktree(v, wt)
+
+    @work(thread=True, exclusive=True, group="finish-wt")
+    def check_worktree(self, v, wt) -> None:
+        """worktrees.status runs git: off the UI thread, then the dialog."""
+        from . import worktrees
+        try:
+            st = worktrees.status(wt.path, v.project.path or v.project.root, [a.display for a in wt.agents],
+                                  [wt.workspace.id] if wt.workspace else [])
+        except Exception as e:
+            self.call_from_thread(self.notify, str(e)[:300], title="herdr refused", severity="error")
+            return
 
         def done(action):
             if action == "remove":
                 self.finish(lambda: worktrees.remove(st, v.project.path or v.project.root))
             elif action == "close":
-                msgs = worktrees.close_workspaces(st)
-                self.notify("\n".join(msgs) or "nothing to close")
-                self.refresh_world_and_sidebar()
-        self.push_screen(FinishWorktree(st, f"{v.project.name} ⎇ {wt.label}"), done)
+                self.finish(lambda: "\n".join(worktrees.close_workspaces(st)) or "nothing to close",
+                            after=self.refresh_world_and_sidebar)
+        self.call_from_thread(self.push_screen, FinishWorktree(st, f"{v.project.name} ⎇ {wt.label}"), done)
 
     def show_digest(self, world: World) -> None:
         from . import digest
@@ -2025,8 +2072,8 @@ class Navigator(App):
             self.notify("That agent is no longer open.", timeout=4)
         t.focus()
 
-    def action_new_dialog(self) -> None:
-        v, wt = self.selected()
+    def action_new_dialog(self, key: str | None = None) -> None:
+        v, wt = self.selected(key)
         if not v:
             return
         folder = wt.path if wt and wt.exists else (v.project.path or v.project.root)
@@ -2087,20 +2134,24 @@ class Navigator(App):
                             "jump to it. To bring it here: exit it there, then resume it from Sessions (3).",
                             title="Outside herdr", timeout=10)
 
-    def finish(self, fn, jump: bool = False, busy: str = "") -> None:
+    def finish(self, fn, jump: bool = False, busy: str = "", after=None) -> None:
         """Run an action off the UI thread (the screen never freezes or greys out) and stay open
         where you are. Only a jump (go to a pane, agent or project) closes the Navigator, since it
-        would cover what you jumped to."""
+        would cover what you jumped to. `after` runs on the UI thread once it is done (e.g. to
+        redraw what the action changed)."""
         self.notify(busy or "Working…", timeout=2)
-        self._run_action(fn, jump)
+        self._run_action(fn, jump, after)
 
     @work(thread=True, group="action")
-    def _run_action(self, fn, jump: bool) -> None:
+    def _run_action(self, fn, jump: bool, after=None) -> None:
         try:
             msg = fn()
         except Exception as e:  # show it, keep the Navigator open
             self.call_from_thread(self.notify, str(e)[:300], title="herdr refused", severity="error", timeout=8)
             return
+        finally:
+            if after:
+                self.call_from_thread(after)
         if msg and msg.startswith("✗"):
             self.call_from_thread(self.notify, msg, severity="warning", timeout=10)
             return
@@ -2163,19 +2214,14 @@ class Navigator(App):
     @on(Button.Pressed)
     def _button(self, ev: Button.Pressed) -> None:
         bid = ev.button.id or ""
-        actions = {
-            "btn-go": self.action_open, "btn-resume": self.action_resume_project,
-            "btn-new": lambda: self.new_menu(ev.button),
-            "btn-sidebar": self.action_toggle_sidebar,
-        }
-        if bid in actions:
-            actions[bid]()
+        if bid == "btn-new":
+            self.new_menu(ev.button)
         elif bid == "pane-watch":
             from . import watch
             lay = self.pane_layout
             b = next((b for b in lay.panes if b.pane_id == self.pane_selected), None) if lay else None
             if b:
-                cur = watch.for_pane(b.pane_id)
+                cur = self.error_watches(b.pane_id)
                 if cur:
                     for k, _ in cur:
                         watch.cancel(k)
@@ -2192,27 +2238,10 @@ class Navigator(App):
         elif bid == "send-msg":
             self.send_to_agent(self.query_one("#agent-msg", Input).value)
             self.query_one("#agent-msg", Input).value = ""
-        elif bid == "key-ctrl_c" and getattr(self, "stop_armed", 0) < time.monotonic() - 5:
-            self.stop_armed = time.monotonic()
-            n = len(self.marked) or 1
-            self.notify(f"Stop {'the selected agent' if n == 1 else f'{n} ticked agents'}? It interrupts what "
-                        "it is doing. Click ^C Stop again within 5 s to confirm.", severity="warning", timeout=5)
-        elif bid.startswith("key-"):
-            self.stop_armed = 0
-            self.send_to_agent(key=bid[4:].replace("_", "+"))
-        elif bid == "act-compact":
-            self.send_compact()
-        elif bid == "act-prompts":
-            self.prompts_menu(ev.button)
-        elif bid == "act-handoff":
-            self.handoff_menu(ev.button)
-        elif bid == "mark-clear":
-            self.marked = set()
-            self.fill_agents()
+        elif bid == "act-more":
+            self.more_menu(ev.button)
         elif bid == "btn-attention":
             self.action_attention()
-        elif bid == "btn-relaunch-all":
-            self.open_relaunch()
         elif bid == "agent-sort":
             self.agent_sort = "needs" if self.agent_sort == "recent" else "recent"
             self.fill_agents()
@@ -2227,12 +2256,6 @@ class Navigator(App):
             self.layout_op("restore", self.saved_selected())
         elif bid == "layout-delete":
             self.layout_op("delete", self.saved_selected())
-        elif bid in ("sbw-minus", "sbw-plus"):
-            self.action_sidebar_width("-6" if bid == "sbw-minus" else "+6")
-        elif bid == "btn-wt-finish":
-            self.finish_worktree()
-        elif bid == "btn-layout":
-            self.action_restore_layout()
         elif bid.startswith("shape-"):
             self.run_shape(bid[6:])
         elif bid == "presets-toggle":
@@ -2246,7 +2269,16 @@ class Navigator(App):
 
 def main() -> None:
     tab = os.environ.pop("NAV_TAB", "") or (sys.argv[1] if len(sys.argv) > 1 else "projects")
-    msg = Navigator(tab).run()
+    from . import opennav
+    opennav.as_pane()  # opened by F1 as a pane: "the pane you are in" is the one it covers
+    try:
+        msg = Navigator(tab).run()
+    finally:  # no Navigator open any more: the next F1 opens it, never only closes another popup
+        from . import jsonfile
+        try:
+            jsonfile.write(settings.state_dir() / "nav-popup.json", {})
+        except OSError:
+            pass
     if msg:
         print(msg)
 
