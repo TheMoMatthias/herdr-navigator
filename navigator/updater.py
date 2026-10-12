@@ -46,12 +46,22 @@ def installed_version() -> str:
         return "?"
 
 
+def upstream() -> str:
+    """The ref to update from: the branch's upstream, else (herdr installs a detached commit)
+    the remote's default branch."""
+    for ref in ("@{u}", "origin/HEAD", "origin/main"):
+        if _git("rev-parse", "--verify", "--quiet", ref).returncode == 0:
+            return ref
+    return ""
+
+
 def check(fetch: bool = True) -> State:
     version = installed_version()
     if not shutil.which("git"):
         return State(False, "git is not installed, so the Navigator can't update itself", version)
     if not (ROOT / ".git").exists():
-        return State(False, "installed without git: update it with `herdr plugin update`", version)
+        return State(False, "installed without git: update it with "
+                            "`herdr plugin install TheMoMatthias/herdr-navigator` (outside herdr)", version)
     if fetch:
         try:
             f = _git("fetch", "--quiet", timeout=45)
@@ -60,14 +70,14 @@ def check(fetch: bool = True) -> State:
         if f.returncode != 0:
             return State(False, "could not reach GitHub: " + (f.stderr.strip().splitlines() or ["?"])[-1][:120],
                          version)
-    up = _git("rev-parse", "--abbrev-ref", "@{u}")
-    if up.returncode != 0:
+    up = upstream()
+    if not up:
         return State(False, "this checkout has no upstream branch to update from", version)
-    counts = _git("rev-list", "--left-right", "--count", "HEAD...@{u}").stdout.split()
+    counts = _git("rev-list", "--left-right", "--count", f"HEAD...{up}").stdout.split()
     ahead, behind = (int(counts[0]), int(counts[1])) if len(counts) == 2 else (0, 0)
     dirty = [ln[3:] for ln in _git("status", "--porcelain", "--untracked-files=no").stdout.splitlines() if ln.strip()]
-    new = _git("log", "--format=%h %s", "HEAD..@{u}").stdout.splitlines()[:20]
-    latest = _version(_git("show", "@{u}:herdr-plugin.toml").stdout) if behind else version
+    new = _git("log", "--format=%h %s", f"HEAD..{up}").stdout.splitlines()[:20]
+    latest = _version(_git("show", f"{up}:herdr-plugin.toml").stdout) if behind else version
     return State(True, "", version, latest, behind, ahead, dirty, new)
 
 
@@ -83,7 +93,10 @@ def update() -> str:
     if st.ahead:
         return f"✗ Not updated: this checkout has {st.ahead} commit(s) of its own; merge them by hand."
     before = _git("rev-parse", "HEAD").stdout.strip()
-    pull = _git("merge", "--ff-only", "@{u}", timeout=60)
+    up = upstream()
+    detached = _git("symbolic-ref", "-q", "HEAD").returncode != 0
+    # ahead == 0, so moving a detached HEAD to the upstream is a fast-forward too
+    pull = _git("checkout", "--quiet", "--detach", up) if detached else _git("merge", "--ff-only", up, timeout=60)
     if pull.returncode != 0:
         return "✗ Update failed: " + (pull.stderr.strip().splitlines() or ["?"])[-1][:160]
     changed = _git("diff", "--name-only", before, "HEAD").stdout.split()

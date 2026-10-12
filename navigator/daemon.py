@@ -74,10 +74,8 @@ def start() -> bool:
     """Start a daemon in the background unless one runs. True when one was started."""
     if alive() or os.environ.get("PYTEST_CURRENT_TEST"):  # a test's daemon would outlive it, on a temp dir
         return False
-    py = ROOT / ".venv" / ("Scripts/pythonw.exe" if os.name == "nt" else "bin/python")
-    if not py.exists():
-        py = Path(sys.executable)
-    env = {**os.environ, "PYTHONPATH": str(ROOT), "PYTHONUTF8": "1",
+    py, site = _interpreter()
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join(str(p) for p in (ROOT, site) if p), "PYTHONUTF8": "1",
            "HERDR_PLUGIN_STATE_DIR": str(settings.state_dir()),
            "HERDR_PLUGIN_CONFIG_DIR": str(settings.config_dir())}
     env.pop("HERDR_PLUGIN_EVENT", None)
@@ -89,13 +87,44 @@ def start() -> bool:
     attempts = [flags | getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0), flags] if os.name == "nt" else [flags]
     for creationflags in attempts:
         try:
-            subprocess.Popen(cmd, cwd=str(ROOT), env=env, creationflags=creationflags, close_fds=True,
+            subprocess.Popen(cmd, cwd=str(_cwd()), env=env, creationflags=creationflags, close_fds=True,
                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                              stderr=subprocess.DEVNULL, start_new_session=os.name != "nt")
             return True
         except OSError:
             continue
     return False
+
+
+def _interpreter() -> tuple[Path, Path | None]:
+    """The Python to run the daemon with, and the venv's site-packages to put on its path.
+
+    On Windows a running .exe can't be replaced and its working directory can't be removed, so a
+    daemon started from the plugin's own venv, in the plugin folder, makes `herdr plugin install`
+    fail with OS error 32 (measured). So it runs the venv's base interpreter, outside the plugin,
+    and only reads the venv's packages (pure Python: nothing stays open after import)."""
+    venv = ROOT / ".venv"
+    site = venv / ("Lib/site-packages" if os.name == "nt" else
+                   f"lib/python{sys.version_info[0]}.{sys.version_info[1]}/site-packages")
+    try:
+        cfg = (venv / "pyvenv.cfg").read_text(encoding="utf-8")
+        home = Path(next(ln.split("=", 1)[1].strip() for ln in cfg.splitlines() if ln.split("=")[0].strip() == "home"))
+        py = home / ("pythonw.exe" if os.name == "nt" else "python3")
+        if py.exists() and site.is_dir():
+            return py, site
+    except (OSError, StopIteration):
+        pass
+    py = venv / ("Scripts/pythonw.exe" if os.name == "nt" else "bin/python")
+    return (py if py.exists() else Path(sys.executable)), None
+
+
+def _cwd() -> Path:
+    try:
+        d = settings.state_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+    except OSError:
+        return Path.home()
 
 
 def _start_via_wmi(py: Path, env: dict) -> bool:
@@ -111,7 +140,7 @@ def _start_via_wmi(py: Path, env: dict) -> bool:
     inner = f'{sets}start "" /b "{py}" -m navigator.daemon'
     line = f'cmd.exe /d /c "{inner}"'.replace("'", "''")
     ps = ("$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments "
-          f"@{{CommandLine='{line}'; CurrentDirectory='{str(ROOT).replace(chr(39), chr(39) * 2)}'}}; "
+          f"@{{CommandLine='{line}'; CurrentDirectory='{str(_cwd()).replace(chr(39), chr(39) * 2)}'}}; "
           "exit $r.ReturnValue")
     try:
         r = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", ps],
