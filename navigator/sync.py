@@ -178,6 +178,17 @@ def work_count(a) -> int:
     return own + getattr(a, "workflows", 0) + getattr(a, "jobs", 0)
 
 
+def room(chrome: int, floor: int) -> int:
+    """Characters a name may use in the sidebar: its live width (uiwidth.live, which follows a
+    mouse drag) less the `chrome` the row spends on tree lines, icons and marks. Never below
+    `floor`, the old fixed limit, so a narrow sidebar clips exactly as before."""
+    try:
+        from . import uiwidth
+        return max(floor, uiwidth.live() - chrome)
+    except Exception:
+        return floor
+
+
 def work_mark(a) -> str:
     """One mark for whatever runs in the background: ↳N."""
     n = work_count(a)
@@ -192,7 +203,7 @@ def session_rows(label: str, agents: list, folded: bool = False) -> list[tuple[s
     if len(agents) == 1 and agents[0].display.strip().lower() == label.strip().lower():
         return []
     hidden = [a for a in agents if a.status not in model.NEEDS_YOU] if folded else []
-    lines = [(f"{'↗' if not a.in_herdr else SIDE_ICON.get(a.status, '·')} {a.display[:30]}", ctx_mark(a), work_mark(a))
+    lines = [(f"{'↗' if not a.in_herdr else SIDE_ICON.get(a.status, '·')} {a.display[:room(16, 30)]}", ctx_mark(a), work_mark(a))
              for a in agents if a not in hidden]
     if hidden:
         lines.append((f"+{len(hidden)} folded", "", ""))
@@ -226,11 +237,11 @@ def agent_tree(agents: list, folded: dict | None = None) -> list[tuple]:
         head = tally = ""
         if a is shown[0]:
             more = len(group) - len(shown)
-            head = f"{'▸' if shut else '▾'} {a.project.name[:30]}"
+            head = f"{'▸' if shut else '▾'} {a.project.name[:room(14, 30)]}"
             tally = "  ".join(filter(None, (side_counts(group), f"+{more} folded" if more else "")))
         # herdr indents an entry's 2nd and later rows by two columns: the heading carrier's line is
         # its 2nd row, so every other agent's line (its 1st row) gets the same two-column pad
-        line = (PAD * 2 if not head else "") + f"{'└─' if last else '├─'} {SIDE_ICON.get(a.status, '·')} {a.display[:34]}"
+        line = (PAD * 2 if not head else "") + f"{'└─' if last else '├─'} {SIDE_ICON.get(a.status, '·')} {a.display[:room(24, 34)]}"
         lane = ""  # no worktree row (setup.AGENT_ROWS); "" clears one sent by an older version
         out.append((a, f"{i:04d}", head, line, lane, False, tally))
     return out

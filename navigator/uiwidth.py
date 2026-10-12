@@ -28,6 +28,37 @@ def current() -> int:
         return DEFAULT
 
 
+_live_cache: tuple[tuple, int] | None = None
+
+
+def live() -> int:
+    """The width herdr draws the sidebar at now: the one dragged with the mouse (herdr keeps it
+    in session.json), else `[ui] sidebar_width`, else herdr's default. Cached on file mtimes,
+    so the daemon can ask on every sync."""
+    global _live_cache
+    session = herdr_config_path().parent / "session.json"
+    paths = (session, herdr_config_path())
+    try:
+        stamp = tuple(p.stat().st_mtime if p.exists() else 0 for p in paths)
+    except OSError:
+        stamp = ()
+    if _live_cache and _live_cache[0] == stamp:
+        return _live_cache[1]
+    width = None
+    try:
+        import json
+        width = json.loads(session.read_text(encoding="utf-8")).get("sidebar_width")
+    except (OSError, ValueError, AttributeError):
+        pass
+    try:
+        width = int(width) if width else current()
+    except (TypeError, ValueError):
+        width = current()
+    width = max(LOW, min(HIGH, width))
+    _live_cache = (stamp, width)
+    return width
+
+
 def set_width(arg: str) -> int:
     path = herdr_config_path()
     text = path.read_text(encoding="utf-8") if path.exists() else ""

@@ -139,6 +139,14 @@ def _lock():
         return None
 
 
+def _sidebar_width() -> int | None:
+    try:
+        from . import uiwidth
+        return uiwidth.live()
+    except Exception:
+        return None
+
+
 def _code_stamp() -> float:
     return max((p.stat().st_mtime for p in (ROOT / "navigator").glob("*.py")), default=0.0)
 
@@ -253,6 +261,7 @@ class Daemon:
         code = _code_stamp()
         last_sync = last_status = last_beat = last_heal = last_view = last_code = last_work = last_pulse = 0.0
         work_sig = None
+        sidebar_width = None
         poke_seen = 0.0
         status_text = None
         threading.Thread(target=self.listen, daemon=True, name="nav-events").start()
@@ -274,6 +283,9 @@ class Daemon:
                         self.log("plugin code changed: exiting so the new code takes over")
                         self.restart = True
                         break
+                    width = _sidebar_width()  # a mouse drag sends no event: names follow within 10 s
+                    if width != sidebar_width:
+                        sidebar_width, self.want_sync = width, sidebar_width is not None or self.want_sync
                 if now - last_view >= VIEW_EVERY:
                     last_view = now
                     if sync.ensure_view():
