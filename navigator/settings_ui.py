@@ -198,10 +198,9 @@ class SettingsPane(Horizontal):
     # ---- accounts -----------------------------------------------------------------------------
     def _accounts(self) -> ComposeResult:
         yield Static("Accounts per CLI", classes="section-title")
-        yield Static("To add another account: 💾 save the current login as a profile first (so you can come "
-                     "back to it), then 🔑 sign in with the other account. The sign-in opens in a new tab; when it "
-                     "is done the Navigator offers to restart that CLI's sessions on the new login. ⇄ Switch moves "
-                     "between saved profiles without signing in again.", classes="hint", id="acct-note")
+        yield Static("Pick a saved account to switch to it; its sessions relaunch on it. A saved login that "
+                     "no longer works opens the sign-in instead. 🔑 adds another account. Logins are saved "
+                     "on their own.", classes="hint", id="acct-note")
         for cli in accounts.clis():
             with Vertical(classes="acct"):
                 with Horizontal(classes="acct-row"):
@@ -209,11 +208,9 @@ class SettingsPane(Horizontal):
                     yield Static("…", id=f"acct-who-{cli}", classes="acct-who")
                 if profiles.supported(cli):
                     with Horizontal(classes="acct-row"):
-                        yield Choice([], prompt="saved profiles", id=f"acct-prof-{cli}")
-                        yield Btn("⇄ Switch to it", id=f"acct-switch-{cli}",
-                                  tooltip="Switch to the chosen profile, then relaunch")
-                        yield Btn("💾 Save current login", id=f"acct-save-{cli}",
-                                  tooltip="Save the current login as a profile you can switch back to")
+                        yield Choice([], prompt="switch account", id=f"acct-prof-{cli}")
+                        yield Btn("💾 Save as…", id=f"acct-save-{cli}",
+                                  tooltip="Save the current login under a name of your choice")
                 with Horizontal(classes="acct-row last"):
                     yield Btn("🔑 Sign in with another account", id=f"acct-in-{cli}")
                     yield Btn("Sign out", id=f"acct-out-{cli}")
@@ -232,12 +229,13 @@ class SettingsPane(Horizontal):
             Text.assemble(("○ " if out_ else "● ", "bold red" if out_ else "bold green"), who,
                           (f"  ·  profile {act}" if act else "", "cyan")))
         sign_in = self.query_one(f"#acct-in-{cli}", Button)
-        sign_in.label = "🔑 Sign in" if out_ else "🔑 Sign in with another account"
+        sign_in.label = "🔑 Sign in" if out_ else "🔑 Add another account"
         sign_in.variant = "primary" if out_ else "default"
         self.query_one(f"#acct-out-{cli}", Button).disabled = out_
         if profiles.supported(cli):
             sel = self.query_one(f"#acct-prof-{cli}", Select)
-            sel.set_options([(f"{n}  {profiles.label(cli, n)}"[:40], n) for n in profiles.names(cli)])
+            self.acct_shown = {**getattr(self, "acct_shown", {}), cli: act}  # set here, not picked
+            sel.set_options([(profiles.label(cli, n).split(" · ")[0][:40] or n, n) for n in profiles.names(cli)])
             if act in profiles.names(cli):
                 sel.value = act
 
@@ -251,16 +249,24 @@ class SettingsPane(Horizontal):
                 self.load_accounts()
         self.app.push_screen(Prompt(f"Save the current {cli} login as profile", "e.g. work, private"), done)
 
-    def switch_profile(self, cli: str) -> None:
-        v = self.query_one(f"#acct-prof-{cli}", Select).value
-        if v is Select.NULL:
-            self.app.notify("Pick a profile first (💾 saves the current login as one).", severity="warning")
+    @on(Select.Changed)
+    def picked_profile(self, ev: Select.Changed) -> None:
+        sid = ev.select.id or ""
+        if not sid.startswith("acct-prof-") or ev.value is Select.NULL:
             return
-        msg = profiles.switch(cli, str(v))
-        self.app.notify(msg, severity="error" if msg.startswith("✗") else "information", timeout=8)
-        if msg.startswith("⇄"):
-            self.load_accounts()
-            self.app.open_relaunch(cli)
+        cli = sid[len("acct-prof-"):]
+        if str(ev.value) == getattr(self, "acct_shown", {}).get(cli):
+            return  # the dropdown showing the active profile, not a pick
+        self.acct_shown[cli] = str(ev.value)
+        self.app.notify(f"{cli}: switching to {ev.value}…", timeout=4)
+        self.switch_profile(cli, str(ev.value))
+
+    @work(thread=True, group="accounts-switch", exclusive=True)
+    def switch_profile(self, cli: str, name: str) -> None:
+        msg = accounts.switch(cli, name)
+        self.app.call_from_thread(self.app.notify, msg, severity="error" if msg.startswith("✗") else "information",
+                                  timeout=10)
+        self.app.call_from_thread(self.load_accounts)
 
     # ---- alerts -------------------------------------------------------------------------------
     def _alerts(self) -> ComposeResult:
@@ -610,8 +616,6 @@ class SettingsPane(Horizontal):
                 open_file(log)
             else:
                 self.app.notify("No restore has run yet.")
-        elif bid.startswith("acct-switch-"):
-            self.switch_profile(bid[12:])
         elif bid.startswith("acct-save-"):
             self.save_profile(bid[10:])
         elif bid.startswith("acct-in-"):

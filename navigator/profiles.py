@@ -2,9 +2,12 @@
 
 A profile is a saved copy of the files a CLI keeps its login in (`[login.<cli>] files`), plus
 named keys inside JSON files (`json_keys`, e.g. Claude's account record in ~/.claude.json).
-Switching first saves the live files back into the active profile (tokens rotate while you
-work, so the saved copy must follow), then copies the target profile in. Running sessions keep
-the old login until they are relaunched, which the Navigator offers right after a switch.
+Tokens rotate while you work (a refresh token is replaced on use, the old copy stops working),
+so a saved copy must follow the live login: `keep` saves the live files into the profile of the
+account that is signed in now (matched by email, a new profile when none matches), before every
+switch, sign-in and sign-out, and whenever the CLI rewrites its login (the daemon). Switching then
+copies the target profile in. Running sessions keep the old login until they are relaunched,
+which the Navigator does right after a switch or a sign-in.
 
 Profiles live in <state dir>/profiles/<cli>/<name>/ and never leave this machine.
 """
@@ -127,6 +130,72 @@ def _apply(cli: str, slot: Path) -> None:
         _replace(tmp, p)
 
 
+def email(who: str) -> str:
+    """The account in a status line ("a@b.de · max" -> "a@b.de"), "" when it names none."""
+    first = who.split(" · ")[0].strip().lower()
+    return first if "@" in first else ""
+
+
+def find(cli: str, who: str) -> str:
+    """The profile saved for the account in `who` (by email), else ""."""
+    want = email(who)
+    return next((n for n in names(cli) if want and email(label(cli, n)) == want), "") if want else ""
+
+
+def login_at(cli: str) -> float:
+    """When the signed-in account last changed (a switch or a sign-in): sessions started before
+    run on the previous account."""
+    return float(_meta().get(cli, {}).get("login_at", 0) or 0)
+
+
+def mark_login(cli: str, who: str) -> None:
+    m = _meta()
+    c = m.setdefault(cli, {})
+    c["login_at"], c["email"] = time.time(), email(who)
+    _save_meta(m)
+
+
+def set_email(cli: str, mail: str) -> None:
+    m = _meta()
+    m.setdefault(cli, {})["email"] = mail
+    _save_meta(m)
+
+
+def last_email(cli: str) -> str:
+    return _meta().get(cli, {}).get("email", "")
+
+
+def keep(cli: str, who: str) -> str:
+    """Save the live login into the profile of the account signed in now (`who`, its status line):
+    the matching profile, or a new one named after the email. Returns the profile name, "" when
+    nothing was saved (not signed in, no account to tell it by, or nothing to keep)."""
+    if not supported(cli) or not any(f.exists() for f in files(cli)) or who.startswith("not "):
+        return ""
+    name = find(cli, who) or slug(email(who))
+    if not name:
+        return ""
+    _capture(cli, _root(cli) / name)
+    m = _meta()
+    c = m.setdefault(cli, {})
+    c["active"] = name
+    c.setdefault("labels", {})[name] = who
+    _save_meta(m)
+    return name
+
+
+def usable(cli: str, name: str, now: float | None = None) -> bool:
+    """False when the saved login says its refresh token has expired (Claude records when);
+    a CLI that records nothing counts as usable."""
+    now = time.time() if now is None else now
+    for f in (_root(cli) / slug(name)).glob("*.json"):
+        d = _read_json(f)
+        for v in d.values() if isinstance(d, dict) else ():
+            exp = v.get("refreshTokenExpiresAt") if isinstance(v, dict) else None
+            if isinstance(exp, (int, float)) and exp / 1000 < now:
+                return False
+    return True
+
+
 def save_as(cli: str, name: str, who: str = "") -> str:
     """Save the current login of `cli` as profile `name` (and make it the active one)."""
     n = slug(name)
@@ -146,20 +215,25 @@ def save_as(cli: str, name: str, who: str = "") -> str:
     return f"💾 {cli}: saved the current login as '{n}'"
 
 
-def switch(cli: str, name: str) -> str:
+def switch(cli: str, name: str, who: str = "") -> str:
+    """Copy profile `name` in. `who` is the status line of the login live now: it is kept first,
+    into its own account's profile (never into whichever profile was marked active)."""
     n = slug(name)
     slot = _root(cli) / n
     if not slot.is_dir():
         return f"✗ no profile '{n}' for {cli}"
-    cur = active(cli)
-    if cur == n:
+    live = find(cli, who) if who else active(cli)
+    if who:
+        live = keep(cli, who) or live
+    elif live and (_root(cli) / live).is_dir():
+        _capture(cli, _root(cli) / live)
+    if live == n:
         return f"{cli}: '{n}' is already active"
-    if cur and (_root(cli) / cur).is_dir():
-        _capture(cli, _root(cli) / cur)  # keep the active login's latest (rotated) tokens
     _apply(cli, slot)
     m = _meta()
-    m.setdefault(cli, {})["active"] = n
-    m[cli]["switched_at"] = time.time()
+    c = m.setdefault(cli, {})
+    c["active"], c["switched_at"] = n, time.time()
+    c["login_at"], c["email"] = time.time(), email(label(cli, n))
     _save_meta(m)
     return f"⇄ {cli}: switched to '{n}'"
 

@@ -495,12 +495,13 @@ def _started_at(pid: int) -> float:
         return 0.0
 
 
-def _on_current_login(pane_id: str, cli: str) -> bool:
-    """Did the agent in this pane start after its CLI last wrote its credentials? Then it already
-    runs on the current sign-in. A token refresh rewrites them too, which only errs towards a
-    restart that was not needed, never towards leaving an old login running."""
-    from . import accounts
-    since = accounts.stamp(cli)
+def on_current_login(pane_id: str, cli: str) -> bool:
+    """Did the agent in this pane start after the account last changed (a switch or a sign-in:
+    profiles.login_at)? Then it already runs on the current sign-in. Without that record: after
+    its CLI last wrote its credentials, which a token refresh also does, erring towards a restart
+    that was not needed, never towards leaving an old login running."""
+    from . import accounts, profiles
+    since = profiles.login_at(cli) or accounts.stamp(cli)
     if not since:
         return False
     started = [_started_at(int(p["pid"])) for p in _foreground(pane_id) if p.get("pid")]
@@ -617,7 +618,7 @@ def relaunch_targets(cli: str = "", world: model.World | None = None, panes: lis
             continue
         if not a.in_herdr:
             out["elsewhere"].append(a)
-        elif not panes and _on_current_login(a.pane_id, a.cli):
+        elif not panes and on_current_login(a.pane_id, a.cli):
             out["current"].append(a)  # started after the last sign-in: nothing to do
         elif a.status == "working":
             out["busy"].append(a)

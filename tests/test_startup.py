@@ -432,3 +432,68 @@ def test_usage_and_settings_tabs_are_built_on_first_open():
             assert len(app.query(SettingsPane)) == 1 and app.query_one(SettingsPane).section == "logon"
 
     asyncio.run(run())
+
+
+def test_switch_keeps_the_live_login_under_its_own_account(tmp_path):
+    """The bug of 2026-10-12: a login signed in without the Navigator was never saved, and a switch
+    saved it into whichever profile was marked active. Now it goes to its own account's profile."""
+    from navigator import profiles
+    creds, acct = _login_cfg(tmp_path)
+    creds.write_text('{"token": "A1"}', encoding="utf-8")
+    acct.write_text(json.dumps({"oauthAccount": {"email": "a@x"}}), encoding="utf-8")
+    profiles.save_as("claude", "a-x", "a@x · max")
+    creds.write_text('{"token": "B1"}', encoding="utf-8")            # signed in as b@x elsewhere
+    acct.write_text(json.dumps({"oauthAccount": {"email": "b@x"}}), encoding="utf-8")
+    assert profiles.active("claude") == "a-x"                        # still marked a-x
+    assert profiles.switch("claude", "a-x", "b@x · max").startswith("⇄")
+    assert profiles.names("claude") == ["a-x", "b-x"]                # b@x got its own profile
+    assert json.loads(creds.read_text())["token"] == "A1"
+    assert profiles.email(profiles.label("claude", "b-x")) == "b@x" and profiles.login_at("claude") > 0
+    profiles.switch("claude", "b-x", "a@x · max")
+    assert json.loads(creds.read_text())["token"] == "B1"            # a-x was never overwritten with B1
+
+
+def test_profile_with_an_expired_refresh_token_is_not_usable(tmp_path):
+    from navigator import profiles
+    creds, acct = _login_cfg(tmp_path)
+    creds.write_text(json.dumps({"claudeAiOauth": {"refreshTokenExpiresAt": 1000}}), encoding="utf-8")
+    profiles.save_as("claude", "old", "o@x")
+    assert not profiles.usable("claude", "old")
+    creds.write_text(json.dumps({"claudeAiOauth": {"refreshTokenExpiresAt": 9e15}}), encoding="utf-8")
+    profiles.save_as("claude", "new", "n@x")
+    assert profiles.usable("claude", "new")
+
+
+def test_switch_to_a_dead_login_opens_the_sign_in(tmp_path, monkeypatch):
+    from navigator import accounts, profiles
+    creds, acct = _login_cfg(tmp_path)
+    creds.write_text(json.dumps({"claudeAiOauth": {"refreshTokenExpiresAt": 1000}}), encoding="utf-8")
+    profiles.save_as("claude", "old", "o@x · max")
+    creds.write_text('{"token": "L"}', encoding="utf-8")
+    calls = []
+    monkeypatch.setattr(accounts, "status", lambda cli: "l@x · max")
+    monkeypatch.setattr(accounts, "sign_in", lambda cli, expect="": calls.append(("in", expect)) or "🔑 x")
+    monkeypatch.setattr(accounts, "spawn_relaunch", lambda cli: calls.append(("relaunch", cli)))
+    assert "expired" in accounts.switch("claude", "old") and calls == [("in", "o@x")]
+    creds.write_text(json.dumps({"claudeAiOauth": {"refreshTokenExpiresAt": 9e15}}), encoding="utf-8")
+    profiles.save_as("claude", "good", "l@x · max")
+    creds.write_text('{"token": "O"}', encoding="utf-8")
+    calls.clear()
+    seq = iter(["o@x · max", "l@x · max"])                          # before the switch, then after it
+    monkeypatch.setattr(accounts, "status", lambda cli: next(seq))
+    assert accounts.switch("claude", "good").startswith("⇄") and calls == [("relaunch", "claude")]
+
+
+def test_keep_fresh_follows_a_renewed_login(tmp_path, monkeypatch):
+    from navigator import accounts, profiles
+    creds, acct = _login_cfg(tmp_path)
+    creds.write_text('{"token": "A1"}', encoding="utf-8")
+    monkeypatch.setattr(accounts, "clis", lambda: {"claude": {}})
+    monkeypatch.setattr(accounts, "status", lambda cli: "a@x · max")
+    monkeypatch.setattr(accounts, "stamp", lambda cli: creds.stat().st_mtime)
+    seen: dict = {}
+    assert accounts.keep_fresh(seen) == []                           # first look: only remembers
+    creds.write_text('{"token": "A2"}', encoding="utf-8")
+    os.utime(creds, (time.time() + 5, time.time() + 5))
+    assert accounts.keep_fresh(seen) == ["claude"]
+    assert json.loads((profiles._root("claude") / "a-x" / ".credentials.json").read_text())["token"] == "A2"

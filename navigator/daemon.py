@@ -256,12 +256,13 @@ class Daemon:
 
     # ---- the work loop ------------------------------------------------------------------------
     def run(self) -> None:
-        from . import live, model, status, sync
+        from . import accounts, live, model, status, sync
         model.SESSIONS_TTL = 10.0
         code = _code_stamp()
         last_sync = last_status = last_beat = last_heal = last_view = last_code = last_work = last_pulse = 0.0
         work_sig = None
         sidebar_width = None
+        login_seen: dict[str, float] = {}
         poke_seen = 0.0
         status_text = None
         threading.Thread(target=self.listen, daemon=True, name="nav-events").start()
@@ -299,6 +300,8 @@ class Daemon:
                     pass
                 if now - last_work >= WORK_EVERY:  # no herdr event when a background job ends
                     last_work = now
+                    for cli in accounts.keep_fresh(login_seen):  # a renewed login: the profile follows
+                        self.log(f"{cli}: login renewed, saved to its profile")
                     sig = live.work_counts(now)
                     if work_sig is not None and sig != work_sig:
                         self.want_sync = True
