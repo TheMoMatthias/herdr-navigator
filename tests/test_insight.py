@@ -352,6 +352,37 @@ def test_sync_labels_inactive_without_question(tmp_path, monkeypatch):
     assert not any(c and c[0] == "notification" for c in calls)
 
 
+def test_sync_labels_idle_with_background_work_working(tmp_path, monkeypatch):
+    """herdr says idle while a background shell still runs: its state reads "working"."""
+    from navigator import herdr, model, settings, sync
+    monkeypatch.setattr(settings, "state_dir", lambda: tmp_path)
+    (tmp_path / "replies.json").write_text("{}")
+    from types import SimpleNamespace as NS
+    proj = NS(root=str(tmp_path), name="p", label="p", worktree="")
+    a = model.Agent(cli="claude", status="working", project=proj, pane_id="w1:p1", workspace_id="w1", name="S",
+                    jobs=1, bg_working=True)
+    world = model.World([], [a], [], [], {}, "", {}, "", {})
+    monkeypatch.setattr(model, "build", lambda *k, **kw: world)
+    calls = []
+    monkeypatch.setattr(herdr, "request", lambda m, p, **kw: calls.append((m, p)) or {})
+    monkeypatch.setattr(herdr, "run", lambda *args, **kw: calls.append(args) or {})
+    monkeypatch.setattr(sync, "agent_tree", lambda agents, folded=None: [])
+    sync.sync(force=True)
+    labels = [p for m, p in calls if m == "pane.report_metadata" and "state_labels" in p]
+    assert labels and labels[0]["state_labels"] == {"idle": "working"}
+
+
+def test_claude_shell_status_counts_as_a_job():
+    """Claude Code's registry says "shell" while a background shell runs after the turn: one job,
+    even when the transcript scan did not see it start."""
+    from navigator import live
+    r = live.Running(cli="claude", session_id="s", name="", cwd="", status="shell")
+    assert live._jobs(r, live.Background()) == 1
+    assert live._jobs(r, live.Background(jobs=2)) == 2
+    r.status = "idle"
+    assert live._jobs(r, live.Background()) == 0
+
+
 def test_flush_splits_reports_at_herdrs_token_limit(monkeypatch):
     from navigator import herdr, sync
     calls = []

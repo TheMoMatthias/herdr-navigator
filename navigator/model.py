@@ -46,6 +46,7 @@ class Agent:
     context: "insight.Context | None" = None  # how full its context window is
     waiting_since: float = 0.0   # when it last spoke, for agents that wait on you
     seq: int = 0                 # herdr's state_change_seq: higher = changed state more recently
+    bg_working: bool = False     # herdr says idle, but background work runs: shown as working
 
     @property
     def in_herdr(self) -> bool:
@@ -354,6 +355,8 @@ def build(with_sessions: bool = True) -> World:
         a.question = asks.pending(a.cli, a.transcript)
         if a.question:
             a.status = "blocked"
+        elif a.status == "idle" and work_count(a):  # its turn ended, a shell or agent still runs
+            a.status, a.bg_working = "working", True
         if a.status in NEEDS_YOU:
             a.waiting_since = insight.last_answer_at(a.cli, a.transcript)
         elif a.status == "idle" and inactive_after and not a.focused                 and now - last_write(s, a.transcript) > inactive_after:
@@ -365,6 +368,15 @@ def build(with_sessions: bool = True) -> World:
         key=lambda v: (not v.in_sidebar, -v.attention(), not v.pinned, -v.last_activity, v.project.name.lower()),
     )
     return World(ordered, agents, workspaces, sessions, live_sessions, focused_ws, tab_labels, err, _SNAP)
+
+
+def work_count(a) -> int:
+    """Everything a session has running in the background, one number for every CLI: its own
+    sub-agents plus its background tasks (shell jobs, monitors, dynamic workflows; a workflow's
+    agents belong to its task, and an agent another agent spawned to that agent: neither is
+    counted again)."""
+    own = sum(1 for s in a.subagents if not getattr(s, "workflow", "") and not getattr(s, "parent", ""))
+    return own + getattr(a, "workflows", 0) + getattr(a, "jobs", 0)
 
 
 # What runs now is always on top, then who waits on you, then what ran last: within each group

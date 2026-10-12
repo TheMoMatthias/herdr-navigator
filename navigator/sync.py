@@ -160,13 +160,7 @@ def ctx_mark(a) -> str:
     return c.bar() + CTX_LEVEL[c.level] if c else ""
 
 
-def work_count(a) -> int:
-    """Everything a session has running in the background, one number for every CLI: its own
-    sub-agents plus its background tasks (shell jobs, monitors, dynamic workflows; a workflow's
-    agents belong to its task, and an agent another agent spawned to that agent: neither is
-    counted again)."""
-    own = sum(1 for s in a.subagents if not getattr(s, "workflow", "") and not getattr(s, "parent", ""))
-    return own + getattr(a, "workflows", 0) + getattr(a, "jobs", 0)
+work_count = model.work_count
 
 
 def room(chrome: int, floor: int) -> int:
@@ -408,6 +402,8 @@ def sync(force: bool = False) -> None:
             label, states = "question", ("idle", "done", "working", "blocked")
         elif a.status == "inactive":  # herdr says idle; its Agents panel and pane border say inactive
             label, states = "inactive", ("idle",)
+        elif a.bg_working:  # herdr says idle while a background shell or agent still runs
+            label, states = "working", ("idle",)
         else:
             label, states = "", ()
         k = f"pane:{a.pane_id}:state-label"

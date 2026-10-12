@@ -278,8 +278,14 @@ def work_counts(now: float) -> list[tuple[str, int, int, int]]:
             bg = background(tr, r.started_at)
             own = [f for f, _ in _subagent_files(tr, now, bg.agents, bg.runs)
                    if not _workflow_of(f) and not _meta(f).get("parentAgentId")]
-            out.append((r.session_id, len(own), len(bg.runs), bg.jobs))
+            out.append((r.session_id, len(own), len(bg.runs), _jobs(r, bg)))
     return out + _codex_counts(now)
+
+
+def _jobs(r: "Running", bg: Background) -> int:
+    """Background jobs: Claude Code's own registry says "shell" while one runs after the turn
+    ended, so a job launched before the scanned tail of a long transcript still counts."""
+    return max(bg.jobs, 1 if r.status == "shell" else 0)
 
 
 _TRANSCRIPTS: dict[str, str] = {}
@@ -381,7 +387,7 @@ def running(sessions: list[Session]) -> list[Running]:
             r.activity = activity(r.transcript)
             if r.cli == "claude":
                 bg = background(r.transcript, r.started_at)
-                r.jobs, r.workflows = bg.jobs, len(bg.runs)
+                r.jobs, r.workflows = _jobs(r, bg), len(bg.runs)
                 r.subagents = claude_subagents(r.transcript, now, bg.agents, bg.runs)
             elif r.cli == "codex":
                 r.jobs = codex_jobs(r.transcript, now)
