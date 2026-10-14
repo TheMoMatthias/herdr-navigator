@@ -653,6 +653,37 @@ def test_dynamic_workflow_and_its_agents_counted(tmp_path):
     assert live.background(str(tr)).runs == set()
 
 
+def test_workflow_counts_once_whatever_runs_inside_it(tmp_path):
+    """A workflow's agents launch shells and background agents of their own (sidechain records in
+    their transcripts): the session still counts one workflow, and nothing else."""
+    tr = tmp_path / "S.jsonl"
+    jl(tr, [{"type": "user", "timestamp": "2026-10-09T10:00:00Z", "toolUseResult": {
+        "status": "async_launched", "taskId": "w1", "taskType": "local_workflow", "runId": "wf_1"}},
+        {"type": "user", "isSidechain": True, "timestamp": "2026-10-09T10:01:00Z",
+         "toolUseResult": {"backgroundTaskId": "b9"}},
+        {"type": "user", "isSidechain": True, "timestamp": "2026-10-09T10:01:00Z",
+         "toolUseResult": {"status": "async_launched", "agentId": "a9"}}])
+    run = tr.with_suffix("") / "subagents" / "workflows" / "wf_1"
+    for n in range(4):
+        jl(run / f"agent-x{n}.jsonl", [{"type": "user"}])
+    b = live.background(str(tr))
+    assert (b.jobs, b.agents, b.runs) == (0, set(), {"wf_1"})
+    from navigator import model, sync
+    a = model.Agent("claude", "working", projects.Project("/r", "R"), name="L", pane_id="p", workflows=1,
+                    subagents=live.claude_subagents(str(tr), time.time(), b.agents, b.runs))
+    assert sync.work_mark(a) == "↳1"
+
+
+def test_a_long_transcripts_old_workflow_still_counts(tmp_path, monkeypatch):
+    """The first look reads the whole transcript: a workflow launched long before still runs."""
+    tr = tmp_path / "S.jsonl"
+    jl(tr, [{"type": "user", "timestamp": "2026-10-09T10:00:00Z", "toolUseResult": {
+        "status": "async_launched", "taskId": "w1", "taskType": "local_workflow", "runId": "wf_1"}}]
+       + [{"type": "assistant", "pad": "x" * 1000}] * 50)
+    monkeypatch.setattr(live, "_BG", {})
+    assert live.background(str(tr)).runs == {"wf_1"}
+
+
 def test_stopped_workflow_no_longer_counted(tmp_path):
     tr = tmp_path / "S.jsonl"
     launch = lambda tid, run: {"type": "user", "timestamp": "2026-10-09T10:00:00Z", "toolUseResult": {

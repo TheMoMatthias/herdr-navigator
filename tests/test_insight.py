@@ -377,28 +377,10 @@ def test_claude_shell_status_counts_as_a_job():
     even when the transcript scan did not see it start."""
     from navigator import live
     r = live.Running(cli="claude", session_id="s", name="", cwd="", status="shell", pid=7)
-    assert live._jobs(r, live.Background(), {}) == 1
-    assert live._jobs(r, live.Background(jobs=2), {}) == 2
+    assert live._jobs(r, live.Background()) == 1
+    assert live._jobs(r, live.Background(jobs=2)) == 2
     r.status = "idle"
-    assert live._jobs(r, live.Background(), {}) == 0
-
-
-def test_shells_under_the_cli_count_as_jobs(monkeypatch):
-    """Shells a sub-agent left running are in no transcript: the process tree counts them, less
-    the busy session's own foreground command; brief ones (statusline, hooks) do not count."""
-    import time
-    from navigator import live, restore
-    now = time.time()
-    table = [(11, 7, "bash.exe"), (12, 7, "bash.exe"), (13, 7, "node.exe"), (14, 7, "pwsh"),
-             (15, 7, "bash.exe"), (16, 9, "bash")]
-    monkeypatch.setattr(live, "process_table", lambda: table)
-    monkeypatch.setattr(restore, "_started_at", lambda pid: now - (1 if pid == 15 else 60))
-    shells = live.child_shells({7, 9}, now)
-    assert shells == {7: 3, 9: 1}
-    r = live.Running(cli="claude", session_id="s", name="", cwd="", status="idle", pid=7)
-    assert live._jobs(r, live.Background(), shells) == 3
-    r.status = "busy"
-    assert live._jobs(r, live.Background(), shells) == 2
+    assert live._jobs(r, live.Background()) == 0
 
 
 def test_flush_splits_reports_at_herdrs_token_limit(monkeypatch):

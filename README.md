@@ -322,10 +322,10 @@ Always visible in herdr:
   monitor) and a dynamic workflow count from their start until their completion notice, and a
   running workflow's agents belong to its task and are not counted twice; a background sub-agent counts until it finishes, even when
   it is quiet; a foreground one while its transcript is being written. Jobs from before a
-  session restarted died with it and are not counted. Shells still running under the session's
-  process count too (also those a finished sub-agent left behind, which no transcript records),
-  so `↳` matches the "N shells" in Claude Code's footer. A session that is idle while any of
-  this runs reads `working`. The daemon checks every 2 s, reading only new transcript lines.
+  session restarted died with it and are not counted. `↳` counts what the session itself
+  started: a workflow is one, however many agents, shells and background agents run inside it,
+  and so is a sub-agent with whatever it launches. A session that is idle while any of this
+  runs reads `working`. The daemon checks every 2 s, reading only new transcript lines.
 - **Codex** gets the same marks: its sub-agents (child threads, named by their nickname) count
   while their turn runs, and a background process (`exec_command` that keeps running) counts
   in `↳` until a poll reports its exit code. Other CLIs show their state only.
