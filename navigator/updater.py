@@ -2,7 +2,7 @@
 
 `check()` fetches and says how far behind (and ahead) the checkout is and what is new;
 `update()` fast-forwards to the latest version, never over local changes or local commits,
-and re-runs the bootstrap when the dependencies changed.
+re-runs the bootstrap when the dependencies changed, and rewrites herdr's key bindings from the new code.
 """
 from __future__ import annotations
 
@@ -105,6 +105,10 @@ def update() -> str:
         boot = subprocess.run([shutil.which("python") or shutil.which("python3") or sys.executable, "bootstrap.py"],
                               cwd=str(ROOT), capture_output=True, text=True, timeout=600, creationflags=_NO_WINDOW)
         note = "; dependencies refreshed" if boot.returncode == 0 else "; ✗ dependency refresh failed: run bootstrap.py"
+    # the new code may bind its keys differently (F1 became a pane, not a popup): rewrite herdr's config with it
+    keys = subprocess.run([sys.executable, "-m", "navigator.setup", "install"], cwd=str(ROOT), capture_output=True,
+                          text=True, encoding="utf-8", timeout=120, creationflags=_NO_WINDOW)
+    note += "" if keys.returncode == 0 else "; ✗ key bindings not refreshed: run `python -m navigator.setup install`"
     return f"Updated {st.version} → {installed_version()} ({st.behind} change{'s' * (st.behind != 1)}){note}."
 
 

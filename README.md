@@ -388,7 +388,9 @@ overwritten.
 
 **Updates** (⚙ Settings › Updates) checks GitHub for a newer version, lists what changed and
 updates with one click. It only fast-forwards: local changes or local commits stop it, so
-nothing of yours is overwritten. Reopen the Navigator afterwards.
+nothing of yours is overwritten. It also rewrites herdr's key bindings from the new version, so a
+changed key (F1 opening a pane, not a popup) applies at once. Reopen the Navigator afterwards.
+Updated with `git pull` instead? Run `python -m navigator.setup install` once afterwards.
 
 The common settings are in the Navigator itself (⚙ Settings, key `6` or `F9`). Everything else is in
 `navigator.toml` in the plugin's config directory (`herdr plugin config-dir momatthias.navigator`;
