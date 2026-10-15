@@ -64,6 +64,11 @@ The first command clones the repo and builds a private `.venv` with Textual. The
 the keys, the status bar and the sidebar layout to herdr's `config.toml` and reloads it.
 **Then press `F1`.**
 
+You don't have to repeat the second command after an install or an update: the Navigator's
+background process and herdr's startup hook re-run setup by themselves whenever the plugin's
+code or folder changed, so new key bindings apply within seconds. After `uninstall-config` that
+stops until you run setup yourself again.
+
 Setup never overwrites a setting you already have. If you bound a key yourself, it only adds
 the direct chord next to your binding. It backs up `config.toml` once
 (`config.toml.before-navigator.bak`) and records what it added, so you can remove exactly that:
@@ -390,7 +395,7 @@ overwritten.
 updates with one click. It only fast-forwards: local changes or local commits stop it, so
 nothing of yours is overwritten. It also rewrites herdr's key bindings from the new version, so a
 changed key (F1 opening a pane, not a popup) applies at once. Reopen the Navigator afterwards.
-Updated with `git pull` instead? Run `python -m navigator.setup install` once afterwards.
+Updated with `git pull` instead? The keys follow by themselves once the background process restarts on the new code (about 10 s); `python -m navigator.setup install` does it at once.
 
 The common settings are in the Navigator itself (⚙ Settings, key `6` or `F9`). Everything else is in
 `navigator.toml` in the plugin's config directory (`herdr plugin config-dir momatthias.navigator`;

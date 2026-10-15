@@ -9,6 +9,9 @@ Your own settings always win: a key you already set is left alone (a direct chor
 """
 from __future__ import annotations
 
+import contextlib
+import hashlib
+import io
 import json
 import os
 import shutil
@@ -189,6 +192,49 @@ def status_command() -> str:
 
 def _added_file() -> Path:
     return settings.state_dir() / "setup-added.json"
+
+
+def _stamp_file() -> Path:
+    return settings.state_dir() / "setup-stamp.json"
+
+
+def _off_file() -> Path:
+    return settings.state_dir() / "setup-off"
+
+
+def _stamp() -> str:
+    """What the config should hold follows from this code and from where the plugin lives."""
+    h = hashlib.sha256(str(ROOT).encode())
+    for name in ("setup.py", "sync.py"):
+        h.update((Path(__file__).parent / name).read_bytes())
+    return h.hexdigest()
+
+
+def ensure() -> str:
+    """Bring herdr's config up to date with this code, once per version and place.
+
+    Pulling or installing the plugin changes its code but not config.toml, which still binds the
+    keys of the old version. Called when the daemon starts (it restarts itself on new code) and
+    when herdr starts, so an install or update fixes the keys by itself, with no step for the
+    user. Skipped after `setup uninstall` (the user took it out); `setup install` turns it back on.
+    Returns what it did, "" when nothing was needed."""
+    if os.environ.get("PYTEST_CURRENT_TEST") and not os.environ.get("HERDR_CONFIG_PATH"):
+        return ""  # a test must never reach the real config
+    try:
+        if _off_file().exists():
+            return ""
+        stamp = _stamp()
+        if json.loads(_stamp_file().read_text(encoding="utf-8")).get("stamp") == stamp:
+            return ""
+    except (OSError, ValueError):
+        stamp = _stamp()
+    out = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out):
+            rc = main(["install"])
+    except Exception as e:
+        return f"setup: key bindings not refreshed: {e!r}"
+    return "setup: key bindings refreshed" if rc == 0 else "setup: " + out.getvalue().strip()[:200]
 
 
 def _inline(d: dict) -> InlineTable:
@@ -377,6 +423,13 @@ def main(argv: list[str] | None = None) -> int:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(out, encoding="utf-8")
     _added_file().write_text(json.dumps(added), encoding="utf-8")
+    try:
+        if mode == "uninstall":
+            _off_file().write_text("taken out on purpose: the daemon does not put it back", encoding="utf-8")
+        else:
+            _off_file().unlink(missing_ok=True)
+    except OSError:
+        pass
     herdr = os.environ.get("HERDR_BIN_PATH") or shutil.which("herdr") or "herdr"
     check = subprocess.run([herdr, "config", "check"], capture_output=True, text=True, encoding="utf-8")
     ok = "ok" in (check.stdout + check.stderr).lower() and "issue" not in (check.stdout + check.stderr).lower()
@@ -385,6 +438,11 @@ def main(argv: list[str] | None = None) -> int:
         print("herdr rejected the new config, restored the previous file:\n" + check.stdout + check.stderr)
         return 1
     subprocess.run([herdr, "server", "reload-config"], capture_output=True, text=True)
+    if mode == "install":
+        try:
+            _stamp_file().write_text(json.dumps({"stamp": _stamp()}), encoding="utf-8")
+        except OSError:
+            pass
     print(f"{mode}ed: {path}" + (f"\nbackup: {backup}" if backup.exists() else ""))
     for n in notes:
         print("note:", n)

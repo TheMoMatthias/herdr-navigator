@@ -274,7 +274,11 @@ def _resumed_at() -> float:
 
 def on_server_start() -> None:
     """The plugin's startup hook: panes first, then the usual sync."""
-    from . import sync
+    from . import setup, sync
+    try:
+        setup.ensure()  # keys follow the installed code, also where no daemon ran to do it
+    except Exception as e:
+        log(f"setup failed: {e}")
     try:
         time.sleep(2)  # let the restored shells come up
         summary = resume_panes()

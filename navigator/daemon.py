@@ -260,6 +260,15 @@ class Daemon:
                     except OSError:
                         pass
 
+    def _setup(self) -> None:
+        """New plugin code (an install or an update) means new key bindings: write them."""
+        try:
+            from . import setup
+            if msg := setup.ensure():
+                self.log(msg)
+        except Exception as e:
+            self.log(f"setup: {e!r}")
+
     def on_event(self, kind: str, msg: dict | None = None) -> None:
         kind = kind.replace("_", ".", 1) if "." not in kind else kind  # pane_closed -> pane.closed
         if kind == "pane.focused":  # "where you were last" (F7), instead of a hook process per focus
@@ -296,6 +305,7 @@ class Daemon:
         status_text = None
         threading.Thread(target=self.listen, daemon=True, name="nav-events").start()
         self.log(f"started (pid {os.getpid()})")
+        threading.Thread(target=self._setup, daemon=True, name="nav-setup").start()
         while not self.stop:
             now = time.time()
             try:
