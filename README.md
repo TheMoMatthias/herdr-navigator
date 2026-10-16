@@ -7,9 +7,10 @@ everything your coding agents are doing:
   their repo and show up as indented children in the sidebar, and every session inside a
   Space gets its own indented row under it (`├ ⏳ STORAGE`), tabs included. herdr's Agents panel is
   nested the same way: a heading per project (`▾ AlgoTrader ⏳1 ○5`), its agents below as
-  `├─ ! STORAGE · question`, one line per session (the worktree shows in Spaces), the project with
+  `├─ ! STORAGE`, one line per session (the worktree shows in Spaces), the project with
   what is running first, then whoever needs you (`!` waits on you), then the
-  most recently active. Spaces follow the same order (a repo moves with its worktree Spaces;
+  most recently active. Under each project heading a status label (`◐ working 3`,
+  `! needs you 1`, `✓ done 1`, `○ idle 5`) heads its sessions, indented below it; done turns idle once you visit the session. Spaces follow the same order (a repo moves with its worktree Spaces;
   ⚙ Settings › General turns that off). Fold a project with `F10` / `Ctrl+B › F` (the focused
   pane's project) or `Ctrl+B › Shift+F` (every project), or the pane menu (`F5`). herdr's
   right-click menus take no plugin entries, so those are the ways in; folding in the Navigator's
@@ -270,7 +271,7 @@ presses Enter / Esc / Stop from `☰ ▾`, in every selected agent at once.
 - **Context gauge.** Agents has a `Ctx` column with a 4-cell bar of the tokens in use against
   the point where that session compacts: the CLI's auto-compact setting (Claude Code
   `autoCompactWindow`, per model under `modelSettings` or global, project settings included;
-  Codex `model_auto_compact_token_limit`), else the model's window. It shows the tokens in use (`▰▰▱▱ 418K`): green while roomy, yellow from 200K, red from 700K (or from
+  Codex `model_auto_compact_token_limit`), else the model's window. It shows the tokens in use (`▰▰▱▱ 418K`): grey while roomy (green in the Navigator), yellow from 200K, red from 700K (or from
   70% / 85% of a smaller window; `warn_at` / `full_at` in `[context]`). herdr's sidebar shows the same
   coloured bar after every session, and the top bar names the full ones. `⇣` sends
   `/compact` to the ticked agents, or to the selected one. Windows come from `[context]` (by model

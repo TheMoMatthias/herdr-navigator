@@ -201,12 +201,26 @@ def session_rows(label: str, agents: list, folded: bool = False) -> list[tuple[s
     return [(("└─ " if i == len(lines) - 1 else "├─ ") + t, w) for i, (t, w) in enumerate(lines)]
 
 
+# Status bands inside a project in herdr's Agents panel: its sessions nest under one sub-heading
+# per band, so what runs, what waits for you and what is idle read apart without the colours.
+# done: finished while you were away; herdr turns it idle once you visit the session.
+BANDS = {"working": "working", "blocked": "needs you", "reply": "needs you", "done": "done"}
+BAND_ICON = {"working": "◐", "needs you": "!", "done": "✓", "idle": "○"}
+
+
+def band(a) -> str:
+    return BANDS.get(a.status, "idle")
+
+
 def agent_tree(agents: list, folded: dict | None = None) -> list[tuple]:
-    """herdr's Agents panel as a tree: (agent, order, heading, line, lane, hidden, tally) per agent
-    in herdr; the heading carrier also gets the tally (side_counts, "+N folded"). Projects come in the order of their most urgent agent, agents by model.rank (running,
-    then needs you, then idle; the most recent state change first). The first shown agent of
-    a project carries the project heading row. A folded project shows only the agents that need
-    you (or its first agent, to carry the heading)."""
+    """herdr's Agents panel as a tree: (agent, order, heading, line, band, hidden, tally) per agent
+    in herdr; the heading carrier also gets the tally (side_counts, "+N folded"). Projects come in
+    the order of their most urgent agent, agents by model.rank (running, then needs you, then idle;
+    the most recent state change first). The first shown agent of a project carries the project
+    heading row. Its agents sit under a status label per band (working, needs you, done,
+    idle; inactive counts as idle), "◐ working 3", carried by the band's first agent, each band
+    an indented ├─/└─ list. A
+    folded project shows only the agents that need you (or its first agent, to carry the heading)."""
     folded = folded or {}
     agents = [a for a in agents if a.in_herdr]
     first: dict[str, tuple] = {}
@@ -222,17 +236,23 @@ def agent_tree(agents: list, folded: dict | None = None) -> list[tuple]:
         if a not in shown:
             out.append((a, f"{i:04d}", "", "", "", True, ""))
             continue
-        last = a is shown[-1]
         head = tally = ""
         if a is shown[0]:
             more = len(group) - len(shown)
             head = f"{'▸' if shut else '▾'} {a.project.name[:room(14, 30)]}"
             tally = "  ".join(filter(None, (side_counts(group), f"+{more} folded" if more else "")))
-        # herdr indents an entry's 2nd and later rows by two columns: the heading carrier's line is
-        # its 2nd row, so every other agent's line (its 1st row) gets the same two-column pad
-        line = (PAD * 2 if not head else "") + f"{'└─' if last else '├─'} {SIDE_ICON.get(a.status, '·')} {a.display[:room(24, 34)]}"
-        lane = ""  # no worktree row (setup.AGENT_ROWS); "" clears one sent by an older version
-        out.append((a, f"{i:04d}", head, line, lane, False, tally))
+        mine = [x for x in shown if band(x) == band(a)]
+        # a status label over each band ("◐ working 3"), its sessions indented under it
+        sub = f"{BAND_ICON[band(a)]} {band(a)} {len(mine)}" if a is mine[0] else ""
+        line = PAD * 2 + f"{'└─' if a is mine[-1] else '├─'} {SIDE_ICON.get(a.status, '·')} {a.display[:room(26, 34)]}"
+        # herdr indents an entry's 2nd and later rows by two columns: whichever row comes first in
+        # an entry without the heading gets the same two-column pad, so every row lines up
+        if not head:
+            if sub:
+                sub = PAD * 2 + sub
+            else:
+                line = PAD * 2 + line
+        out.append((a, f"{i:04d}", head, line, sub, False, tally))
     return out
 
 
@@ -435,7 +455,7 @@ def sync(force: bool = False) -> None:
 
     # herdr's Agents panel, nested by project: heading row, ├/└ branches (one line per session, no worktree row)
     working = {a.project.root for a in world.agents if a.in_herdr and a.status == "working"}
-    for a, order, head, line, lane, hidden, tally in agent_tree(world.agents, folded):
+    for a, order, head, line, sub, hidden, tally in agent_tree(world.agents, folded):
         _report("pane", a.pane_id, "hide", "1" if hidden else "", old, sent, seq)
         _report("pane", a.pane_id, "order", order, old, sent, seq)
         _report("pane", a.pane_id, "grp", head, old, sent, seq)
@@ -443,8 +463,8 @@ def sync(force: bool = False) -> None:
         _report("pane", a.pane_id, "gcount", tally, old, sent, seq)
         _report("pane", a.pane_id, "line", line, old, sent, seq)
         _report("pane", a.pane_id, "ctx", ctx_mark(a), old, sent, seq)
-        _report("pane", a.pane_id, "lane", lane, old, sent, seq)
-        for gone in ("since", "cli"):  # "" clears what an earlier build sent
+        _report("pane", a.pane_id, "band", sub, old, sent, seq)
+        for gone in ("since", "cli", "lane", "gap"):  # "" clears what an earlier build sent
             _report("pane", a.pane_id, gone, "", old, sent, seq)
     if force:  # otherwise the daemon checks every VIEW_EVERY: each probe redraws herdr's UI
         ensure_view()

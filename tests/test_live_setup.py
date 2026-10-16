@@ -336,16 +336,28 @@ def test_agent_panel_tree_groups_by_project_most_urgent_first():
     assert [r[0] for r in rows] == ["A2", "A1", "B2", "B1"]   # Alpha first: it holds the agent that runs
     assert rows[0][2] == "▾ Alpha" and rows[1][2] == "" and rows[2][2] == "▾ Beta"
     assert rows[0][6] == "" and rows[2][6] == "?1" and rows[1][6] == ""  # working is the pulse, idle not counted
-    assert rows[0][3] == "├─ ◐ A2" and rows[1][3] == sync.PAD * 2 + "└─ ○ A1"
-    assert rows[2][3] == "├─ ? B2" and rows[3][3] == sync.PAD * 2 + "└─ ○ B1"
-    assert rows[2][4] == "" and rows[3][4] == ""  # no worktree row: it read as a duplicate name
+    # a status label over each band, carried by its first agent; its sessions indented under it
+    P = sync.PAD
+    assert rows[0][4] == "◐ working 1" and rows[0][3] == P * 2 + "└─ ◐ A2"
+    assert rows[1][4] == P * 2 + "○ idle 1" and rows[1][3] == P * 2 + "└─ ○ A1"
+    assert rows[2][4] == "! needs you 1" and rows[2][3] == P * 2 + "└─ ? B2"
+    assert rows[3][4] == P * 2 + "○ idle 1" and rows[3][3] == P * 2 + "└─ ○ B1"
     assert [r[1] for r in rows] == ["0000", "0001", "0002", "0003"]
     assert all(ch not in "".join(r[2] + r[3] + r[4] for r in rows) for ch in "⏳✔⚠⎇")   # no wide glyphs
     # folded: only who needs you stays, else the first agent carries the heading
     f = {r[0]: r for r in [(x[0].display,) + tuple(x[1:]) for x in sync.agent_tree(agents, {"/b": True, "/a": True})]}
     assert not f["B2"][5] and f["B1"][5] and f["B2"][2] == "▸ Beta" and f["B2"][6] == "?1  +1 folded"
-    assert f["B2"][3] == "└─ ? B2"
+    assert f["B2"][3] == sync.PAD * 2 + "└─ ? B2" and f["B2"][4] == "! needs you 1"   # one band: its label still shows
     assert not f["A2"][5] and f["A1"][5] and f["A2"][2].startswith("▸ Alpha")
+
+
+def test_agent_panel_one_band_still_shows_its_label():
+    from navigator import model, sync
+    p = projects.Project("/a", "Alpha")
+    agents = [model.Agent("claude", st, p, name=n, pane_id=n) for n, st in (("X", "idle"), ("Y", "inactive"))]
+    rows = sync.agent_tree(agents)
+    assert [r[4] for r in rows] == ["○ idle 2", ""]   # a lone working session still says working
+    assert rows[0][3] == sync.PAD * 2 + "├─ ○ X" and rows[1][3] == sync.PAD * 4 + "└─ ◌ Y"
 
 
 def test_rank_puts_running_then_needs_you_then_most_recent():
@@ -557,11 +569,25 @@ def test_tree_rows_use_one_style_for_every_branch():
     assert len(tree) == 9 and all(c == {"token": c["token"], **setup.TREE} for c in tree)
 
 
-def test_state_words_have_distinct_colours():
-    rules = setup.STATE_TEXT["rules"]
-    fg = {r["contains"]: r["fg"] for r in rules}
-    assert len({fg["working"], fg["idle"], fg["done"], fg["reply"]}) == 4
-    assert [r["contains"] for r in rules].index("reply") < [r["contains"] for r in rules].index("working")
+def test_bands_have_distinct_colours_and_rows_no_status_word():
+    # brightness, not hue: only "needs you" is coloured, idle dimmed; a roomy context bar is grey
+    fg = {r["contains"]: r["fg"] for r in setup.BAND_TOKEN["rules"]}
+    assert set(fg) == {"needs you", "idle"} and "fg" not in setup.BAND_TOKEN
+    assert setup.CTX_TOKEN("$ctx")["fg"] == setup.MUTED and setup.WORK_TOKEN("$w")["fg"] == setup.MUTED
+    doc = tomlkit.document()
+    setup.install(doc, {})
+    assert doc["ui"]["sidebar"]["agents"]["row_gap"] == 0
+    assert all(c != "state_text" and (not isinstance(c, dict) or c.get("token") != "state_text")
+               for row in setup.AGENT_ROWS for c in row)
+
+
+def test_done_has_its_own_band_and_inactive_joins_idle():
+    from navigator import model, sync
+    p = projects.Project("/a", "Alpha")
+    agents = [model.Agent("claude", st, p, name=n, pane_id=n)
+              for n, st in (("W", "working"), ("Q", "blocked"), ("D", "done"), ("I", "idle"), ("Z", "inactive"))]
+    bands = [r[4].replace(sync.PAD, "") for r in sync.agent_tree(agents) if r[4]]
+    assert bands == ["◐ working 1", "! needs you 1", "✓ done 1", "○ idle 2"]
 
 
 def _notice(tid, status):

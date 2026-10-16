@@ -101,13 +101,13 @@ TREE = {"fg": MUTED}
 # A session's context (sync.ctx_mark): a 4-cell bar, green; the level's zero-width spaces turn
 # it yellow (one) or red (two).
 def CTX_TOKEN(name: str) -> dict:
-    return {"token": name, "fg": "#56d364", "rules": [{"contains": sync.ZW * 2, "fg": "#fb4934", "bold": True},
+    return {"token": name, "fg": MUTED, "rules": [  # grey while roomy: colour only when it fills{"contains": sync.ZW * 2, "fg": "#fb4934", "bold": True},
                                                       {"contains": sync.ZW, "fg": "#fabd2f"}]}
 
 
 # What a session has running besides itself (sync.work_mark): ↳N sub-agents and background tasks.
 def WORK_TOKEN(name: str) -> dict:
-    return {"token": name, "fg": "#83a598"}
+    return {"token": name, "fg": MUTED}
 
 
 # The pulsing "working" dot after a project's name (sync.PULSE_FRAMES): cyan, the frame's
@@ -142,18 +142,18 @@ SPACE_ROWS = [
 # worktree shows in the Spaces panel and in the Navigator.
 # The state word carries the colour, one clearly different hue per state: working bright and
 # bold, idle a calm grey that recedes, done green, anything waiting on you orange.
-STATE_TEXT = {"token": "state_text", "fg": MUTED, "rules": [
-    {"contains": "question", "ignore_case": True, "fg": "#fe8019", "bold": True},
-    {"contains": "reply", "ignore_case": True, "fg": "#fe8019", "bold": True},
-    {"contains": "blocked", "ignore_case": True, "fg": "#fe8019", "bold": True},
-    {"contains": "working", "ignore_case": True, "fg": "#fabd2f", "bold": True},
-    {"contains": "done", "ignore_case": True, "fg": "#56d364"},
-    {"contains": "idle", "ignore_case": True, "fg": "#7c6f64"},
-    {"contains": "inactive", "ignore_case": True, "fg": "#504945"},
+# The Agents panel ranks by brightness, not hue: the project heading bright and bold, a status
+# label (sync.agent_tree) in the normal text colour, idle dimmed; its symbol (◐ ✓ ○) tells the states
+# apart. Colour is kept for what wants you: "needs you" (orange), a filling context bar (yellow,
+# red) and the working pulse. The session rows under a label are plain.
+BAND_TOKEN = {"token": "$band", "rules": [
+    {"contains": "needs you", "fg": "#fe8019", "bold": True},
+    {"contains": "idle", "fg": "#7c6f64"},
 ]}
 AGENT_ROWS = [
     [{"token": "$grp", "bold": True}, {"token": "$gcount", "dim": True}, PULSE_TOKEN("$gpulse")],
-    [{"token": "$line", **TREE}, CTX_TOKEN("$ctx"), STATE_TEXT, WORK_TOKEN("$subagents")],
+    [BAND_TOKEN],  # the status label over each band of sessions
+    [{"token": "$line", **TREE}, CTX_TOKEN("$ctx"), WORK_TOKEN("$subagents")],
 ]
 
 
@@ -305,6 +305,8 @@ def install(doc, added: dict) -> list[str]:
                 sec = tomlkit.table()
                 sidebar[name] = sec
             sec["rows"] = _rows(rows)
+            if name == "agents":
+                sec["row_gap"] = 0  # no blank between entries: the numbered status labels set the groups apart
             if name == "agents" and "rows_by_agent" in sec:
                 del sec["rows_by_agent"]  # per-CLI line colours from an earlier build: one colour for all
             added.setdefault("sidebar", []).append(name)
