@@ -135,6 +135,9 @@ def resume(world: World, s: Session, focus: bool = True) -> str:
                 "Resuming it twice would fork the conversation: exit it there, then resume here.")
     if not os.path.isdir(s.cwd):
         return f"✗ {s.cwd} no longer exists (worktree removed?)"
+    if s.empty and s.cli == "claude":  # e.g. spawned with the parent's session env: Claude kept no transcript
+        return (f"✗ '{s.title}' has no saved conversation (only its sub-agents' were written), "
+                "so Claude can't resume it: start a new session instead")
     from . import startup
     cmd = startup.launch_command(s.cli, s.id, s.title if s.named else "",
                                  startup.prefs_of(f"{s.cli}:{s.id}"))

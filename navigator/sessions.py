@@ -19,7 +19,7 @@ from . import projects, settings
 
 HEAD_BYTES = 96 * 1024
 TAIL_BYTES = 256 * 1024
-CACHE_VERSION = 11  # bumped: Droid and Cursor Agent readers
+CACHE_VERSION = 12  # bumped: Claude transcripts with no conversation are marked
 
 
 @dataclass
@@ -35,6 +35,7 @@ class Session:
     subagent: bool = False
     origin: str = ""    # e.g. "cli", "Codex Desktop"
     named: bool = False  # title is a name the user/provider gave it, not a first prompt
+    empty: bool = False  # no conversation in the file: `claude --resume` answers "No conversation found"
 
     @property
     def project(self) -> projects.Project:
@@ -141,6 +142,7 @@ def _parse_claude(path: Path) -> Session | None:
     head, tail = _read_head_tail(path)
     sid = path.stem
     cwd = branch = first_prompt = title = last_prompt = entry = ""
+    talked = False
     for line in head:
         d = _loads(line)
         if not d:
@@ -148,6 +150,7 @@ def _parse_claude(path: Path) -> Session | None:
         cwd = cwd or d.get("cwd", "")
         branch = branch or d.get("gitBranch", "") or ""
         entry = entry or d.get("entrypoint", "")
+        talked = talked or d.get("type") in ("user", "assistant")
         if not first_prompt and d.get("type") == "user" and not d.get("isMeta") and not d.get("isSidechain"):
             first_prompt = _text_of((d.get("message") or {}).get("content"))
         if d.get("type") == "custom-title":
@@ -161,6 +164,7 @@ def _parse_claude(path: Path) -> Session | None:
         if not d:
             continue
         t = d.get("type")
+        talked = talked or t in ("user", "assistant")
         if t == "custom-title":
             title = d.get("customTitle", "") or title
         elif t == "last-prompt":
@@ -187,6 +191,7 @@ def _parse_claude(path: Path) -> Session | None:
         path=str(path),
         subagent=entry.startswith("sdk"),
         origin=entry or "cli",
+        empty=not talked,
     )
 
 

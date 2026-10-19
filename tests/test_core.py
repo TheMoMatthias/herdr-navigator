@@ -1,4 +1,6 @@
 import json
+import re
+import types
 import os
 import time
 
@@ -104,6 +106,25 @@ def test_claude_session_uses_custom_title_and_launch_cwd(tmp_path):
     [s] = sessions.load_sessions()
     assert (s.cli, s.id, s.title, s.cwd) == ("claude", "abc", "LEDGER", str(proj))
     assert s.resume_command() == "claude --resume abc"
+
+
+def test_claude_session_without_conversation_is_marked_and_not_resumed(tmp_path, monkeypatch):
+    proj = tmp_path / "P"
+    make_repo(proj)
+    d = tmp_path / "claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(proj))  # the stub has no cwd of its own
+    write_jsonl(d / "real.jsonl", [
+        {"type": "user", "cwd": str(proj), "message": {"content": "lead the build"}},
+        {"type": "assistant", "cwd": str(proj), "message": {"content": [{"type": "text", "text": "ok"}]}},
+    ])
+    write_jsonl(d / "stub.jsonl", [  # bookkeeping only: `claude --resume stub` finds no conversation
+        {"type": "queue-operation", "operation": "enqueue", "content": "<task-notification>"},
+        {"type": "custom-title", "customTitle": "LEAD6"},
+    ])
+    ss = {s.id: s for s in sessions.load_sessions()}
+    assert (ss["real"].empty, ss["stub"].empty) == (False, True)
+    from navigator import launch, model
+    monkeypatch.setattr(model, "build", lambda: types.SimpleNamespace(live_sessions={}))
+    assert launch.resume(None, ss["stub"]).startswith("✗ 'LEAD6' has no saved conversation")
 
 
 def test_claude_first_prompt_skips_command_noise(tmp_path):
