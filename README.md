@@ -89,7 +89,7 @@ herdr plugin uninstall momatthias.navigator
 | `F4` · `Ctrl+B › /` | **Keys.** Your live key bindings (⚙ Settings › Keys) |
 | `F6` · `Ctrl+B › M` | **Layout.** One-click shapes, drag-and-drop pane map, pane buttons, saved layouts |
 | `F7` · `Ctrl+B › Shift+O` | **Recent.** Agents (and other panes) in the order you last visited them |
-| `F9` · `Ctrl+B › ,` | **Settings.** Logon restore, accounts, phone alerts, prompts, font size, updates |
+| `F9` · `Ctrl+B › ,` | **Settings.** Logon restore, accounts, phone alerts, prompts, font size, updates, herdr itself |
 | `F10` · `Ctrl+B › F` | Fold / unfold the focused pane's project in herdr's sidebar (`Ctrl+B › Shift+F`: all) |
 | `Ctrl+B › Shift+C` | `/compact` the focused agent **with your saved instructions** (also: the pane menu, or Agents › ☰ ▾ › Compact) |
 | `F5` · `Ctrl+B › .` | **Pane menu** over the current pane: compact this agent · split right / down · zoom · move the pane left / right / up / down · even out all splits · move to a new tab · arrange panes… (the Layout map) · new agent session here… · fold this project. Click an entry, or arrows + Enter; Esc closes |
@@ -122,8 +122,15 @@ Inside the Navigator:
   Projects · Agents · Sessions · Layout · Usage · ⚙ Settings. Buttons with `▾` open a
   small menu. Every button has a tooltip. **Right-click a row** (or press `.`) for everything
   you can do with it, and **`?`** explains the tab you are on.
+- **⚙ Settings › System** is for herdr itself: the installed version, the running server's and the
+  newest release, with **Update herdr**, **Restart herdr** and **Stop herdr**. Updating installs the new
+  version beside the old one and touches nothing that runs; the server keeps going until you restart it
+  (the section says when it is older than the installed version). Restart and Stop ask first and say how
+  many agents they end; the layout and the agents' conversations come back. herdr refuses to update from
+  inside itself, so these run as separate Windows processes that outlive the server. Restart opens herdr
+  again in a new Windows Terminal window (Windows only; elsewhere stop it and start herdr yourself).
 - **⚙ Settings** holds everything you set up once, in sections: *Logon restore*, *Accounts*,
-  *Phone alerts*, *Prompts*, *General* and *Keys*. Changes save on their own when you leave a
+  *Phone alerts*, *Prompts*, *General*, *Updates* (the Navigator), *System* (herdr) and *Keys*. Changes save on their own when you leave a
   field or tick a box (into `navigator.toml`, comments kept). The Projects toolbar has only
   *+ New agent ▾* and the filter: open, sidebar, sessions, restore layout and finish worktree
   (`f`) are in the row menu. The top bar names only who needs you and any full context.

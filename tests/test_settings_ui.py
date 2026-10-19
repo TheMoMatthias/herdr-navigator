@@ -11,7 +11,7 @@ from textual.app import App
 from textual.widgets import Button, Input, OptionList, Select, Static
 from textual.worker import WorkerCancelled
 
-from navigator import accounts, alerts, autostart, profiles, projects, settings, termfont, updater
+from navigator import accounts, alerts, autostart, herdrctl, profiles, projects, settings, termfont, updater
 from navigator.settings_ui import SECTIONS, SettingsPane
 from navigator.ui import CSS
 
@@ -33,6 +33,9 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(profiles, "label", lambda cli, n: f"{n} · detail")
     monkeypatch.setattr(termfont, "get", lambda: None)
     monkeypatch.setattr(updater, "check", lambda fetch=True: updater.State(True, version="1.0", latest="1.0"))
+    monkeypatch.setattr(herdrctl, "status", lambda: herdrctl.Status(True, "", "0.9.5", "0.9.5", True, False))
+    monkeypatch.setattr(herdrctl, "latest", lambda timeout=8: "0.9.5")
+    monkeypatch.setattr(herdrctl, "agents", lambda: (3, 1))
     yield
     settings.load.cache_clear()
     projects.clear_cache()

@@ -78,7 +78,7 @@ TABS = ["projects", "agents", "sessions", "panes", "usage", "settings"]
 TAB_ALIAS = {"startup": "sessions", "resume": "sessions", "recent": "agents"}
 # Entry points that open a section of ⚙ Settings (F4 is the key cheat sheet).
 SETTINGS_SECTION = {"keys": "keys", "alerts": "alerts", "accounts": "accounts", "logon": "logon",
-                    "prompts": "prompts", "general": "general", "updates": "updates"}
+                    "prompts": "prompts", "general": "general", "updates": "updates", "system": "system"}
 WT_SEP = "|wt|"
 
 # "?" shows what the current tab is for and how to work it.

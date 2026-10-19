@@ -6,7 +6,8 @@ A section list on the left, the section on the right:
   Alerts     phone alerts: Telegram, ntfy, a webhook (Discord, Slack...), WhatsApp
   Prompts    one-click prompts, the compact instructions and the hand-off text
   General    sidebar, workspaces, which sessions are listed
-  Updates    check GitHub for a newer version and switch to it
+  Updates    check GitHub for a newer Navigator and switch to it
+  System     herdr itself: its version, update it, restart it or stop it
   Keys       every key, the Navigator's and herdr's
 Changes save on their own when you leave a field or tick a box: into navigator.toml, comments kept.
 """
@@ -30,7 +31,8 @@ from .ui import Btn, Choice, Field, Tick
 
 CHANNEL_NAME = {"telegram": "Telegram", "ntfy": "ntfy", "webhook": "Webhook", "whatsapp": "WhatsApp"}
 SECTIONS = [("logon", "Logon restore"), ("accounts", "Accounts"), ("alerts", "Phone alerts"),
-            ("prompts", "Prompts"), ("general", "General"), ("updates", "Updates"), ("keys", "Keys")]
+            ("prompts", "Prompts"), ("general", "General"), ("updates", "Updates"), ("system", "System"),
+            ("keys", "Keys")]
 
 
 def open_file(path: Path) -> None:
@@ -106,6 +108,8 @@ class SettingsPane(Horizontal):
                 yield from self._general()
             with VerticalScroll(id="updates"):
                 yield from self._updates()
+            with VerticalScroll(id="system"):
+                yield from self._system()
             with VerticalScroll(id="keys"):
                 yield Static(id="keys-body")
 
@@ -130,6 +134,8 @@ class SettingsPane(Horizontal):
             self.load_accounts()
         if key == "updates":
             self.check_updates()
+        if key == "system":
+            self.check_system()
 
     @on(OptionList.OptionHighlighted, "#set-nav")
     def _nav(self, ev: OptionList.OptionHighlighted) -> None:
@@ -603,7 +609,7 @@ class SettingsPane(Horizontal):
 
     # ---- updates ------------------------------------------------------------------------------
     def _updates(self) -> ComposeResult:
-        yield Static("Updates", classes="section-title")
+        yield Static("Navigator updates", classes="section-title")
         yield Static(_version_line(), id="up-version")
         yield Static("Checking GitHub…", id="up-status")
         with Horizontal(classes="bar"):
@@ -653,6 +659,112 @@ class SettingsPane(Horizontal):
                                   title="Update", severity="error" if bad else "information", timeout=12)
         self.app.call_from_thread(self.query_one("#up-version", Static).update, _version_line())
         self.app.call_from_thread(self.check_updates)
+
+    # ---- system: herdr itself -----------------------------------------------------------------
+    def _system(self) -> ComposeResult:
+        yield Static("herdr", classes="section-title")
+        yield Static("Checking…", id="sy-status")
+        yield Static("", id="sy-note")
+        with Horizontal(classes="bar"):
+            yield Btn("⬇ Update herdr", id="sy-update", variant="primary", disabled=True,
+                      tooltip="Install the newest herdr. Running agents are not touched")
+            yield Btn("↻ Restart herdr", id="sy-restart", disabled=True,
+                      tooltip="Stop herdr and open it again: layout and agent conversations come back")
+            yield Btn("⏻ Stop herdr", id="sy-stop", disabled=True,
+                      tooltip="Stop herdr and everything running in it")
+            yield Btn("⟳ Check again", id="sy-check")
+        yield Static("", id="sy-progress")
+        yield Static("Updating installs the new version next to the old one. The running herdr keeps going "
+                     "until you restart it; a restart ends every running agent, and the layout and "
+                     "their conversations come back.", classes="hint")
+
+    @work(thread=True, exclusive=True, group="system")
+    def check_system(self) -> None:
+        from . import herdrctl
+        self.app.call_from_thread(self.query_one("#sy-status", Static).update, Text("Checking…", style="dim"))
+        st = herdrctl.status()
+        latest = herdrctl.latest() if st.ok else ""
+        self.app.call_from_thread(self.show_system, st, latest)
+
+    def show_system(self, st, latest: str) -> None:
+        from . import herdrctl
+        status = self.query_one("#sy-status", Static)
+        note = self.query_one("#sy-note", Static)
+        upd, rst, stp = (self.query_one(f"#sy-{k}", Button) for k in ("update", "restart", "stop"))
+        if not st.ok:
+            status.update(Text("✗ " + st.why, style="bold red"))
+            note.update("")
+            upd.disabled = rst.disabled = stp.disabled = True
+            return
+        more = herdrctl.newer(latest, st.client)
+        server = (Text.assemble(("● running ", "bold green"), (st.server, "bold")) if st.running
+                  else Text("○ not running", style="bold yellow"))
+        line = Text.assemble(("Installed ", "dim"), (st.client, "bold"), ("   ·   server ", "dim"))
+        line.append_text(server)
+        if latest:
+            line.append("   ·   latest ", style="dim")
+            line.append(latest, style="bold green" if more else "bold")
+        status.update(line)
+        msgs = []
+        if more:
+            msgs.append(Text(f"⬆ {latest} is available.", style="green"))
+        if st.running and (st.stale or herdrctl.newer(st.client, st.server)):
+            msgs.append(Text(f"The running herdr ({st.server}) is older than the installed {st.client}: "
+                             "restart it to use the new version.", style="yellow"))
+        note.update(Text("\n").join(msgs) if msgs else "")
+        upd.disabled = not more
+        rst.disabled = not (st.running and herdrctl.can_restart())
+        stp.disabled = not st.running
+        rst.tooltip = ("Stop herdr and open it again: layout and agent conversations come back"
+                       if herdrctl.can_restart() else "Restart is available on Windows; stop it and start herdr yourself")
+
+    def confirm_system(self, what: str, button: Button) -> None:
+        """Stop and restart end every running agent: say how many, and ask once."""
+        from . import herdrctl
+        from .startup_ui import ContextMenu
+        total, working = herdrctl.agents()
+        verb = "Restart" if what == "restart" else "Stop"
+        items = [("-h", f"{verb} herdr?")]
+        if total:
+            items.append(("-n", f"{total} agent{'s' * (total != 1)} end{'s' * (total == 1)}"
+                                + (f", {working} working now" if working else "") + "."))
+        items.append(("-b", "The layout and conversations come back."))
+        items.append((what, f"{verb} herdr"))
+        r = button.region
+        self.app.push_screen(ContextMenu(items, (r.x, r.y + 1)), lambda c: c == what and self._system_action(what))
+
+    def _system_action(self, what: str) -> None:
+        from . import herdrctl
+        ok = herdrctl.restart() if what == "restart" else herdrctl.stop()
+        msg = {"restart": "Restarting herdr: a new window opens in a moment.", "stop": "Stopping herdr…"}[what]
+        self.app.notify(msg if ok else f"✗ Could not {what} herdr.", title="herdr",
+                        severity="information" if ok else "error", timeout=8)
+
+    def run_herdr_update(self) -> None:
+        from . import herdrctl
+        self.query_one("#sy-update", Button).disabled = True
+        if not herdrctl.start_update():
+            self.app.notify("✗ Could not start the update.", title="herdr", severity="error")
+            return
+        self.watch_herdr_update()
+
+    @work(thread=True, exclusive=True, group="system-update")
+    def watch_herdr_update(self) -> None:
+        import time
+        from . import herdrctl
+        prog = self.query_one("#sy-progress", Static)
+        end = time.time() + 300
+        done = ok = False
+        said = "starting…"
+        while time.time() < end and not done:
+            done, ok, said = herdrctl.update_progress()
+            self.app.call_from_thread(prog.update, Text("Updating: " + said, style="dim"))
+            if not done:
+                time.sleep(1.0)
+        if not done:
+            ok, said = False, "no answer after 5 minutes; see " + str(herdrctl.update_log())
+        self.app.call_from_thread(prog.update, Text(("✓ " if ok else "✗ ") + said, style="green" if ok else "bold red"))
+        self.app.call_from_thread(self.check_system)
 
     # ---- buttons ------------------------------------------------------------------------------
     def on_button_pressed(self, ev) -> None:
@@ -706,6 +818,12 @@ class SettingsPane(Horizontal):
             self.check_updates()
         elif bid == "up-go":
             self.run_update()
+        elif bid == "sy-check":
+            self.check_system()
+        elif bid == "sy-update":
+            self.run_herdr_update()
+        elif bid in ("sy-restart", "sy-stop"):
+            self.confirm_system(bid[3:], ev.button)
         elif bid == "gn-file":
             open_file(settings.settings_path())
         elif bid in ("sbw-minus", "sbw-plus"):
