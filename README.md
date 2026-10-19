@@ -5,12 +5,14 @@ everything your coding agents are doing:
 
 * **Which project am I in?** Workspaces are named after their git repo. Worktrees fold into
   their repo and show up as indented children in the sidebar, and every session inside a
-  Space gets its own indented row under it (`├ ⏳ STORAGE`), tabs included. herdr's Agents panel is
-  nested the same way: a heading per project (`▾ AlgoTrader ⏳1 ○5`), its agents below as
-  `├─ ! STORAGE`, one line per session (the worktree shows in Spaces), the project with
-  what is running first, then whoever needs you (`!` waits on you), then the
-  most recently active. Under each project heading a status label (`◐ working 3`,
-  `! needs you 1`, `✓ done 1`, `○ idle 5`) heads its sessions, indented below it; done turns idle once you visit the session. Spaces follow the same order (a repo moves with its worktree Spaces;
+  Space gets its own indented row under it (`├ ⏳ STORAGE`), tabs included. herdr's Agents panel groups them too: a heading per
+  project (`▾ AlgoTrader ✓1`), the project with what is running first, then whoever needs you, then
+  the most recently active. Under each heading a quiet grey caption per state (`working 3`,
+  `needs you 1`, `done 1`, `idle 5`) heads an indented list of its sessions, all in one colour,
+  their ↳ counts and context bars each in one column. A small mark at a row's end tells its state:
+  a breathing white dot while it works, an orange `!` when it needs you, a green `✓` when done,
+  nothing when idle; done turns idle once you visit the session. Project names take your herdr
+  theme's accent and glow softly while one of their sessions works. Spaces follow the same order (a repo moves with its worktree Spaces;
   ⚙ Settings › General turns that off). Fold a project with `F10` / `Ctrl+B › F` (the focused
   pane's project) or `Ctrl+B › Shift+F` (every project), or the pane menu (`F5`). herdr's
   right-click menus take no plugin entries, so those are the ways in; folding in the Navigator's
@@ -316,13 +318,12 @@ Always visible in herdr:
 
 - **Tab bar:** `⚠ other-project waiting for you (Ctrl+Alt+I) │ project: 2 working, 1 idle │ 3 sessions outside herdr (F3) │ F1 Navigator · F2 Sessions · F3 Agents · F5 Pane menu · F6 Layout · F9 Settings · Ctrl+Alt+R Back` (most urgent first, plain words)
 - **Sidebar, spaces** — *where work happens:* one group
-  per repo. The repo's own checkout comes first (its second line shows the branch, e.g. `main`),
+  per repo. The repo's own checkout comes first,
   and the active worktrees are indented under it, named after the session working there; each
   Space lists its sessions by name. `!1 ?1 ✓1` counts the sessions that are blocked, waiting for a
-  reply and done (idle and inactive ones are not counted). Each session shows what it runs in the background (`↳3`) after its name. The repo's
-  heading carries a pulsing cyan `●` while a session anywhere in the project (its own checkout,
-  a worktree, another window) is working; a worktree Space carries it itself only when its repo
-  has no Space open.
+  reply and done (idle and inactive ones are not counted). Each session shows what it runs in the background (`↳3`) after its name. herdr's own
+  state icon in front of a Space shows whether it works; in the Agents panel the project's name
+  glows while a session anywhere in the project is working.
   One Space per folder: a second Space opened on a folder that has one (herdr's sidebar
   `new` does that) joins it as a tab, running sessions included (`merge_duplicates` in
   `[workspaces]`, on by default).

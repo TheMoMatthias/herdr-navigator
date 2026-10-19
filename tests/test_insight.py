@@ -463,8 +463,8 @@ def test_spaces_pulse_sits_on_the_projects_own_space(tmp_path, monkeypatch):
     monkeypatch.setattr(sync, "ensure_view", lambda: None)
     sync.sync(force=True)
     sent = sync._load_sent()
-    assert sent.get("workspace:w1:pulse") == "●"   # the repo's Space: its worktree session works
+    assert not sent.get("workspace:w1:pulse")      # no dot on a Space: herdr's state_icon says it works
     assert not sent.get("workspace:w1:work")       # ↳ stays with the session:
     assert sent.get("workspace:w2:work") == "↳2"  # the Space named after it
     assert not sent.get("workspace:w2:pulse")       # not again on the worktree Space
-    assert sent.get("workspace:w3:pulse") == "●"   # a worktree whose repo has no Space keeps its own
+    assert any(k.endswith(":grp") and sync.GLOW_FLAG in v for k, v in sent.items())   # its heading glows

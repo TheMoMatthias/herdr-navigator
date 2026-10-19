@@ -93,20 +93,27 @@ PAD = "\u2800"  # braille blank: looks like a space, but herdr trims real spaces
 TALLY_ICON = {"blocked": "!", "reply": "?", "done": "✓"}
 
 # A project with a session working gets a pulsing dot at the end of its heading row (Spaces:
-# $pulse, Agents: $gpulse): the frames differ in width, so nothing may follow the dot. herdr cannot animate a token, so the daemon steps through PULSE_FRAMES
-# (pulse_tick): the frame rides along as trailing braille blanks that setup.PULSE_TOKEN's rules
-# shade from bright to dim. A sync only ever reports the first frame (or "" to stop it).
+# $pulse, Agents: $spulse). herdr cannot animate a token, so the daemon steps through PULSE_FRAMES
+# (pulse_tick): the frame rides along as trailing zero-width marks that setup.PULSE_TOKEN's rules
+# shade from bright to dim. Zero-width, so every frame is one column: blanks that grew and shrank
+# shifted the whole row's right side to and fro. A sync only ever reports the first frame (or "").
 PULSE = "●"
+PULSE_MARK = "⁤"  # invisible plus: zero-width, and used by no other token
 PULSE_SHADES = 6  # bright, then five steps dimmer: down and back up is one breath (10 frames)
-PULSE_FRAMES = [PULSE + PAD * k for k in (*range(PULSE_SHADES), *range(PULSE_SHADES - 2, 0, -1))]
-PULSE_TOKENS = ("pulse", "gpulse")
+PULSE_FRAMES = [PULSE + PULSE_MARK * k for k in (*range(PULSE_SHADES), *range(PULSE_SHADES - 2, 0, -1))]
+PULSE_TOKENS = ("spulse",)  # a working session's row in the Agents panel
+# A working project's heading glows instead of carrying a dot: GLOW_FLAG on its text marks it, and the
+# daemon appends one GLOW character per frame (zero-width; setup.GRP_TOKEN shades the accent by it).
+GLOW_FLAG = "⁣"
+GLOW = ("", "‌", "‍", "⁠")
+GLOW_SEQ = (0, 0, 1, 2, 3, 3, 2, 1, 0, 0)  # one breath, as long as PULSE_FRAMES
 
 
 def pulse_mark(agents: list) -> str:
     return PULSE if any(a.status == "working" for a in agents) else ""
 
 
-_PULSE = {"mtime": 0.0, "targets": [], "frame": 0}
+_PULSE = {"mtime": 0.0, "targets": [], "glows": {}, "frame": 0}
 
 
 def pulse_tick() -> None:
@@ -119,20 +126,29 @@ def pulse_tick() -> None:
         return
     if m != _PULSE["mtime"]:
         _PULSE["mtime"] = m
-        targets = [(k.split(":", 1)[0], *k.split(":", 1)[1].rsplit(":", 1))  # pane ids hold ":" (w6:pF)
-                   for k, v in _load_sent().items() if v and k.rsplit(":", 1)[-1] in PULSE_TOKENS]
+        sent = _load_sent()
+
+        def key(k):
+            return (k.split(":", 1)[0], *k.split(":", 1)[1].rsplit(":", 1))  # pane ids hold ":" (w6:pF)
+        targets = [key(k) for k, v in sent.items() if v and k.rsplit(":", 1)[-1] in PULSE_TOKENS]
+        glows = {key(k): v for k, v in sent.items() if k.rsplit(":", 1)[-1] == "grp" and GLOW_FLAG in (v or "")}
         for kind, target, name in set(_PULSE["targets"]) - set(targets):
             _send_pulse(kind, target, name, None)  # stopped: never leave a frame of ours behind
-        _PULSE["targets"] = targets
-    if not _PULSE["targets"]:
+        for t in set(_PULSE["glows"]) - set(glows):  # stopped glowing: put back what the sync last sent
+            _send_pulse(*t, sent.get(":".join(t)) or None)
+        _PULSE["targets"], _PULSE["glows"] = targets, glows
+    if not _PULSE["targets"] and not _PULSE["glows"]:
         return
     _PULSE["frame"] = (_PULSE["frame"] + 1) % len(PULSE_FRAMES)
     for kind, target, name in _PULSE["targets"]:
         _send_pulse(kind, target, name, PULSE_FRAMES[_PULSE["frame"]])
+    glow = GLOW[GLOW_SEQ[_PULSE["frame"] % len(GLOW_SEQ)]]
+    for (kind, target, name), text in _PULSE["glows"].items():
+        _send_pulse(kind, target, name, text + glow)
 
 
 def pulsing() -> bool:
-    return bool(_PULSE["targets"])
+    return bool(_PULSE["targets"] or _PULSE["glows"])
 
 
 def _send_pulse(kind: str, target: str, name: str, value: str | None) -> None:
@@ -205,11 +221,22 @@ def session_rows(label: str, agents: list, folded: bool = False) -> list[tuple[s
 # per band, so what runs, what waits for you and what is idle read apart without the colours.
 # done: finished while you were away; herdr turns it idle once you visit the session.
 BANDS = {"working": "working", "blocked": "needs you", "reply": "needs you", "done": "done"}
-BAND_ICON = {"working": "◐", "needs you": "!", "done": "✓", "idle": "○"}
+# A session row's text is one colour for every state; the state is a small mark at the row's end
+# (setup.MARK_TOKEN): ! needs you (orange), ✓ done (green), and a working session gets the same
+# pulsing dot as its project heading ($spulse). Idle shows nothing.
+STATE_MARK = {"needs you": "!", "done": "✓"}
+
+
+def state_mark(a) -> str:
+    return STATE_MARK.get(band(a), "")
+
+
+def row_pulse(a) -> str:
+    return PULSE if band(a) == "working" else ""
 
 
 def band(a) -> str:
-    return BANDS.get(a.status, "idle")
+    return BANDS.get(getattr(a, "status", ""), "idle")
 
 
 def agent_tree(agents: list, folded: dict | None = None) -> list[tuple]:
@@ -218,8 +245,9 @@ def agent_tree(agents: list, folded: dict | None = None) -> list[tuple]:
     the order of their most urgent agent, agents by model.rank (running, then needs you, then idle;
     the most recent state change first). The first shown agent of a project carries the project
     heading row. Its agents sit under a status label per band (working, needs you, done,
-    idle; inactive counts as idle), "◐ working 3", carried by the band's first agent, each band
-    an indented ├─/└─ list. A
+    idle; inactive counts as idle), "working 3", carried by the band's first agent, each band
+    an indented list in one colour (state glyph, name, ↳N), padded so the bars line up; the state
+    is also a mark at the row's end (state_mark, row_pulse). A
     folded project shows only the agents that need you (or its first agent, to carry the heading)."""
     folded = folded or {}
     agents = [a for a in agents if a.in_herdr]
@@ -228,6 +256,11 @@ def agent_tree(agents: list, folded: dict | None = None) -> list[tuple]:
         first[a.project.root] = min(first.get(a.project.root, (99,)), model.rank(a))
     agents.sort(key=lambda a: (first[a.project.root], a.project.name.lower(), model.rank(a), a.display.lower()))
     out = []
+    # every name padded to the longest shown one, then ↳N padded likewise: the context bars and the
+    # state marks after them each form one column
+    cap = room(28, 34)
+    width = max((len(x.display[:cap]) for x in agents), default=0)
+    wide = max((len(work_mark(x)) for x in agents), default=0)
     for i, a in enumerate(agents):
         group = [x for x in agents if x.project.root == a.project.root]
         shut = folded.get(a.project.root, False)
@@ -242,9 +275,13 @@ def agent_tree(agents: list, folded: dict | None = None) -> list[tuple]:
             head = f"{'▸' if shut else '▾'} {a.project.name[:room(14, 30)]}"
             tally = "  ".join(filter(None, (side_counts(group), f"+{more} folded" if more else "")))
         mine = [x for x in shown if band(x) == band(a)]
-        # a status label over each band ("◐ working 3"), its sessions indented under it
-        sub = f"{BAND_ICON[band(a)]} {band(a)} {len(mine)}" if a is mine[0] else ""
-        line = PAD * 2 + f"{'└─' if a is mine[-1] else '├─'} {SIDE_ICON.get(a.status, '·')} {a.display[:room(26, 34)]}"
+        # a quiet caption over each band ("working 3"), its sessions an indented list below it (no
+        # tree lines: they broke at every caption); the state is the mark at the row's end
+        sub = f"{band(a)} {len(mine)}" if a is mine[0] else ""
+        name, w = a.display[:cap], work_mark(a)
+        line = PAD * 2 + f"{SIDE_ICON.get(a.status, '·')} {name}" + PAD * (width - len(name))
+        if wide:
+            line += PAD * 2 + w + PAD * (wide - len(w))
         # herdr indents an entry's 2nd and later rows by two columns: whichever row comes first in
         # an entry without the heading gets the same two-column pad, so every row lines up
         if not head:
@@ -388,7 +425,7 @@ def sync(force: bool = False) -> None:
             whole = here + outside
         else:  # the whole project: every Space of it, and its sessions in other windows
             whole = [a for a in world.agents if a.project.root == p.root]
-        _report("workspace", w.id, "pulse", pulse_mark(whole), old, sent, seq)
+        _report("workspace", w.id, "pulse", "", old, sent, seq)  # no dot: herdr's state_icon says it
         _report("workspace", w.id, "work", "" if rows else " ".join(filter(None, map(work_mark, here))),
                 old, sent, seq)
         for gone in ("ctx", "git"):  # "" clears what an earlier build sent
@@ -458,11 +495,14 @@ def sync(force: bool = False) -> None:
     for a, order, head, line, sub, hidden, tally in agent_tree(world.agents, folded):
         _report("pane", a.pane_id, "hide", "1" if hidden else "", old, sent, seq)
         _report("pane", a.pane_id, "order", order, old, sent, seq)
-        _report("pane", a.pane_id, "grp", head, old, sent, seq)
-        _report("pane", a.pane_id, "gpulse", PULSE if head and a.project.root in working else "", old, sent, seq)
+        _report("pane", a.pane_id, "grp", head + (GLOW_FLAG if head and a.project.root in working else ""),
+                old, sent, seq)
+        _report("pane", a.pane_id, "gpulse", "", old, sent, seq)  # "" clears the dot an earlier build sent
         _report("pane", a.pane_id, "gcount", tally, old, sent, seq)
         _report("pane", a.pane_id, "line", line, old, sent, seq)
         _report("pane", a.pane_id, "ctx", ctx_mark(a), old, sent, seq)
+        _report("pane", a.pane_id, "mark", "" if hidden else state_mark(a), old, sent, seq)
+        _report("pane", a.pane_id, "spulse", "" if hidden else row_pulse(a), old, sent, seq)
         _report("pane", a.pane_id, "band", sub, old, sent, seq)
         for gone in ("since", "cli", "lane", "gap"):  # "" clears what an earlier build sent
             _report("pane", a.pane_id, gone, "", old, sent, seq)

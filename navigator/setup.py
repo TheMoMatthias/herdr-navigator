@@ -96,23 +96,64 @@ UI = {
 # colour and weight, so the connectors line up evenly. State shows only in the glyph after the
 # branch (! ? ● ◐ ○ from sync.SIDE_ICON) and in herdr's own state text; the Space heading is bold.
 MUTED = "#a89984"
+
+
+def herdr_config_path() -> Path:
+    if p := os.environ.get("HERDR_CONFIG_PATH"):  # herdr's own override
+        return Path(p).expanduser()
+    if WINDOWS:
+        return Path(os.environ.get("APPDATA", Path.home())) / "herdr" / "config.toml"
+    base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    return Path(base) / "herdr" / "config.toml"
+
+
+# herdr's token colours take hex only (not its theme's names), so the project headings pick the
+# accent of the theme herdr is set to; session names, captions and bars keep the plugin's own tones.
+# accent: project headings; bg: what their glow fades towards.
+PALETTES = {
+    "catppuccin": {"accent": "#89b4fa", "bg": "#1e1e2e"},
+}
+DEFAULT_PALETTE = {"accent": "#ebdbb2", "bg": "#1d2021"}
+
+
+def herdr_theme() -> str:
+    try:
+        return str(tomlkit.parse(herdr_config_path().read_text(encoding="utf-8")).get("theme", {}).get("name", ""))
+    except (OSError, ValueError, TypeError, AttributeError):
+        return ""
+
+
+PALETTE = PALETTES.get(herdr_theme().split("-")[0].lower(), DEFAULT_PALETTE)
 TREE = {"fg": MUTED}
+QUIET = "#928374"  # captions, context bars, ↳
+
+
+def _blend(a: str, b: str, t: float) -> str:
+    x, y = (tuple(int(c[i:i + 2], 16) for i in (1, 3, 5)) for c in (a, b))
+    return "#" + "".join(f"{round(p + (q - p) * t):02x}" for p, q in zip(x, y))
+
+
+# A working project's heading glows: the daemon steps its text through sync.GLOW frames (zero-width
+# characters the rules see), shading the accent a little towards the background and back. Subtle.
+GRP_TOKEN = {"token": "$grp", "fg": PALETTE["accent"], "bold": True,
+             "rules": [{"contains": c, "fg": _blend(PALETTE["accent"], PALETTE["bg"], 0.15 * (k + 1))}
+                       for k, c in enumerate(sync.GLOW[1:])]}
 
 # A session's context (sync.ctx_mark): a 4-cell bar, green; the level's zero-width spaces turn
 # it yellow (one) or red (two).
-def CTX_TOKEN(name: str) -> dict:
-    return {"token": name, "fg": MUTED, "rules": [  # grey while roomy: colour only when it fills{"contains": sync.ZW * 2, "fg": "#fb4934", "bold": True},
-                                                      {"contains": sync.ZW, "fg": "#fabd2f"}]}
+def CTX_TOKEN(name: str) -> dict:  # grey while roomy: colour only when it fills
+    return {"token": name, "fg": QUIET, "rules": [{"contains": sync.ZW * 2, "fg": "#fb4934", "bold": True},
+                                                  {"contains": sync.ZW, "fg": "#fabd2f"}]}
 
 
 # What a session has running besides itself (sync.work_mark): ↳N sub-agents and background tasks.
 def WORK_TOKEN(name: str) -> dict:
-    return {"token": name, "fg": MUTED}
+    return {"token": name, "fg": QUIET}
 
 
-# The pulsing "working" dot after a project's name (sync.PULSE_FRAMES): cyan, the frame's
-# trailing braille blanks (0..PULSE_SHADES-1) shade it evenly from bright to deep teal.
-PULSE_BRIGHT, PULSE_DIM = (0x7d, 0xf9, 0xff), (0x14, 0x4a, 0x55)
+# The pulsing "working" dot at the end of a working session's row (sync.PULSE_FRAMES): the frame's
+# trailing zero-width marks (0..PULSE_SHADES-1) shade it evenly from white down to grey.
+PULSE_BRIGHT, PULSE_DIM = (0xff, 0xff, 0xff), (0x45, 0x47, 0x5a)  # white, breathing down to grey
 
 
 def _pulse_shade(k: int) -> str:
@@ -120,9 +161,9 @@ def _pulse_shade(k: int) -> str:
     return "#" + "".join(f"{round(b + (d - b) * t):02x}" for b, d in zip(PULSE_BRIGHT, PULSE_DIM))
 
 
-def PULSE_TOKEN(name: str) -> dict:  # rules: most blanks first, "contains" matches any shorter run too
+def PULSE_TOKEN(name: str) -> dict:  # rules: most marks first, "contains" matches any shorter run too
     return {"token": name, "fg": _pulse_shade(0), "bold": True,
-            "rules": [{"contains": sync.PAD * k, "fg": _pulse_shade(k)} for k in range(sync.PULSE_SHADES - 1, 0, -1)]}
+            "rules": [{"contains": sync.PULSE_MARK * k, "fg": _pulse_shade(k)} for k in range(sync.PULSE_SHADES - 1, 0, -1)]}
 
 
 # The Spaces panel is about where work happens: a project's own Space carries the working dot
@@ -130,8 +171,7 @@ def PULSE_TOKEN(name: str) -> dict:  # rules: most blanks first, "contains" matc
 # what that session runs in the background ($b1..$b8); empty rows disappear. A Space named
 # after its only session shows that ↳ on its heading ($work). Context lives on the Agents panel.
 SPACE_ROWS = [
-    ["state_icon", "workspace", {"token": "$agents", "dim": True}, WORK_TOKEN("$work"),
-     PULSE_TOKEN("$pulse")],  # last: its frames change width (sync.PULSE_FRAMES)
+    ["state_icon", "workspace", {"token": "$agents", "dim": True}, WORK_TOKEN("$work")],  # no dot: state_icon says it
     # No git row: the folder's branch (beweis/lead4 under an MPV2-LEAD5 session) read as a
     # second, stale session; the branch shows in the Navigator.
     *[[{"token": f"$s{i}", **TREE}, WORK_TOKEN(f"$b{i}")] for i in range(1, 9)],
@@ -142,28 +182,19 @@ SPACE_ROWS = [
 # worktree shows in the Spaces panel and in the Navigator.
 # The state word carries the colour, one clearly different hue per state: working bright and
 # bold, idle a calm grey that recedes, done green, anything waiting on you orange.
-# The Agents panel ranks by brightness, not hue: the project heading bright and bold, a status
-# label (sync.agent_tree) in the normal text colour, idle dimmed; its symbol (◐ ✓ ○) tells the states
-# apart. Colour is kept for what wants you: "needs you" (orange), a filling context bar (yellow,
-# red) and the working pulse. The session rows under a label are plain.
-BAND_TOKEN = {"token": "$band", "rules": [
-    {"contains": "needs you", "fg": "#fe8019", "bold": True},
-    {"contains": "idle", "fg": "#7c6f64"},
-]}
+# The Agents panel: the project heading brightest, a quiet grey caption over each band of sessions
+# (sync.agent_tree), session rows all in one colour, and the state a small mark at the row's end:
+# ! needs you (orange), ✓ done (green), the pulsing dot for working, nothing for idle. The context
+# bar stays grey while roomy (CTX_TOKEN), so green is done's alone.
+BAND_TOKEN = {"token": "$band", "fg": QUIET}
+MARK_TOKEN = {"token": "$mark", "rules": [{"contains": "!", "fg": "#fe8019", "bold": True},
+                                          {"contains": "✓", "fg": "#56d364", "bold": True}]}
 AGENT_ROWS = [
-    [{"token": "$grp", "bold": True}, {"token": "$gcount", "dim": True}, PULSE_TOKEN("$gpulse")],
+    [GRP_TOKEN, {"token": "$gcount", "dim": True}],  # a working project's name glows, no dot
     [BAND_TOKEN],  # the status label over each band of sessions
-    [{"token": "$line", **TREE}, CTX_TOKEN("$ctx"), WORK_TOKEN("$subagents")],
+    [{"token": "$line", **TREE}, CTX_TOKEN("$ctx"), MARK_TOKEN,  # ↳N rides in $line, its own column
+     PULSE_TOKEN("$spulse")],
 ]
-
-
-def herdr_config_path() -> Path:
-    if p := os.environ.get("HERDR_CONFIG_PATH"):  # herdr's own override
-        return Path(p).expanduser()
-    if WINDOWS:
-        return Path(os.environ.get("APPDATA", Path.home())) / "herdr" / "config.toml"
-    base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
-    return Path(base) / "herdr" / "config.toml"
 
 
 def _short_path(p: str) -> str:
@@ -306,7 +337,7 @@ def install(doc, added: dict) -> list[str]:
                 sidebar[name] = sec
             sec["rows"] = _rows(rows)
             if name == "agents":
-                sec["row_gap"] = 0  # no blank between entries: the numbered status labels set the groups apart
+                sec["row_gap"] = 0  # no blank between entries: the status captions set the groups apart
             if name == "agents" and "rows_by_agent" in sec:
                 del sec["rows_by_agent"]  # per-CLI line colours from an earlier build: one colour for all
             added.setdefault("sidebar", []).append(name)

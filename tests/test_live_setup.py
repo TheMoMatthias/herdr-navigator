@@ -1,3 +1,4 @@
+import types
 import json
 import os
 import time
@@ -336,18 +337,19 @@ def test_agent_panel_tree_groups_by_project_most_urgent_first():
     assert [r[0] for r in rows] == ["A2", "A1", "B2", "B1"]   # Alpha first: it holds the agent that runs
     assert rows[0][2] == "▾ Alpha" and rows[1][2] == "" and rows[2][2] == "▾ Beta"
     assert rows[0][6] == "" and rows[2][6] == "?1" and rows[1][6] == ""  # working is the pulse, idle not counted
-    # a status label over each band, carried by its first agent; its sessions indented under it
+    # a quiet caption over each band, carried by its first agent; its sessions an indented list of
+    # bare names (the state is a mark at the row's end), padded to the longest so the bars line up
     P = sync.PAD
-    assert rows[0][4] == "◐ working 1" and rows[0][3] == P * 2 + "└─ ◐ A2"
-    assert rows[1][4] == P * 2 + "○ idle 1" and rows[1][3] == P * 2 + "└─ ○ A1"
-    assert rows[2][4] == "! needs you 1" and rows[2][3] == P * 2 + "└─ ? B2"
-    assert rows[3][4] == P * 2 + "○ idle 1" and rows[3][3] == P * 2 + "└─ ○ B1"
+    assert rows[0][4] == "working 1" and rows[0][3] == P * 2 + "◐ A2"
+    assert rows[1][4] == P * 2 + "idle 1" and rows[1][3] == P * 2 + "○ A1"
+    assert rows[2][4] == "needs you 1" and rows[2][3] == P * 2 + "? B2"
+    assert rows[3][4] == P * 2 + "idle 1" and rows[3][3] == P * 2 + "○ B1"
     assert [r[1] for r in rows] == ["0000", "0001", "0002", "0003"]
     assert all(ch not in "".join(r[2] + r[3] + r[4] for r in rows) for ch in "⏳✔⚠⎇")   # no wide glyphs
     # folded: only who needs you stays, else the first agent carries the heading
     f = {r[0]: r for r in [(x[0].display,) + tuple(x[1:]) for x in sync.agent_tree(agents, {"/b": True, "/a": True})]}
     assert not f["B2"][5] and f["B1"][5] and f["B2"][2] == "▸ Beta" and f["B2"][6] == "?1  +1 folded"
-    assert f["B2"][3] == sync.PAD * 2 + "└─ ? B2" and f["B2"][4] == "! needs you 1"   # one band: its label still shows
+    assert f["B2"][3] == sync.PAD * 2 + "? B2" and f["B2"][4] == "needs you 1"   # one band: its label still shows
     assert not f["A2"][5] and f["A1"][5] and f["A2"][2].startswith("▸ Alpha")
 
 
@@ -356,8 +358,38 @@ def test_agent_panel_one_band_still_shows_its_label():
     p = projects.Project("/a", "Alpha")
     agents = [model.Agent("claude", st, p, name=n, pane_id=n) for n, st in (("X", "idle"), ("Y", "inactive"))]
     rows = sync.agent_tree(agents)
-    assert [r[4] for r in rows] == ["○ idle 2", ""]   # a lone working session still says working
-    assert rows[0][3] == sync.PAD * 2 + "├─ ○ X" and rows[1][3] == sync.PAD * 4 + "└─ ◌ Y"
+    assert [r[4] for r in rows] == ["idle 2", ""]   # a lone working session still says working
+    assert rows[0][3] == sync.PAD * 2 + "○ X" and rows[1][3] == sync.PAD * 4 + "◌ Y"
+
+
+def test_agent_panel_names_padded_so_bars_line_up_and_state_marks_at_the_end():
+    from navigator import model, sync
+    p = projects.Project("/a", "Alpha")
+    agents = [model.Agent("claude", st, p, name=n, pane_id=n) for n, st in (("LONG-NAME", "working"), ("S", "idle"))]
+    lines = [r[3] for r in sync.agent_tree(agents)]
+    assert len(lines[0]) == len(lines[1])   # both are 2nd rows of their entry: herdr indents both alike
+    marks = {st: (sync.state_mark(a), sync.row_pulse(a)) for a, st in
+             ((model.Agent("claude", st, p), st) for st in ("working", "blocked", "reply", "done", "idle", "inactive"))}
+    assert marks == {"working": ("", sync.PULSE), "blocked": ("!", ""), "reply": ("!", ""), "done": ("✓", ""),
+                     "idle": ("", ""), "inactive": ("", "")}
+    assert "spulse" in sync.PULSE_TOKENS   # a working row's dot breathes like its project's
+
+
+def test_agent_rows_carry_bg_work_in_its_own_column():
+    from navigator import model, sync
+    p = projects.Project("/a", "Alpha")
+    agents = [model.Agent("claude", "working", p, name="LONG-NAME", pane_id="a", jobs=12),
+              model.Agent("claude", "working", p, name="S", pane_id="b", jobs=1),
+              model.Agent("claude", "idle", p, name="IDLE", pane_id="c")]
+    # a band's first row is its entry's 2nd row (herdr indents it 2); the others carry those 2 themselves
+    lines = [r[3] for r in sync.agent_tree(agents)]
+    assert len(lines[0]) + 2 == len(lines[1]) and len(lines[0]) == len(lines[2])
+    assert "↳12" in lines[0] and "↳1" in lines[1] and "↳" not in lines[2]
+
+
+def test_palette_follows_herdrs_theme():
+    assert set(setup.PALETTES["catppuccin"]) == set(setup.DEFAULT_PALETTE) == {"accent", "bg"}
+    assert setup.GRP_TOKEN["fg"] == setup.PALETTE["accent"] and setup.TREE["fg"] == setup.MUTED   # only headings
 
 
 def test_rank_puts_running_then_needs_you_then_most_recent():
@@ -563,22 +595,22 @@ def test_pane_menu_is_bound_and_lists_every_entry():
 
 
 def test_tree_rows_use_one_style_for_every_branch():
+    from navigator import sync
     # every connector (├─ └─ │) must look the same: no per-state colour, weight or dim on tree tokens
     tree = [c for row in setup.AGENT_ROWS + setup.SPACE_ROWS for c in row
             if isinstance(c, dict) and c.get("token") in ("$line", "$lane", *[f"$s{i}" for i in range(1, 9)])]
-    assert len(tree) == 9 and all(c == {"token": c["token"], **setup.TREE} for c in tree)
+    assert len(tree) == 9 and all(c == {"token": c["token"], **setup.TREE} for c in tree)   # rows: one colour
 
 
 def test_bands_have_distinct_colours_and_rows_no_status_word():
-    # brightness, not hue: only "needs you" is coloured, idle dimmed; a roomy context bar is grey
-    fg = {r["contains"]: r["fg"] for r in setup.BAND_TOKEN["rules"]}
-    assert set(fg) == {"needs you", "idle"} and "fg" not in setup.BAND_TOKEN
-    assert setup.CTX_TOKEN("$ctx")["fg"] == setup.MUTED and setup.WORK_TOKEN("$w")["fg"] == setup.MUTED
-    doc = tomlkit.document()
-    setup.install(doc, {})
-    assert doc["ui"]["sidebar"]["agents"]["row_gap"] == 0
-    assert all(c != "state_text" and (not isinstance(c, dict) or c.get("token") != "state_text")
-               for row in setup.AGENT_ROWS for c in row)
+    from navigator import sync
+    # quiet grey captions; the state marks carry the colour, and green is done's alone (a roomy bar is grey)
+    assert set(setup.BAND_TOKEN) == {"token", "fg"}   # one quiet colour, no per-state rules
+    mark = {r["contains"]: r["fg"] for r in setup.MARK_TOKEN["rules"]}
+    assert set(mark) == set(sync.STATE_MARK.values())
+    assert mark["✓"] not in {r["fg"] for r in setup.CTX_TOKEN("$ctx")["rules"]}
+    assert setup.CTX_TOKEN("$ctx")["fg"] == setup.QUIET
+    assert setup.AGENT_ROWS[-1][-1]["token"] == "$spulse"   # last: its frames change width
 
 
 def test_done_has_its_own_band_and_inactive_joins_idle():
@@ -587,7 +619,7 @@ def test_done_has_its_own_band_and_inactive_joins_idle():
     agents = [model.Agent("claude", st, p, name=n, pane_id=n)
               for n, st in (("W", "working"), ("Q", "blocked"), ("D", "done"), ("I", "idle"), ("Z", "inactive"))]
     bands = [r[4].replace(sync.PAD, "") for r in sync.agent_tree(agents) if r[4]]
-    assert bands == ["◐ working 1", "! needs you 1", "✓ done 1", "○ idle 2"]
+    assert bands == ["working 1", "needs you 1", "done 1", "idle 2"]
 
 
 def _notice(tid, status):
@@ -720,34 +752,34 @@ def test_stopped_workflow_no_longer_counted(tmp_path):
     assert live.background(str(tr)).runs == {"wf_2"}
 
 
-def test_working_project_gets_a_pulsing_dot(tmp_path, monkeypatch):
-    from navigator import model, sync
-    p = projects.Project("/a", "Alpha")
-    assert sync.pulse_mark([model.Agent("claude", "idle", p)]) == ""
-    assert sync.pulse_mark([model.Agent("claude", "idle", p), model.Agent("claude", "working", p)]) == "●"
+def test_working_session_pulses_and_working_project_heading_glows(tmp_path, monkeypatch):
+    from navigator import model, setup, sync
     monkeypatch.setattr(sync.settings, "state_dir", lambda: tmp_path)
-    monkeypatch.setattr(sync, "_PULSE", {"mtime": 0.0, "targets": [], "frame": 0})
+    monkeypatch.setattr(sync, "_PULSE", {"mtime": 0.0, "targets": [], "glows": {}, "frame": 0})
     calls = []
     monkeypatch.setattr(sync.herdr, "report_metadata", lambda kind, target, src, tokens, seq: calls.append(
         (kind, target, tokens)))
-    sync._save_sent({"workspace:w1:pulse": "●", "pane:w6:pF:gpulse": "●", "pane:w6:pF:grp": "▾ A",
-                     "workspace:w2:pulse": ""}, time.time(), True)
+    head = "▾ A" + sync.GLOW_FLAG
+    sync._save_sent({"pane:w6:pF:spulse": "●", "pane:w6:pF:grp": head, "pane:w7:pG:grp": "▾ B"}, time.time(), True)
     sync.pulse_tick()
     sync.pulse_tick()
-    assert calls == [("workspace", "w1", {"pulse": sync.PULSE_FRAMES[1]}), ("pane", "w6:pF", {"gpulse": sync.PULSE_FRAMES[1]}),
-                     ("workspace", "w1", {"pulse": sync.PULSE_FRAMES[2]}), ("pane", "w6:pF", {"gpulse": sync.PULSE_FRAMES[2]})]
+    g = [sync.GLOW[sync.GLOW_SEQ[k]] for k in (1, 2)]
+    assert calls == [("pane", "w6:pF", {"spulse": sync.PULSE_FRAMES[1]}), ("pane", "w6:pF", {"grp": head + g[0]}),
+                     ("pane", "w6:pF", {"spulse": sync.PULSE_FRAMES[2]}), ("pane", "w6:pF", {"grp": head + g[1]})]
     assert len(set(sync.PULSE_FRAMES)) == sync.PULSE_SHADES and all(f.startswith("●") for f in sync.PULSE_FRAMES)
-    from navigator import setup
-    rules = setup.PULSE_TOKEN("$pulse")["rules"]
+    assert len(sync.GLOW_SEQ) == len(sync.PULSE_FRAMES)   # one breath each: no jump when the frames wrap
+    assert {f.replace(sync.PULSE_MARK, "") for f in sync.PULSE_FRAMES} == {"●"}  # one column: the row never shifts
+    rules = setup.PULSE_TOKEN("$spulse")["rules"]
     assert [len(r["contains"]) for r in rules] == list(range(sync.PULSE_SHADES - 1, 0, -1))  # longest run first
-    assert len({r["fg"] for r in rules}) == sync.PULSE_SHADES - 1
-    for row in (setup.SPACE_ROWS[0], setup.AGENT_ROWS[0]):  # its frames change width: nothing may follow it
-        assert row[-1]["token"] in ("$pulse", "$gpulse")
+    assert setup.PULSE_TOKEN("$spulse")["fg"] == "#ffffff"   # white, not blue
+    assert [r["contains"] for r in setup.GRP_TOKEN["rules"]] == list(sync.GLOW[1:])
+    assert all(r["token"] != "$pulse" for r in setup.SPACE_ROWS[0] if isinstance(r, dict))  # no project dots
+    assert all(r["token"] != "$gpulse" for r in setup.AGENT_ROWS[0] if isinstance(r, dict))
     calls.clear()
     time.sleep(0.02)
-    sync._save_sent({"workspace:w1:pulse": "●"}, time.time(), True)  # the pane's project stopped working
+    sync._save_sent({"pane:w6:pF:grp": "▾ A"}, time.time(), True)  # the project stopped working
     sync.pulse_tick()
-    assert ("pane", "w6:pF", {"gpulse": None}) in calls and ("workspace", "w1", {"pulse": sync.PULSE_FRAMES[3]}) in calls
+    assert ("pane", "w6:pF", {"spulse": None}) in calls and ("pane", "w6:pF", {"grp": "▾ A"}) in calls
 
 
 def test_agent_spawned_by_an_agent_counts_with_its_parent(tmp_path):
