@@ -246,8 +246,11 @@ def user_path(p: str) -> Path:
     return Path(os.path.expanduser(p))
 
 
-def _dirs_file() -> Path:
-    return Path(__file__).resolve().parent.parent / ".herdr-dirs.json"
+def _dirs_files() -> list[Path]:
+    """Where herdr's folders are remembered: in the plugin folder, and in the user's home. A
+    reinstall replaces the plugin folder, and a process that runs before herdr has told the new
+    copy its folders would then use the fallback ones (and start a daemon there)."""
+    return [Path(__file__).resolve().parent.parent / ".herdr-dirs.json", Path.home() / ".herdr-navigator-dirs.json"]
 
 
 _REMEMBERED: dict[tuple, str | None] = {}
@@ -267,17 +270,20 @@ def _look_up(kind: str) -> str | None:
     env = os.environ.get(f"HERDR_PLUGIN_{kind}_DIR")
     if env and os.environ.get("HERDR_PLUGIN_ID") != PLUGIN_ID:
         return env  # an override (tests, dev), not herdr's assignment: use it, don't remember it
-    f = _dirs_file()
-    try:
-        known = json.loads(f.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        known = {}
+    known: dict = {}
+    for f in reversed(_dirs_files()):  # the plugin folder's copy wins when both exist
+        try:
+            known.update(json.loads(f.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            pass
     if env:
         if known.get(kind) != env:
             known[kind] = env
+        for f in _dirs_files():
             try:
-                f.write_text(json.dumps(known), encoding="utf-8")
-            except OSError:
+                if not f.exists() or json.loads(f.read_text(encoding="utf-8")).get(kind) != env:
+                    f.write_text(json.dumps(known), encoding="utf-8")
+            except (OSError, ValueError):
                 pass
         return env
     return known.get(kind)
