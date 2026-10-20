@@ -70,6 +70,19 @@ def _version_line() -> Text:
                          ("   ·   from ", "dim"), (str(updater.ROOT), "dim"))
 
 
+def _auto_line() -> Text:
+    """What the automatic updater did last, for the Updates section."""
+    import time
+    from . import updater
+    if not settings.load().auto_update:
+        return Text("Automatic updates are off: use Update now.", style="dim")
+    st = updater.last()
+    if not st.get("checked"):
+        return Text("Not checked yet: the first look comes a minute after the daemon starts.", style="dim")
+    when = time.strftime("%d %b %H:%M", time.localtime(float(st["checked"])))
+    return Text(f"Last automatic check {when}: {st.get('result') or 'ok'}", style="dim")
+
+
 class SettingsPane(Horizontal):
     DEFAULT_CSS = """
     SettingsPane { height: 1fr; }
@@ -585,6 +598,8 @@ class SettingsPane(Horizontal):
             self.save_alerts()
         elif wid.startswith("gn-"):
             self.save_general()
+        elif wid == "up-auto":
+            self.save_updates()
         elif wid == "pr-handoff":
             self.save_handoff()
         elif wid == "pr-compact":
@@ -617,7 +632,11 @@ class SettingsPane(Horizontal):
                       tooltip="Fetch the latest version and switch to it (never over local changes)")
             yield Btn("⟳ Check again", id="up-check")
         yield Static("", id="up-new")
-        yield Static("Fast-forward only: local changes block it.", classes="hint")
+        yield Tick("Install new versions by itself (at start and every few hours)", settings.load().auto_update,
+                   id="up-auto")
+        yield Static(_auto_line(), id="up-autostate", classes="hint")
+        yield Static("Fast-forward only, from the plugin's own GitHub repo, onto an unchanged checkout; "
+                     "a version that does not start is rolled back.", classes="hint")
 
     @work(thread=True, exclusive=True, group="updates")
     def check_updates(self) -> None:
@@ -631,6 +650,7 @@ class SettingsPane(Horizontal):
         go = self.query_one("#up-go", Button)
         new = self.query_one("#up-new", Static)
         go.disabled = not (st.ok and st.behind and not st.dirty and not st.ahead)
+        self.query_one("#up-autostate", Static).update(_auto_line())
         if not st.ok:
             status.update(Text("✗ " + st.why, style="bold red"))
             new.update("")
@@ -649,11 +669,19 @@ class SettingsPane(Horizontal):
             status.update(Text.assemble(("● Up to date", "bold green"), (f"  ({st.version}){extra}", "dim")))
             new.update("")
 
+    def save_updates(self) -> None:
+        on = self.query_one("#up-auto", Checkbox).value
+        if on != settings.load().auto_update:
+            settings.save_values("updates", {"auto": on})
+            self._saved("Automatic updates")
+            self.query_one("#up-autostate", Static).update(_auto_line())
+
     @work(thread=True, exclusive=True, group="updates")
     def run_update(self) -> None:
         from . import updater
         self.app.call_from_thread(self.query_one("#up-status", Static).update, Text("Updating…", style="bold"))
-        msg = updater.update()
+        with updater.exclusive() as got:
+            msg = updater.update() if got else "✗ An update is already running; try again in a minute."
         bad = msg.startswith("✗")
         self.app.call_from_thread(self.app.notify, msg + ("" if bad else "  Close (Esc) and reopen the Navigator."),
                                   title="Update", severity="error" if bad else "information", timeout=12)

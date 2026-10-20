@@ -41,6 +41,14 @@ auto_name = true
 # Space as a tab, so a repo's sessions stay together. Linked worktrees are never touched.
 merge_duplicates = true
 
+[updates]
+# Install new versions of the Navigator by itself: checked at start and then every few hours.
+# Only a plain fast-forward of a clean checkout, only from `repo` below, and a version that fails
+# its start-up check is rolled back. Off = update by hand (Settings > Updates).
+auto = true
+check_hours = 6
+repo = "TheMoMatthias/herdr-navigator"
+
 [sidebar]
 # Projects shown in herdr's sidebar are the ones you tick in the Navigator (Space / "Sidebar"
 # button). Active worktrees of a ticked project open as indented children of its workspace.
@@ -215,6 +223,9 @@ class Settings:
     hidden_patterns: list[str] = field(default_factory=list)
     auto_name: bool = True
     merge_duplicates: bool = True
+    auto_update: bool = True
+    update_check_hours: float = 6.0
+    update_repo: str = "TheMoMatthias/herdr-navigator"
     open_active_worktrees: bool = True
     mirror_outside: bool = True
     sort_spaces: bool = True
@@ -343,6 +354,9 @@ def _load(_key: str, _mtime_ns: int) -> Settings:
         hidden_patterns=list(raw.get("hide", defaults["hide"]).get("patterns", [])),
         auto_name=bool(raw.get("workspaces", {}).get("auto_name", True)),
         merge_duplicates=bool(raw.get("workspaces", {}).get("merge_duplicates", True)),
+        auto_update=bool(raw.get("updates", {}).get("auto", True)),
+        update_check_hours=max(0.25, float(raw.get("updates", {}).get("check_hours", 6) or 6)),
+        update_repo=str(raw.get("updates", {}).get("repo", defaults["updates"]["repo"]) or "").strip(),
         open_active_worktrees=bool(raw.get("sidebar", {}).get("open_active_worktrees", True)),
         mirror_outside=bool(raw.get("sidebar", {}).get("mirror_outside", True)),
         sort_spaces=bool(raw.get("sidebar", {}).get("sort_spaces", True)),

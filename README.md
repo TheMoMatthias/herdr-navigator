@@ -406,6 +406,30 @@ nothing of yours is overwritten. It also rewrites herdr's key bindings from the 
 changed key (F1 opening a pane, not a popup) applies at once. Reopen the Navigator afterwards.
 Updated with `git pull` instead? The keys follow by themselves once the background process restarts on the new code (about 10 s); `python -m navigator.setup install` does it at once.
 
+**Automatic updates** are on by default: a minute after the background process starts (so after
+every boot or logon) and then every 6 hours it checks GitHub and installs what is new, with a
+notification ("Navigator updated: reopen F1"). It is deliberately narrow:
+
+- only a plain **fast-forward** of an **unchanged** checkout, so nothing of yours is overwritten;
+  local changes or local commits stop it and the Settings line says so;
+- only when `origin` is **https://github.com/`<updates.repo>`** (default `TheMoMatthias/herdr-navigator`),
+  so a checkout pointing somewhere else never installs code by itself;
+- the new code must **start** (its modules import in the plugin's own Python), else the checkout
+  goes back to the version that worked and that same version is not tried again;
+- one update at a time (a lock), and the daemon waits for it before restarting on the new code.
+
+Switch it off with the tick in Settings › Updates, or in `navigator.toml`:
+
+```toml
+[updates]
+auto = true          # false = update by hand
+check_hours = 6
+repo = "TheMoMatthias/herdr-navigator"
+```
+
+`python -m navigator.updater auto` runs one automatic round by hand. Navigator panes that are
+already open keep the code they started with: close and reopen them (F1) after an update.
+
 The common settings are in the Navigator itself (⚙ Settings, key `6` or `F9`). Everything else is in
 `navigator.toml` in the plugin's config directory (`herdr plugin config-dir momatthias.navigator`;
 ⚙ Settings › General › *Open settings file* opens it). In it you can:

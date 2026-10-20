@@ -193,6 +193,7 @@ class Daemon:
         self.latency = 0.0
         self.stop = False
         self.restart = False  # exiting for new code: start the successor once the lock is free
+        self.updating = threading.Event()  # an update is moving the files: do not restart on half of them
         self.log_file = _state("daemon.log")
 
     def log(self, msg: str) -> None:
@@ -269,6 +270,32 @@ class Daemon:
         except Exception as e:
             self.log(f"setup: {e!r}")
 
+    def _auto_update(self) -> None:
+        """Install new plugin versions by itself (updater.auto): a minute after start, so a boot is
+        never slowed and the network is up, then every half hour (the interval is in the settings)."""
+        from . import updater
+        first = True
+        time.sleep(60)
+        while not self.stop:
+            self.updating.set()
+            try:
+                msg = updater.auto(startup=first)
+                if msg:
+                    self.log(f"update: {msg}")
+                    if msg.startswith(("Updated", "✗")):
+                        herdr.run("notification", "show", "Navigator updated" if msg[0] == "U" else "Navigator update failed",
+                                  "--body", msg[:200] + ("  Reopen the Navigator (F1)." if msg[0] == "U" else ""),
+                                  check=False)
+            except Exception as e:
+                self.log(f"update: {e!r}")
+            finally:
+                self.updating.clear()
+            first = False
+            for _ in range(60):
+                if self.stop:
+                    return
+                time.sleep(30)
+
     def on_event(self, kind: str, msg: dict | None = None) -> None:
         kind = kind.replace("_", ".", 1) if "." not in kind else kind  # pane_closed -> pane.closed
         if kind == "pane.focused":  # "where you were last" (F7), instead of a hook process per focus
@@ -306,6 +333,7 @@ class Daemon:
         threading.Thread(target=self.listen, daemon=True, name="nav-events").start()
         self.log(f"started (pid {os.getpid()})")
         threading.Thread(target=self._setup, daemon=True, name="nav-setup").start()
+        threading.Thread(target=self._auto_update, daemon=True, name="nav-update").start()
         while not self.stop:
             now = time.time()
             try:
@@ -319,7 +347,7 @@ class Daemon:
                     if not _state("").is_dir():  # its state dir is gone (a deleted temp dir): nothing to serve
                         self.log("state dir gone: exiting")
                         break
-                    if _code_stamp() != code:
+                    if _code_stamp() != code and not self.updating.is_set():
                         self.log("plugin code changed: exiting so the new code takes over")
                         self.restart = True
                         break

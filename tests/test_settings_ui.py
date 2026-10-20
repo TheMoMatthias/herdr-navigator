@@ -8,7 +8,7 @@ import threading
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Input, OptionList, Select, Static
+from textual.widgets import Button, Checkbox, Input, OptionList, Select, Static
 from textual.worker import WorkerCancelled
 
 from navigator import accounts, alerts, autostart, herdrctl, profiles, projects, settings, termfont, updater
@@ -350,7 +350,34 @@ def test_updates_hint():
         pane.show_section("updates")
         await settle(app, pilot)
         hints = [text_of(s) for s in pane.query_one("#updates").query(".hint")]
-        assert hints == ["Fast-forward only: local changes block it."]
+        assert hints[-1].startswith("Fast-forward only, from the plugin's own GitHub repo")
+        assert hints[0].startswith("Not checked yet")          # the automatic updater has not run here
+
+    run(body, "updates")
+
+
+def test_automatic_updates_are_on_by_default_and_the_tick_saves():
+    async def body(app, pilot, pane):
+        pane.show_section("updates")
+        await settle(app, pilot)
+        box = pane.query_one("#up-auto", Checkbox)
+        assert box.value is True and settings.load().auto_update is True
+        box.value = False
+        await pilot.pause()
+        settings.load.cache_clear()
+        assert settings.load().auto_update is False
+        assert text_of(pane.query_one("#up-autostate")).startswith("Automatic updates are off")
+
+    run(body, "updates")
+
+
+def test_updates_shows_what_the_automatic_updater_did_last():
+    async def body(app, pilot, pane):
+        updater._remember(checked=1792489164.0, result="Updated 0.16.3 → 0.16.4 (2 changes).")
+        pane.show_section("updates")
+        await settle(app, pilot)
+        shown = text_of(pane.query_one("#up-autostate"))
+        assert "Last automatic check" in shown and "Updated 0.16.3 → 0.16.4" in shown
 
     run(body, "updates")
 

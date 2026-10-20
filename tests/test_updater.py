@@ -21,5 +21,6 @@ def test_update_says_when_the_bindings_were_not_refreshed(monkeypatch):
     monkeypatch.setattr(updater, "check", lambda fetch=True: updater.State(True, version="1.0", behind=1))
     monkeypatch.setattr(updater, "upstream", lambda: "origin/main")
     monkeypatch.setattr(updater, "_git", lambda *a, **k: subprocess.CompletedProcess(a, 0, "", ""))
-    monkeypatch.setattr(updater.subprocess, "run", lambda cmd, **k: subprocess.CompletedProcess(cmd, 1, "", ""))
+    monkeypatch.setattr(updater.subprocess, "run",
+                        lambda cmd, **k: subprocess.CompletedProcess(cmd, 1 if "navigator.setup" in cmd else 0, "", ""))
     assert "key bindings not refreshed" in updater.update()
