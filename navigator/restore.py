@@ -154,22 +154,32 @@ def record_panes(world: model.World, snap: dict) -> None:
             changed = True
     # After a herdr restart every pane comes back empty, so "no agent in a live pane" means "you
     # quit it" only once this server's resume has run: before that the record is what resumes it.
+    # At shutdown the agents end a moment before herdr does, and a sync in that gap saw every pane
+    # empty and marked them all quit (2026-10-21: the logon restore then opened 11 of them again in
+    # new tabs beside their empty ones). So a pane counts as quit only once it stayed empty a while.
     settled = _resumed_this_server() and now - _resumed_at() > 60
     for pane, e in list(m.items()):
         if pane in agent_panes:
-            if e.pop("quit", None):
+            if e.pop("quit", None) or e.pop("gone_at", None):
                 changed = True
             continue
         gone_agent = pane in existing and not existing[pane].get("agent")
         resuming = now - e.get("resumed_at", 0) < 300
         if gone_agent and settled and not resuming and e.get("quit") != e.get("sid"):
-            e["quit"] = e.get("sid")  # kept: herdr's leftover agent_session must not bring it back
+            if not e.get("gone_at"):
+                e["gone_at"] = now
+            elif now - e["gone_at"] > QUIT_AFTER:
+                e["quit"] = e.get("sid")  # kept: herdr's leftover agent_session must not bring it back
+                e.pop("gone_at")
             changed = True
         elif pane not in existing and now - e.get("at", 0) > 30 * 86400:
             del m[pane]
             changed = True
     if changed:
         save_panes(m)
+
+
+QUIT_AFTER = 120  # seconds a pane must stay without its agent before it counts as quit
 
 
 def resume_panes() -> str:
@@ -368,6 +378,7 @@ def open_rows(rows: list[startup.Row]) -> dict:
         first = next(r for r in rows if r.session.cli == "claude")
         rows = [first] + [r for r in rows if r is not first]
     claude_ok, claude_started = True, False
+    own = _idle_own_panes()
     for i, r in enumerate(rows):
         s = r.session
         if s.cli == "claude":
@@ -381,7 +392,15 @@ def open_rows(rows: list[startup.Row]) -> dict:
             claude_started = True
         cmd = startup.launch_command(s.cli, s.id, s.title if s.named else "", r.prefs)
         try:
-            _, pane, _ = launch.open_tab(world, s.project, s.cwd, s.title, cmd)
+            pane = own.get(s.id, "")
+            if pane:  # its old pane is still there, empty: run it there instead of beside it
+                herdr.pane_run(pane, cmd)
+                m = load_panes()
+                m[pane] = {k: v for k, v in m.get(pane, {}).items() if k not in ("quit", "gone_at")}
+                m[pane]["resumed_at"] = time.time()
+                save_panes(m)
+            else:
+                _, pane, _ = launch.open_tab(world, s.project, s.cwd, s.title, cmd)
             opened[s.id] = pane
             log(f"opened {s.cli} {s.id} '{s.title[:60]}' in {pane}")
             world = model.build(with_sessions=False)  # the workspace may be new
@@ -391,6 +410,20 @@ def open_rows(rows: list[startup.Row]) -> dict:
         if i < len(rows) - 1:
             time.sleep(gap)
     return {"opened": opened, "failed": failed, "held": held}
+
+
+def _idle_own_panes() -> dict[str, str]:
+    """Session id -> the live pane it last ran in, where that pane now runs nothing."""
+    try:
+        panes = {p["pane_id"]: p for p in herdr.snapshot().get("panes", [])}
+    except Exception:
+        return {}
+    out: dict[str, str] = {}
+    for pane, e in sorted(load_panes().items(), key=lambda x: -x[1].get("at", 0)):
+        p = panes.get(pane)
+        if e.get("sid") and e["sid"] not in out and p and not p.get("agent") and not _foreground(pane):
+            out[e["sid"]] = pane
+    return out
 
 
 def verify(opened: dict[str, str], timeout: float = 90) -> tuple[int, list[str]]:

@@ -224,13 +224,37 @@ def test_record_panes_survives_a_restart_and_marks_real_quits(tmp_path, monkeypa
     monkeypatch.setattr(restore, "server_id", lambda: "new:1")
     restore.record_panes(empty, {"panes": [{"pane_id": "w1:p2", "cwd": "C:/r"}]})
     assert restore.load_panes()["w1:p2"].get("quit") is None
-    # resume ran for this server a while ago: an empty pane now means you quit the agent
+    # resume ran for this server a while ago: a pane that stays empty now means you quit the agent
     jsonfile.write(tmp_path / "state" / "panes-resumed-default.json", {"server": "new:1", "at": time.time() - 120})
+    restore.record_panes(empty, {"panes": [{"pane_id": "w1:p2", "cwd": "C:/r"}]})
+    # ...but not at once: at shutdown the agents end just before herdr (2026-10-21 marked 11 quit)
+    assert restore.load_panes()["w1:p2"].get("quit") is None
+    later = time.time() + restore.QUIT_AFTER + 1
+    monkeypatch.setattr(restore.time, "time", lambda: later)
     restore.record_panes(empty, {"panes": [{"pane_id": "w1:p2", "cwd": "C:/r"}]})
     assert restore.load_panes()["w1:p2"]["quit"] == "s1"
     # the agent comes back: the quit mark goes
     restore.record_panes(world, snap)
     assert "quit" not in restore.load_panes()["w1:p2"]
+
+
+def test_restore_runs_a_session_in_its_own_empty_pane_not_a_new_tab(tmp_path, monkeypatch):
+    from navigator import restore
+    from navigator.sessions import Session
+    s = Session("claude", "s1", str(tmp_path), "LEAD-5", "", "", 1.0, _claude_file(tmp_path, "s1"), named=True)
+    restore.save_panes({"w1M:pE": {"cli": "claude", "sid": "s1", "name": "LEAD-5", "cwd": str(tmp_path),
+                                   "at": time.time(), "quit": "s1"}})
+    snap = {"panes": [{"pane_id": "w1M:pE", "cwd": str(tmp_path), "agent": None}]}
+    ran, tabs = [], []
+    monkeypatch.setattr(restore.herdr, "snapshot", lambda: snap)
+    monkeypatch.setattr(restore.herdr, "pane_run", lambda pane, cmd: ran.append(pane))
+    monkeypatch.setattr(restore.launch, "open_tab", lambda *a: tabs.append(a) or ("w", "new", "t"))
+    monkeypatch.setattr(restore.model, "build", lambda **k: None)
+    monkeypatch.setattr(restore, "_foreground", lambda pane: [])
+    monkeypatch.setattr(restore, "claude_needs_refresh", lambda: False)
+    res = restore.open_rows([startup.Row(s, True, True)])
+    assert res["opened"] == {"s1": "w1M:pE"} and ran == ["w1M:pE"] and not tabs
+    assert "quit" not in restore.load_panes()["w1M:pE"]
 
 
 def _claude_file(tmp_path, sid, conversation=True):
