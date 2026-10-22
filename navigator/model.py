@@ -285,8 +285,11 @@ def build(with_sessions: bool = True) -> World:
             kids = kids if kids is not None else live.codex_children(all_sessions, time.time())
             subs, jobs = live.codex_work(by_session[sid], kids, time.time())
         term_title = a.get("terminal_title_stripped") or a.get("terminal_title") or ""
+        status = a.get("agent_status", "unknown")
+        if r and r.cli == "claude" and status in ("done", "idle") and EXTERNAL_STATUS.get(r.status) == "working":
+            status = "working"  # herdr keeps "done" until you visit the pane; Claude itself says it is busy again
         agents.append(Agent(
-            cli=a.get("agent", "?"), status=a.get("agent_status", "unknown"),
+            cli=a.get("agent", "?"), status=status,
             project=projects.resolve(r.cwd if r else cwd) if (r or cwd) else (ws_project.get(a.get("workspace_id")) or projects.Project("?", "?")),
             name=session_name(r, by_session.get(sid), term_title), title=term_title,
             session_id=sid, pane_id=a["pane_id"], workspace_id=a.get("workspace_id", ""),

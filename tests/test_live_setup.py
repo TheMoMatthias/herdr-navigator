@@ -675,16 +675,39 @@ def test_work_mark_counts_all_background_work():
     assert rows == [("├─ ◐ LEAD", "↳5"), ("└─ ○ B", "")]  # ↳ on each session's own Spaces row
 
 
+def test_a_done_claude_pane_turns_working_when_claude_is_busy_again(tmp_path, monkeypatch):
+    from navigator import model
+    tr = tmp_path / "claude" / "projects" / "Repo" / "S1.jsonl"
+    jl(tr, [{"type": "user", "timestamp": "2026-10-09T10:00:00Z", "message": {"content": "hi"}}])
+    (tmp_path / "claude" / "sessions").mkdir(parents=True)
+    reg = tmp_path / "claude" / "sessions" / "1.json"
+    pane = {"pane_id": "p1", "agent": "claude", "agent_status": "done", "cwd": str(tmp_path), "workspace_id": "w1",
+            "tab_id": "t1", "agent_session": {"kind": "id", "value": "S1"}}
+    monkeypatch.setattr(model, "live_state", lambda: ([], [pane], {}, ""))
+
+    def status(reg_status):
+        reg.write_text(json.dumps({"pid": os.getpid(), "sessionId": "S1", "cwd": str(tmp_path),
+                                   "kind": "interactive", "status": reg_status}))
+        model.forget_sessions()
+        return [a.status for v in model.build().projects for a in v.agents if a.pane_id == "p1"]
+
+    assert status("idle") == ["done"]      # finished and unseen stays done
+    assert status("busy") == ["working"]   # worked on again: no click needed
+
+
 def test_work_counts_follow_jobs_for_the_daemon(tmp_path):
     tr = tmp_path / "claude" / "projects" / "Repo" / "S1.jsonl"
     jl(tr, [{"type": "user", "timestamp": "2026-10-09T10:00:00Z", "toolUseResult": {"backgroundTaskId": "b1"}}])
     (tmp_path / "claude" / "sessions").mkdir(parents=True)
     (tmp_path / "claude" / "sessions" / "1.json").write_text(json.dumps(
         {"pid": os.getpid(), "sessionId": "S1", "cwd": str(tmp_path), "kind": "interactive"}))
-    assert live.work_counts(time.time()) == [("S1", 0, 0, 1)]
+    assert live.work_counts(time.time()) == [("S1", 0, 0, 1, False)]
     with open(tr, "a", encoding="utf-8") as f:
         f.write(json.dumps(_notice("b1", "completed")) + "\n")
-    assert live.work_counts(time.time()) == [("S1", 0, 0, 0)]
+    assert live.work_counts(time.time()) == [("S1", 0, 0, 0, False)]
+    (tmp_path / "claude" / "sessions" / "1.json").write_text(json.dumps(
+        {"pid": os.getpid(), "sessionId": "S1", "cwd": str(tmp_path), "kind": "interactive", "status": "busy"}))
+    assert live.work_counts(time.time()) == [("S1", 0, 0, 0, True)]  # a busy/idle flip is a change the daemon syncs on
 
 
 def test_dynamic_workflow_and_its_agents_counted(tmp_path):

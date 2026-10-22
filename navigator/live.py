@@ -268,8 +268,8 @@ def _subagent_files(transcript: str, now: float, keep: set[str] = frozenset(),
     return out
 
 
-def work_counts(now: float) -> list[tuple[str, int, int, int]]:
-    """(session id, sub-agents, workflows, background jobs) per running Claude session: cheap enough to
+def work_counts(now: float) -> list[tuple[str, int, int, int, bool]]:
+    """(session id, sub-agents, workflows, background jobs, busy) per running Claude session: cheap enough to
     ask every few seconds (only appended transcript lines are read, sub-agents are a listing)."""
     out = []
     for r in _claude_registry(now):
@@ -278,7 +278,7 @@ def work_counts(now: float) -> list[tuple[str, int, int, int]]:
             bg = background(tr, r.started_at)
             own = [f for f, _ in _subagent_files(tr, now, bg.agents, bg.runs)
                    if not _workflow_of(f) and not _meta(f).get("parentAgentId")]
-            out.append((r.session_id, len(own), len(bg.runs), _jobs(r, bg)))
+            out.append((r.session_id, len(own), len(bg.runs), _jobs(r, bg), r.status in ("busy", "shell")))
     return out + _codex_counts(now)
 
 
