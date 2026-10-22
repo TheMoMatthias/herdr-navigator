@@ -543,6 +543,22 @@ class SettingsPane(Horizontal):
             return
         settings.save_values("tidy", new)
         self._saved("Idle sessions")
+        if new["enabled"]:
+            self.tidy_now(new["idle_hours"])  # active at once, not at the daemon's next sweep
+        else:
+            self.app.notify("Idle sessions stay open.", timeout=3)
+
+    @work(thread=True, group="tidy", exclusive=True)
+    def tidy_now(self, hours: int) -> None:
+        from . import model, tidy
+        try:
+            closed = tidy.sweep(model.build())
+        except Exception as e:
+            self.app.call_from_thread(self.app.notify, f"✗ Idle sessions: {e}", severity="error")
+            return
+        msg = (f"Closed {len(closed)} idle: " + "; ".join(closed)[:120] + ". ▶ Resume reopens them."
+               if closed else f"On. Nothing has been idle over {hours} h since herdr started: checked every 5 min.")
+        self.app.call_from_thread(self.app.notify, msg, timeout=6)
 
     # ---- general ------------------------------------------------------------------------------
     def _general(self) -> ComposeResult:

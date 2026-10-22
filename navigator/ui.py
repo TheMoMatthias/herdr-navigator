@@ -23,8 +23,12 @@ def Choice(options, **kw) -> Select:
 
 
 class _Tick(Checkbox):
-    """A checkbox that reads as one: ✔ when on (the stock "X" reads as "off" or "cancel")."""
-    BUTTON_INNER = "✔"
+    """A checkbox that reads as one: ✔ when on, an empty box when off (the stock "X" reads as "off" or
+    "cancel", and drawing the mark in both states left only its colour to tell them apart)."""
+
+    @property
+    def BUTTON_INNER(self) -> str:  # type: ignore[override]
+        return "✔" if self.value else " "
 
 
 def Tick(label: str, value: bool = False, **kw) -> Checkbox:
