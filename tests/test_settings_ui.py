@@ -345,6 +345,18 @@ def test_general_ticks_still_save():
     run(body, "general")
 
 
+def test_idle_sessions_section_saves_the_switch_and_the_hours():
+    async def body(app, pilot, pane):
+        assert settings.load().tidy == {"enabled": False, "idle_hours": 10}   # off until switched on
+        pane.query_one("#td-hours").value = "6"
+        pane.query_one("#td-on").value = True
+        await pilot.pause()
+        settings.load.cache_clear()
+        assert settings.load().tidy == {"enabled": True, "idle_hours": 6}
+
+    run(body, "tidy")
+
+
 def test_updates_hint():
     async def body(app, pilot, pane):
         pane.show_section("updates")

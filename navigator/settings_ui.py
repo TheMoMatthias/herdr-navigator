@@ -2,6 +2,7 @@
 
 A section list on the left, the section on the right:
   Logon      reopen ticked sessions at logon, and how the auto-tick picks them
+  Idle sessions  close sessions idle for hours (off until switched on)
   Accounts   sign in / out per CLI, switch between saved logins
   Alerts     phone alerts: Telegram, ntfy, a webhook (Discord, Slack...), WhatsApp
   Prompts    one-click prompts, the compact instructions and the hand-off text
@@ -30,9 +31,9 @@ from . import accounts, autostart, profiles, prompts, settings
 from .ui import Btn, Choice, Field, Tick
 
 CHANNEL_NAME = {"telegram": "Telegram", "ntfy": "ntfy", "webhook": "Webhook", "whatsapp": "WhatsApp"}
-SECTIONS = [("logon", "Logon restore"), ("accounts", "Accounts"), ("alerts", "Phone alerts"),
-            ("prompts", "Prompts"), ("general", "General"), ("updates", "Updates"), ("system", "System"),
-            ("keys", "Keys")]
+SECTIONS = [("logon", "Logon restore"), ("tidy", "Idle sessions"), ("accounts", "Accounts"),
+            ("alerts", "Phone alerts"), ("prompts", "Prompts"), ("general", "General"), ("updates", "Updates"),
+            ("system", "System"), ("keys", "Keys")]
 
 
 def open_file(path: Path) -> None:
@@ -111,6 +112,8 @@ class SettingsPane(Horizontal):
         with ContentSwitcher(initial=self.section, id="set-body"):
             with VerticalScroll(id="logon"):
                 yield from self._logon()
+            with VerticalScroll(id="tidy"):
+                yield from self._tidy()
             with VerticalScroll(id="accounts"):
                 yield from self._accounts()
             with VerticalScroll(id="alerts"):
@@ -519,6 +522,28 @@ class SettingsPane(Horizontal):
                       Text("added here" if name in mine else "settings file", style="dim"), key=name)
         self.query_one("#prompt-table", DataTable).styles.height = min(14, t.row_count + 1)
 
+    # ---- idle sessions ------------------------------------------------------------------------
+    def _tidy(self) -> ComposeResult:
+        t = settings.load().tidy
+        yield Static("Idle sessions", classes="section-title")
+        yield Static("Close sessions that sat idle for a long time. The conversation is kept: ▶ Resume "
+                     "opens it again. Working, waiting, done and focused sessions, and those with sub-agents "
+                     "or jobs, are never closed. After a herdr restart the clock starts over.", classes="hint")
+        yield Tick("Close idle sessions automatically", bool(t.get("enabled")), id="td-on")
+        with Horizontal(classes="form-row"):
+            yield Static("Close after", classes="lbl")
+            yield Field(str(t.get("idle_hours", 10)), id="td-hours", classes="num")
+            yield Static("hours idle", classes="unit")
+
+    def save_tidy(self) -> None:
+        t = settings.load().tidy
+        new = {"enabled": self.query_one("#td-on", Checkbox).value,
+               "idle_hours": self._number("#td-hours", int(t.get("idle_hours", 10)), lo=1)}
+        if all(t.get(k) == v for k, v in new.items()):
+            return
+        settings.save_values("tidy", new)
+        self._saved("Idle sessions")
+
     # ---- general ------------------------------------------------------------------------------
     def _general(self) -> ComposeResult:
         s = settings.load()
@@ -596,6 +621,8 @@ class SettingsPane(Horizontal):
             self.save_logon()
         elif wid.startswith("al-"):
             self.save_alerts()
+        elif wid.startswith("td-"):
+            self.save_tidy()
         elif wid.startswith("gn-"):
             self.save_general()
         elif wid == "up-auto":
