@@ -156,6 +156,14 @@ full_at = 700000
 # summary must keep. Other CLIs get a plain /compact. Empty = a plain /compact everywhere.
 instructions = "Save the current working state: all progress, findings and insights gained, what we are working on and still need to evaluate, the tasks and objectives done and still to do next, and the rulings and workflows established."
 
+[tidy]
+# Close sessions that sat idle for a long time. The conversation is kept: resume it from the
+# Navigator. The clock never starts before the herdr server did, so a morning restart closes
+# nothing at once. Sessions that work, wait for you, are done, run sub-agents/jobs, or are in
+# focus are never closed.
+enabled = false
+idle_hours = 10
+
 [handoff]
 # What "⇢ Hand off" sends to the other agent. {name} {cli} {project} {answer}
 template = "Hand-off from {name} ({cli}, {project}). Their latest answer:\\n\\n{answer}\\n\\nReview it and tell me what you think: what is right, what is wrong or missing."
@@ -238,6 +246,7 @@ class Settings:
     handoff: str = ""
     compact: dict = field(default_factory=dict)
     login: dict[str, dict] = field(default_factory=dict)
+    tidy: dict = field(default_factory=dict)
 
 
 PLUGIN_ID = "momatthias.navigator"
@@ -368,6 +377,7 @@ def _load(_key: str, _mtime_ns: int) -> Settings:
         alerts={**defaults["alerts"], **raw.get("alerts", {})},
         handoff=str(raw.get("handoff", {}).get("template", defaults["handoff"]["template"])),
         compact={**defaults["compact"], **raw.get("compact", {})},
+        tidy={**defaults["tidy"], **raw.get("tidy", {})},
         login={k: {**defaults["login"].get(k, {}), **v} for k, v in
                {**defaults["login"], **raw.get("login", {})}.items()},
     )

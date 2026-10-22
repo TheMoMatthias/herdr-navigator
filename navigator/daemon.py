@@ -321,7 +321,7 @@ class Daemon:
 
     # ---- the work loop ------------------------------------------------------------------------
     def run(self) -> None:
-        from . import accounts, live, model, status, sync
+        from . import accounts, live, model, status, sync, tidy
         model.SESSIONS_TTL = 10.0
         code = _code_stamp()
         last_sync = last_status = last_beat = last_heal = last_view = last_code = last_work = last_pulse = 0.0
@@ -379,6 +379,9 @@ class Daemon:
                 if now - last_heal >= HEAL_EVERY:
                     last_heal = now
                     self.want_sync = True
+                    if tidy.config()[0]:  # idle sessions past [tidy] idle_hours
+                        for name in tidy.sweep(model.build()):
+                            self.log(f"tidy: closed {name}")
                 quiet = now - self.last_event >= DEBOUNCE
                 if self.want_sync and quiet and now - last_sync >= MIN_GAP:
                     force = self.want_force
