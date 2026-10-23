@@ -347,12 +347,34 @@ def test_general_ticks_still_save():
 
 def test_idle_sessions_section_saves_the_switch_and_the_hours():
     async def body(app, pilot, pane):
-        assert settings.load().tidy == {"enabled": False, "idle_hours": 10}   # off until switched on
+        assert settings.load().tidy == {"enabled": False, "idle_hours": 10, "keep_newest": 3}   # off until switched on
         pane.query_one("#td-hours").value = "6"
         pane.query_one("#td-on").value = True
         await pilot.pause()
         settings.load.cache_clear()
-        assert settings.load().tidy == {"enabled": True, "idle_hours": 6}
+        assert settings.load().tidy == {"enabled": True, "idle_hours": 6, "keep_newest": 3}
+
+    run(body, "tidy")
+
+
+def test_idle_review_lists_the_recommendation_ticked_and_closes_the_ticked(monkeypatch):
+    from types import SimpleNamespace as NS
+    from navigator import tidy
+    from navigator.settings_ui import IdleReview
+    from textual.widgets import SelectionList
+    mk = lambda sid: NS(session_id=sid, display=sid, project=NS(name="P"), cli="claude")
+    items = [tidy.Item(mk("old"), 99 * 3600, True, "idle 4 days"), tidy.Item(mk("new"), 3600, False, "idle only 1 h")]
+    closed = []
+    monkeypatch.setattr(tidy, "close", lambda agents, snap=None: closed.extend(a.session_id for a in agents) or closed)
+
+    async def body(app, pilot, pane):
+        app.push_screen(IdleReview(items))
+        await pilot.pause()
+        sl = app.screen.query_one(SelectionList)
+        assert list(sl.selected) == [0]                      # only the recommended one is ticked
+        await pilot.click("#ir-go")
+        await settle(app, pilot)
+        assert closed == ["old"]
 
     run(body, "tidy")
 

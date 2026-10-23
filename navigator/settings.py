@@ -163,6 +163,8 @@ instructions = "Save the current working state: all progress, findings and insig
 # focus are never closed.
 enabled = false
 idle_hours = 10
+# The newest sessions of each project that always stay open, however long they have been idle.
+keep_newest = 3
 
 [handoff]
 # What "⇢ Hand off" sends to the other agent. {name} {cli} {project} {answer}

@@ -18,14 +18,18 @@ import math
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Checkbox, ContentSwitcher, DataTable, Input, OptionList, Select, Static
+from textual.screen import ModalScreen
+from textual.widgets import (Button, Checkbox, ContentSwitcher, DataTable, Input, OptionList, Select,
+                             SelectionList, Static)
 from textual.widgets.option_list import Option
+from textual.widgets.selection_list import Selection
 
 from . import accounts, autostart, profiles, prompts, settings
 from .ui import Btn, Choice, Field, Tick
@@ -82,6 +86,69 @@ def _auto_line() -> Text:
         return Text("Not checked yet: the first look comes a minute after the daemon starts.", style="dim")
     when = time.strftime("%d %b %H:%M", time.localtime(float(st["checked"])))
     return Text(f"Last automatic check {when}: {st.get('result') or 'ok'}", style="dim")
+
+
+class IdleReview(ModalScreen):
+    """Which idle sessions to close: the recommendation is ticked, you change it, then close.
+    Nothing is lost: ▶ Resume reopens any of them."""
+
+    DEFAULT_CSS = """
+    IdleReview { align: center middle; background: $background 50%; }
+    #ir { width: 110; max-width: 96%; height: auto; max-height: 90%; border: round $primary;
+          background: $panel; padding: 1 2; }
+    #ir SelectionList { height: auto; max-height: 24; border: none; background: $panel; }
+    #ir .bar { margin: 1 0 0 0; padding: 0; }
+    """
+    BINDINGS = [("escape", "dismiss(None)", "Cancel")]
+
+    def __init__(self, items) -> None:
+        super().__init__()
+        self.items = items
+
+    def compose(self) -> ComposeResult:
+        rows = []
+        for i, it in enumerate(self.items):
+            a = it.agent
+            t = Text.assemble((f"{a.display[:26]:<27}", "bold"), (f"{a.project.name[:18]:<19}", "dim"),
+                              (it.reason[:44], "" if it.close else "dim"))
+            t.no_wrap = True
+            rows.append(Selection(t, i, it.close))
+        keep = sum(not it.close for it in self.items)
+        with Vertical(id="ir"):
+            yield Static(Text.assemble(
+                ("Idle sessions", "bold"),
+                (f"  ·  ticked = I would close ({len(self.items) - keep}), unticked = keep ({keep})", "dim")))
+            yield Static(Text("Space ticks or unticks. Closed sessions stay in Sessions: ▶ Resume brings one back "
+                              "with its whole conversation.", style="dim"))
+            yield SelectionList(*rows)
+            with Horizontal(classes="bar"):
+                yield Btn("Close ticked", id="ir-go", variant="primary")
+                yield Btn("Cancel", id="ir-cancel")
+
+    def on_mount(self) -> None:
+        self.query_one(SelectionList).focus()
+        self.count()
+
+    @on(SelectionList.SelectedChanged)
+    def count(self) -> None:
+        n = len(self.query_one(SelectionList).selected)
+        go = self.query_one("#ir-go", Button)
+        go.label, go.disabled = f"Close {n} ticked", n == 0
+
+    @on(Button.Pressed, "#ir-cancel")
+    def _cancel(self) -> None:
+        self.dismiss(None)
+
+    @on(Button.Pressed, "#ir-go")
+    def _go(self) -> None:
+        picked = [self.items[i].agent for i in self.query_one(SelectionList).selected]
+        self.dismiss(None)
+        self.app.run_worker(lambda: self._close(picked), thread=True, group="tidy-close")
+
+    def _close(self, agents) -> None:
+        from . import tidy
+        n = len(tidy.close(agents))
+        self.app.call_from_thread(self.app.notify, f"Closed {n}. ▶ Resume in Sessions reopens any of them.", timeout=6)
 
 
 class SettingsPane(Horizontal):
@@ -534,11 +601,32 @@ class SettingsPane(Horizontal):
             yield Static("Close after", classes="lbl")
             yield Field(str(t.get("idle_hours", 10)), id="td-hours", classes="num")
             yield Static("hours idle", classes="unit")
+        with Horizontal(classes="form-row"):
+            yield Static("Always keep", classes="lbl")
+            yield Field(str(t.get("keep_newest", 3)), id="td-keep", classes="num")
+            yield Static("newest sessions per project", classes="unit")
+        with Horizontal(classes="bar"):
+            yield Btn("Review idle sessions…", id="td-review", variant="primary",
+                      tooltip="See which idle sessions I would close and which stay; you decide")
+
+    def open_review(self) -> None:
+        from . import model, tidy
+
+        def show(world) -> None:
+            items = tidy.review(world, time.time())
+            if not items:
+                self.app.notify("No idle sessions: nothing to close.", timeout=4)
+                return
+            self.app.push_screen(IdleReview(items))
+
+        self.app.run_worker(lambda: self.app.call_from_thread(show, model.build()), thread=True,
+                            group="tidy-review", exclusive=True)
 
     def save_tidy(self) -> None:
         t = settings.load().tidy
         new = {"enabled": self.query_one("#td-on", Checkbox).value,
-               "idle_hours": self._number("#td-hours", int(t.get("idle_hours", 10)), lo=1)}
+               "idle_hours": self._number("#td-hours", int(t.get("idle_hours", 10)), lo=1),
+               "keep_newest": self._number("#td-keep", int(t.get("keep_newest", 3)))}
         if all(t.get(k) == v for k, v in new.items()):
             return
         settings.save_values("tidy", new)
@@ -847,6 +935,8 @@ class SettingsPane(Horizontal):
                 open_file(log)
             else:
                 self.app.notify("No restore has run yet.")
+        elif bid == "td-review":
+            self.open_review()
         elif bid.startswith("acct-save-"):
             self.save_profile(bid[10:])
         elif bid.startswith("acct-in-"):
