@@ -594,8 +594,9 @@ class SettingsPane(Horizontal):
         t = settings.load().tidy
         yield Static("Idle sessions", classes="section-title")
         yield Static("Close sessions that sat idle for a long time. The conversation is kept: ▶ Resume "
-                     "opens it again. Working, waiting, done and focused sessions, and those with sub-agents "
-                     "or jobs, are never closed. After a herdr restart the clock starts over.", classes="hint")
+                     "opens it again. The same limit decides what a herdr restart brings back: sessions idle longer "
+                     "stay closed. Working, waiting, done and focused sessions, and those with sub-agents or "
+                     "jobs, are never closed.", classes="hint")
         yield Tick("Close idle sessions automatically", bool(t.get("enabled")), id="td-on")
         with Horizontal(classes="form-row"):
             yield Static("Close after", classes="lbl")
@@ -605,6 +606,11 @@ class SettingsPane(Horizontal):
             yield Static("Always keep", classes="lbl")
             yield Field(str(t.get("keep_newest", 3)), id="td-keep", classes="num")
             yield Static("newest sessions per project", classes="unit")
+        with Horizontal(classes="form-row"):
+            yield Static("Never close names with", classes="lbl")
+            yield Field(", ".join(t.get("protect", ["lead"])), id="td-protect",
+                        tooltip="Words, comma-separated. Sessions whose name contains one are never closed "
+                                "and always come back at a restart: your lead sessions")
         with Horizontal(classes="bar"):
             yield Btn("Review idle sessions…", id="td-review", variant="primary",
                       tooltip="See which idle sessions I would close and which stay; you decide")
@@ -626,7 +632,8 @@ class SettingsPane(Horizontal):
         t = settings.load().tidy
         new = {"enabled": self.query_one("#td-on", Checkbox).value,
                "idle_hours": self._number("#td-hours", int(t.get("idle_hours", 10)), lo=1),
-               "keep_newest": self._number("#td-keep", int(t.get("keep_newest", 3)))}
+               "keep_newest": self._number("#td-keep", int(t.get("keep_newest", 3))),
+               "protect": [w.strip() for w in self.query_one("#td-protect", Input).value.split(",") if w.strip()]}
         if all(t.get(k) == v for k, v in new.items()):
             return
         settings.save_values("tidy", new)

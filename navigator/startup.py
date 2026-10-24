@@ -78,6 +78,10 @@ def plan(sessions: list[Session], data: dict | None = None, now: float | None = 
     window = float(cfg.get("window_days", 3)) * 86400
     recency = float(cfg.get("recency_days", 14)) * 86400
     with_wt = bool(cfg.get("include_worktrees", True))
+    from . import tidy  # one limit for both: what is closed when idle is not reopened at logon either
+    on, idle_limit, _ = tidy.config()
+    if on:
+        window = min(window, idle_limit)
     groups: dict[str, ProjectRows] = {}
     for s in sorted(sessions, key=lambda s: -s.mtime):
         if s.subagent or (s.project.worktree and not with_wt):
@@ -103,7 +107,8 @@ def plan(sessions: list[Session], data: dict | None = None, now: float | None = 
             if r.pinned or not g.auto:
                 continue
             ln = lane(r.session)
-            if now - r.session.mtime <= window and budget.get(ln, 0) < per_lane:
+            fresh = now - r.session.mtime <= window or (on and tidy.protected(r.session.title))
+            if fresh and budget.get(ln, 0) < per_lane:
                 r.ticked = True
                 budget[ln] = budget.get(ln, 0) + 1
     return sorted(groups.values(), key=lambda g: -max(r.session.mtime for r in g.rows))

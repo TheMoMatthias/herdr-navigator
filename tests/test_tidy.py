@@ -49,11 +49,16 @@ def test_the_newest_sessions_of_each_project_stay(monkeypatch):
     assert closed == ["a3"]                      # A keeps its 2 newest; B's only session is its newest
 
 
-def test_a_morning_restart_closes_nothing_until_ten_hours_after_the_server_started(monkeypatch):
+def test_a_restart_closes_nothing_until_the_grace_after_the_server_started(monkeypatch):
     agents = [agent("a"), agent("b")]
-    mt = {"a": 20, "b": 15}                      # both wrote far over 10 h ago, the server started 1 h ago
-    assert run(monkeypatch, agents, mt, started=1)[0] == []
-    assert run(monkeypatch, agents, mt, started=11)[0] == ["a", "b"]   # 10 h later they are due
+    mt = {"a": 20, "b": 15}                      # both wrote far over 10 h ago
+    assert run(monkeypatch, agents, mt, started=0.1)[0] == []           # server up for 6 min
+    assert run(monkeypatch, agents, mt, started=1)[0] == ["a", "b"]     # an hour in: due
+
+
+def test_lead_sessions_are_never_closed(monkeypatch):
+    agents = [agent("l", display="LEAD-8"), agent("m", display="MPV2-lead5"), agent("x", display="BENCH")]
+    assert run(monkeypatch, agents, {"l": 90, "m": 90, "x": 90}, started=40)[0] == ["BENCH"]
 
 
 def test_a_tab_with_other_panes_only_loses_the_pane(monkeypatch):

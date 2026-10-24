@@ -4,8 +4,10 @@ A session is a candidate when herdr shows it idle (or inactive: idle for an hour
 sub-agents, background jobs or workflows, and it is not in focus. It is recommended for closing when
   * its last transcript write is older than `idle_hours`, and
   * it is not one of the `keep_newest` most recently used sessions of its project.
-The automatic sweep also never starts the idle clock before the herdr server did, so the morning
-restart, where every session is "idle for 10 hours", closes nothing at once.
+Sessions whose name contains one of `protect` ("lead") are never closed: they are the ones the others
+report to. The automatic sweep waits GRACE after the herdr server starts, so a restart closes nothing
+before the restore has had its turn. The same limit decides what a restart brings back: a session idle
+longer than that is not reopened (see restore.resume_panes) and stays in the Navigator to resume.
 Closing never loses the conversation: it stays in the Navigator to resume (a session that is
 messaged again later simply comes back with ▶ Resume). The session is unticked for the logon
 restore, which would otherwise open it again.
@@ -20,6 +22,7 @@ from pathlib import Path
 from . import herdr, model, restore, settings, startup
 from .sessions import load_sessions
 
+GRACE = 1800  # seconds after the herdr server starts before the first automatic close
 MAX_PER_SWEEP = 10  # a long-parked backlog goes over several sweeps, never as one burst
 PARKED = ("idle", "inactive")
 
@@ -39,6 +42,18 @@ def config() -> tuple[bool, float, int]:
             max(0, int(cfg.get("keep_newest", 3) or 0)))
 
 
+def protected(name: str) -> bool:
+    low = (name or "").lower()
+    return any(str(p).lower() in low for p in settings.load().tidy.get("protect", []) if str(p).strip())
+
+
+def stale(mtime: float, name: str, now: float) -> bool:
+    """True when a restart should leave this session closed: tidy is on, it has been idle longer than
+    the limit and it is not a protected (lead) session."""
+    on, limit, _ = config()
+    return on and now - mtime > limit and not protected(name)
+
+
 def server_started_at() -> float:
     """When this herdr server started: its socket file is rewritten at every start (0 = unknown)."""
     try:
@@ -52,8 +67,8 @@ def ago(seconds: float) -> str:
     return f"{h:.0f} h" if h < 48 else f"{h / 24:.0f} days"
 
 
-def review(world: model.World, now: float, floor: float = 0.0) -> list[Item]:
-    """Every parked session with a recommendation. `floor` is the earliest the idle clock may start."""
+def review(world: model.World, now: float) -> list[Item]:
+    """Every parked session with a recommendation."""
     _, limit, keep = config()
     mtime = {s.id: s.mtime for s in load_sessions(include_hidden=True)}
     rank: dict[str, int] = {}  # 0 = the project's most recently used session
@@ -70,8 +85,10 @@ def review(world: model.World, now: float, floor: float = 0.0) -> list[Item]:
             continue
         if a.subagents or a.jobs or a.workflows:
             continue
-        idle = now - max(mtime[a.session_id], floor)
-        if rank[a.session_id] < keep:
+        idle = now - mtime[a.session_id]
+        if protected(a.display):
+            out.append(Item(a, idle, False, "protected: a lead session"))
+        elif rank[a.session_id] < keep:
             out.append(Item(a, idle, False, f"one of the newest {keep} in {a.project.name}"))
         elif idle < limit:
             out.append(Item(a, idle, False, f"idle only {ago(idle)}"))
@@ -106,9 +123,9 @@ def sweep(world: model.World, snap: dict | None = None) -> list[str]:
     """The automatic pass: close what is due."""
     enabled = config()[0]
     started = server_started_at()
-    if not enabled or not started:
+    if not enabled or not started or time.time() - started < GRACE:
         return []
-    due = [i.agent for i in review(world, time.time(), started) if i.close][:MAX_PER_SWEEP]
+    due = [i.agent for i in review(world, time.time()) if i.close][:MAX_PER_SWEEP]
     closed = close(due, snap) if due else []
     if closed:
         restore.notify("Idle sessions closed", f"{len(closed)}: " + "; ".join(closed)[:180] + ". Resume from the Navigator.")

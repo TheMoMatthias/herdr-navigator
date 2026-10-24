@@ -165,6 +165,9 @@ enabled = false
 idle_hours = 10
 # The newest sessions of each project that always stay open, however long they have been idle.
 keep_newest = 3
+# Sessions whose name contains one of these words are never closed, and always come back at a
+# restart: the lead sessions the others report to.
+protect = ["lead"]
 
 [handoff]
 # What "⇢ Hand off" sends to the other agent. {name} {cli} {project} {answer}

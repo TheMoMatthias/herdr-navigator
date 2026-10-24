@@ -297,6 +297,31 @@ def test_resume_panes_uses_herdrs_own_session_and_skips_quit_and_empty(tmp_path,
     assert restore.live_ids(snap) >= {"live"} and not ({"s-ok", "s-empty", "s-quit"} & restore.live_ids(snap))
 
 
+def test_a_restart_leaves_stale_sessions_closed_but_brings_back_leads(tmp_path, monkeypatch):
+    from navigator import restore, tidy
+    from navigator.sessions import Session
+    now = time.time()
+    mk = lambda sid, name, age: Session("claude", sid, str(tmp_path), name, "", "", now - age * 3600,  # noqa: E731
+                                        _claude_file(tmp_path, sid), named=True)
+    sess = [mk("fresh", "PLAN-2", 3), mk("stale", "OLD-7", 40), mk("lead", "LEAD-8", 90)]
+    ref = lambda sid: {"agent": "claude", "kind": "id", "value": sid}  # noqa: E731
+    snap = {"panes": [{"pane_id": f"w:p{i}", "tab_id": f"t{i}", "cwd": str(tmp_path), "agent": None,
+                       "agent_session": ref(sid)} for i, sid in enumerate(("fresh", "stale", "lead"))]}
+    ran, closed = [], []
+    monkeypatch.setattr(restore.herdr, "snapshot", lambda: snap)
+    monkeypatch.setattr(restore.herdr, "pane_run", lambda pane, cmd: ran.append(pane))
+    monkeypatch.setattr(tidy.herdr, "run", lambda *a, **k: closed.append(a))
+    monkeypatch.setattr(startup, "set_tick", lambda *a: None)
+    monkeypatch.setattr(tidy, "config", lambda: (True, 24 * 3600, 3))
+    monkeypatch.setattr(restore, "_foreground", lambda pane: [])
+    monkeypatch.setattr(restore, "claude_needs_refresh", lambda: False)
+    monkeypatch.setattr("navigator.sessions.load_sessions", lambda include_hidden=False: sess)
+    monkeypatch.setattr(restore.time, "sleep", lambda s: None)
+    monkeypatch.setattr(restore, "server_id", lambda: "srv:1")
+    assert restore.resume_panes() == "resumed 2 in their panes"
+    assert ran == ["w:p0", "w:p2"] and closed == [("tab", "close", "t1")]   # the stale one's empty tab goes
+
+
 def test_has_conversation(tmp_path):
     from navigator import restore
     from navigator.sessions import Session

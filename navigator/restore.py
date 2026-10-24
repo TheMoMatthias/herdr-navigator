@@ -194,6 +194,8 @@ def resume_panes() -> str:
         lock.unlink(missing_ok=True)
         return resume_panes()
     try:
+        from types import SimpleNamespace
+        from . import tidy
         from .sessions import load_sessions
         m = load_panes()
         snap = herdr.snapshot()
@@ -202,6 +204,7 @@ def resume_panes() -> str:
         by_path = {os.path.normcase(x.path): x.id for x in known if x.path}
         todo_: list[tuple[str, dict]] = []
         skipped: list[str] = []
+        left: list = []  # stale sessions: their restored empty panes are closed, not left as shells
         elsewhere = live_ids(snap)  # never a second process on a session that runs somewhere
         for p in snap.get("panes", []):
             pane = p["pane_id"]
@@ -226,11 +229,19 @@ def resume_panes() -> str:
             if not has_conversation(s):
                 skipped.append(f"{name or sid[:8]}: never started a conversation, nothing to resume")
                 continue
+            if s and tidy.stale(s.mtime, name or s.title, time.time()):  # parked past [tidy] idle_hours
+                skipped.append(f"{name or sid[:8]}: idle over {tidy.ago(time.time() - s.mtime)}, left closed "
+                               "(resume it from the Navigator)")
+                left.append(SimpleNamespace(pane_id=pane, tab_id=p.get("tab_id", ""), cli=cli, session_id=sid,
+                                            display=name or sid[:8]))
+                continue
             e = {"cli": cli, "sid": sid, "name": name, "cwd": cwd, "at": rec.get("at", time.time())}
             m[pane] = {**rec, **e}
             todo_.append((pane, m[pane]))
         for x in skipped:
             log(f"pane resume skipped {x}")
+        if left:
+            tidy.close(left, snap)
         if not todo_:
             log("pane resume: no panes to resume")
             return "no panes to resume"
