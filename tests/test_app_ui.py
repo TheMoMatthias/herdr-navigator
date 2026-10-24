@@ -1,6 +1,7 @@
 """The Navigator's own screen (navigator/app.py): declutter pass of 2026-10-12. A fake world is
 mounted with Textual's pilot, so no herdr is needed."""
 import asyncio
+from pathlib import Path
 
 import pytest
 from textual.widgets import Button, DataTable, Static
@@ -355,6 +356,53 @@ def test_new_agent_menu_without_a_project_says_so(tmp_path, monkeypatch):
     run_app(tmp_path, monkeypatch, scenario)
 
 
+def test_new_anywhere_starts_in_home_and_launches_in_the_folder_chosen(tmp_path, monkeypatch):
+    import os
+    import navigator.app as A
+    from navigator.startup_ui import NewSession
+    started = []
+    monkeypatch.setattr(A.launch, "new_session", lambda world, p, folder, cli, name, prefs, branch, focus=True:
+                        started.append((p.root, folder, cli, name)) or "ok")
+
+    async def scenario(app, pilot):
+        for bid in ("#btn-new-any", "#btn-new-any-a", "#btn-new-proj-a"):
+            assert app.query(bid), bid
+        app.new_anywhere()
+        await pilot.pause(0.3)
+        assert isinstance(app.screen, NewSession)
+        assert app.screen.query_one("#ns-folder").value == os.path.expanduser("~")
+        app.screen.query_one("#ns-folder").value = str(tmp_path)
+        app.screen.query_one("#ns-name").value = "scratch"
+        app.screen._go()
+        await pilot.pause(0.5)
+        assert started and started[0][1] == str(tmp_path) and started[0][3] == "scratch"
+    run_app(tmp_path, monkeypatch, scenario)
+
+
+def test_open_folder_opens_the_typed_project_as_a_space(tmp_path, monkeypatch):
+    import navigator.app as A
+    from navigator.startup_ui import Prompt
+    opened = []
+    monkeypatch.setattr(A.launch, "goto_project", lambda world, p, wt="": opened.append(p.root) or "ok")
+
+    async def scenario(app, pilot):
+        for bid in ("#btn-open-dir", "#btn-open-dir-a"):
+            assert app.query(bid), bid
+        seen = _spy_notify(app)
+        app.open_folder()
+        await pilot.pause(0.3)
+        assert isinstance(app.screen, Prompt)
+        app.screen.dismiss(str(tmp_path / "nope"))
+        await pilot.pause(0.3)
+        assert not opened and "is not a folder" in seen[0]
+        app.open_folder()
+        await pilot.pause(0.3)
+        app.screen.dismiss(str(tmp_path))
+        await pilot.pause(0.6)
+        assert len(opened) == 1
+    run_app(tmp_path, monkeypatch, scenario)
+
+
 def test_saved_layouts_use_the_selected_project_and_a_first_click_does_not_restore(tmp_path, monkeypatch):
     import navigator.app as A
     monkeypatch.setattr(A.layouts, "saved", lambda p: {"two": {"root": {}, "saved_at": 1.0}})
@@ -377,3 +425,25 @@ def test_saved_layouts_use_the_selected_project_and_a_first_click_does_not_resto
         await pilot.pause(0.2)
         assert ops == [("restore", "two")]
     run_app(tmp_path, monkeypatch, scenario)
+
+
+def test_herdr_menu_entries_open_the_matching_dialog(tmp_path, monkeypatch):
+    from navigator import newhere
+    from navigator.startup_ui import NewSession, Prompt
+    calls = []
+    monkeypatch.setattr(newhere.herdr, "run", lambda *a, **k: calls.append(a))
+    monkeypatch.setenv("HERDR_WORKSPACE_ID", "w9")
+    for mode in ("", "any", "open"):
+        newhere.main(mode)
+    assert [c[-1] for c in calls] == ["NAV_NEW=w9", "NAV_NEWANY=1", "NAV_OPENDIR=1"]
+    manifest = (Path(newhere.__file__).resolve().parent.parent / "herdr-plugin.toml").read_text(encoding="utf-8")
+    for needle in ('"newhere", "any"]', '"newhere", "open"]', "new session in any folder", "open a project folder"):
+        assert needle in manifest, needle
+
+    for var, screen in (("NAV_NEWANY", NewSession), ("NAV_OPENDIR", Prompt)):
+        monkeypatch.setenv(var, "1")
+
+        async def scenario(app, pilot, screen=screen):
+            await pilot.pause(0.5)
+            assert isinstance(app.screen, screen) and app.new_only
+        run_app(tmp_path / var, monkeypatch, scenario)

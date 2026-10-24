@@ -34,6 +34,7 @@ HEAL_EVERY = 300.0    # a sync even without events (events cover changes; this h
 WORK_EVERY = 2.0      # did a session's sub-agents or background jobs change? (a sync when so; ~50 ms)
 PULSE_EVERY = 0.25    # one frame of the pulsing "working" dot (sync.pulse_tick): ~2.5 s a breath
 VIEW_EVERY = 20.0     # is herdr's Agents view still ours? (~5 ms; re-applied when dropped)
+FAILED_STEPS = 30     # steps failing in a row before the daemon restarts itself
 CODE_EVERY = 10.0     # has the plugin been updated? (exit, so the new code takes over)
 GIVE_UP = 300.0       # herdr unreachable this long: exit (its startup hook starts a new one)
 GLOBAL = ["pane.created", "pane.closed", "pane.exited", "pane.agent_detected", "pane.updated",
@@ -326,6 +327,7 @@ class Daemon:
         code = _code_stamp()
         last_sync = last_status = last_beat = last_heal = last_view = last_code = last_work = last_pulse = 0.0
         work_sig = None
+        failures = 0
         sidebar_width = None
         login_seen: dict[str, float] = {}
         poke_seen = 0.0
@@ -411,7 +413,14 @@ class Daemon:
                     break
             except Exception as e:  # one bad step never ends the daemon
                 self.log(f"step failed: {e!r}")
+                failures += 1
+                if failures >= FAILED_STEPS:  # a stale or half-loaded module never mends itself: start over
+                    self.log(f"{failures} steps failed in a row: exiting so a fresh daemon takes over")
+                    self.restart = True
+                    break
                 time.sleep(1.0)
+            else:
+                failures = 0
             time.sleep(0.1 if self.want_sync or self.want_status or sync.pulsing() else 0.25)
         self.stop = True
 

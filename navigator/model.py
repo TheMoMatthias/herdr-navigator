@@ -405,8 +405,8 @@ def session_ref(ref: dict | None, by_path: dict[str, str]) -> str:
 def last_write(s: Session | None, transcript: str) -> float:
     """When the session last wrote. A database-backed CLI (opencode, kilo, hermes) shares one file
     across all its sessions, so there the session's own last update counts, not the file's."""
-    if s and s.path == transcript and not transcript.endswith((".jsonl", ".json")):
-        return s.mtime
+    if s and s.path == transcript and (s.cli == "claude" or not transcript.endswith((".jsonl", ".json"))):
+        return s.mtime  # Claude: its last message (a resume rewrites the file without one)
     return _mtime(transcript)
 
 

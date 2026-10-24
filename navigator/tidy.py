@@ -114,7 +114,8 @@ def close(agents: list[model.Agent], snap: dict | None = None) -> list[str]:
         except herdr.HerdrError as e:
             restore.log(f"tidy: could not close {a.display}: {e}")
             continue
-        restore.log(f"tidy: closed {a.cli} {a.session_id} '{a.display[:50]}' (resume it from the Navigator)")
+        restore.log(f"tidy: closed {a.cli} {a.session_id} '{a.display[:50]}' pane {a.pane_id} tab {a.tab_id} "
+                    f"(resume it from the Navigator)")
         closed.append(a.display)
     return closed
 

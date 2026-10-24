@@ -243,17 +243,46 @@ command = ["sh", "run.sh", "hook"]
 # herdr's workspace menu: start a new agent session in that workspace's project (or worktree).
 [[actions]]
 id = "new-here"
-title = "Navigator: new agent session here…"
+title = "Navigator: new session in this project…"
 contexts = ["workspace"]
 platforms = ["windows"]
 command = ["cmd.exe", "/d", "/c", "run.cmd", "newhere"]
 
 [[actions]]
 id = "new-here-unix"
-title = "Navigator: new agent session here…"
+title = "Navigator: new session in this project…"
 contexts = ["workspace"]
 platforms = ["linux", "macos"]
 command = ["sh", "run.sh", "newhere"]
+
+# herdr's menu (right-click a Space or a pane): start a session in any folder, or open a project folder.
+[[actions]]
+id = "new-any"
+title = "Navigator: new session in any folder…"
+contexts = ["workspace", "pane"]
+platforms = ["windows"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "newhere", "any"]
+
+[[actions]]
+id = "new-any-unix"
+title = "Navigator: new session in any folder…"
+contexts = ["workspace", "pane"]
+platforms = ["linux", "macos"]
+command = ["sh", "run.sh", "newhere", "any"]
+
+[[actions]]
+id = "open-dir"
+title = "Navigator: open a project folder…"
+contexts = ["workspace", "pane"]
+platforms = ["windows"]
+command = ["cmd.exe", "/d", "/c", "run.cmd", "newhere", "open"]
+
+[[actions]]
+id = "open-dir-unix"
+title = "Navigator: open a project folder…"
+contexts = ["workspace", "pane"]
+platforms = ["linux", "macos"]
+command = ["sh", "run.sh", "newhere", "open"]
 
 
 # herdr's Agents panel is a tree by project: fold or unfold one (right-click a pane or a workspace)

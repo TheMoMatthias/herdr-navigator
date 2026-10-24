@@ -127,6 +127,21 @@ def test_claude_session_without_conversation_is_marked_and_not_resumed(tmp_path,
     assert launch.resume(None, ss["stub"]).startswith("✗ 'LEAD6' has no saved conversation")
 
 
+def test_claude_session_time_is_its_last_message_not_its_file_write(tmp_path):
+    # resuming a session at herdr's restart rewrites its file (bookkeeping, no message): the file looks fresh
+    proj = tmp_path / "P"
+    make_repo(proj)
+    write_jsonl(tmp_path / "claude" / "projects" / "d" / "s1.jsonl", [
+        {"type": "user", "cwd": str(proj), "timestamp": "2026-10-22T07:00:00Z", "message": {"content": "hi"}},
+        {"type": "assistant", "cwd": str(proj), "timestamp": "2026-10-22T07:05:00Z", "message": {"content": "ok"}},
+        {"type": "custom-title", "customTitle": "X", "timestamp": "2026-10-24T09:16:00Z"},
+    ])
+    [s] = sessions.load_sessions()
+    import datetime
+    assert s.mtime == datetime.datetime(2026, 10, 22, 7, 5, tzinfo=datetime.timezone.utc).timestamp()
+    assert os.path.getmtime(s.path) > s.mtime + 86400
+
+
 def test_claude_first_prompt_skips_command_noise(tmp_path):
     proj = tmp_path / "P"
     make_repo(proj)

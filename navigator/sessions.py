@@ -6,6 +6,7 @@ cache the result by (mtime, size), so a refresh after the first run touches chan
 from __future__ import annotations
 
 import functools
+from datetime import datetime
 import glob
 import json
 import os
@@ -19,7 +20,7 @@ from . import projects, settings
 
 HEAD_BYTES = 96 * 1024
 TAIL_BYTES = 256 * 1024
-CACHE_VERSION = 12  # bumped: Claude transcripts with no conversation are marked
+CACHE_VERSION = 13  # bumped: a Claude session's time is its last message, not its file's last write
 
 
 @dataclass
@@ -138,11 +139,20 @@ def _decode_project_dir(name: str) -> str:
     return walk(base, rest)
 
 
+def _stamp(d: dict) -> float:
+    """A transcript record's own time (epoch seconds), 0 when it has none."""
+    try:
+        return datetime.fromisoformat(str(d.get("timestamp", "")).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
+
+
 def _parse_claude(path: Path) -> Session | None:
     head, tail = _read_head_tail(path)
     sid = path.stem
     cwd = branch = first_prompt = title = last_prompt = entry = ""
     talked = False
+    spoke = 0.0  # the last user/assistant record: resuming a session rewrites its file without a message
     for line in head:
         d = _loads(line)
         if not d:
@@ -151,6 +161,8 @@ def _parse_claude(path: Path) -> Session | None:
         branch = branch or d.get("gitBranch", "") or ""
         entry = entry or d.get("entrypoint", "")
         talked = talked or d.get("type") in ("user", "assistant")
+        if d.get("type") in ("user", "assistant"):
+            spoke = max(spoke, _stamp(d))
         if not first_prompt and d.get("type") == "user" and not d.get("isMeta") and not d.get("isSidechain"):
             first_prompt = _text_of((d.get("message") or {}).get("content"))
         if d.get("type") == "custom-title":
@@ -165,6 +177,8 @@ def _parse_claude(path: Path) -> Session | None:
             continue
         t = d.get("type")
         talked = talked or t in ("user", "assistant")
+        if t in ("user", "assistant"):
+            spoke = max(spoke, _stamp(d))
         if t == "custom-title":
             title = d.get("customTitle", "") or title
         elif t == "last-prompt":
@@ -187,7 +201,7 @@ def _parse_claude(path: Path) -> Session | None:
         title=_clip(title or first_prompt or _clean(last_prompt) or "(untitled)"),
         last_prompt=_clip(_clean(last_prompt) or first_prompt, 200),
         branch=branch,
-        mtime=st.st_mtime,
+        mtime=min(st.st_mtime, spoke) if spoke else st.st_mtime,
         path=str(path),
         subagent=entry.startswith("sdk"),
         origin=entry or "cli",

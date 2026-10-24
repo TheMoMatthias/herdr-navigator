@@ -584,7 +584,9 @@ class Navigator(App):
         with TabbedContent(initial=self.start_tab, id="tabs"):
             with TabPane("1 Projects", id="projects"):
                 with Horizontal(classes="bar"):
-                    yield Btn("+ New agent ▾", id="btn-new", tooltip="Start an agent here: pick a CLI, or set it up")
+                    yield Btn("+ New in project ▾", id="btn-new", tooltip="Start an agent in the selected project: pick a CLI, or set it up")
+                    yield Btn("+ New…", id="btn-new-any", tooltip="Start an agent in any folder (it starts in your home folder)")
+                    yield Btn("📂 Open…", id="btn-open-dir", tooltip="Open a project folder as a Space (or jump to it if it is open)")
                     yield Field(placeholder="filter  /", id="proj-filter")
                 with Horizontal():
                     with Vertical():
@@ -594,6 +596,10 @@ class Navigator(App):
                         yield Static(id="proj-info")
                         yield ClickTwiceTable(id="proj-items", show_header=False)
             with TabPane("2 Agents", id="agents"):
+                with Horizontal(id="agent-new-bar", classes="bar"):
+                    yield Btn("＋ In project", id="btn-new-proj-a", tooltip="Start an agent in the selected agent's project")
+                    yield Btn("＋ New…", id="btn-new-any-a", tooltip="Start an agent in any folder")
+                    yield Btn("📂 Open…", id="btn-open-dir-a", tooltip="Open a project folder as a Space")
                 with Horizontal(id="agent-bar", classes="bar"):
                     for label, f in AGENT_FILTERS:
                         yield Btn(label, id=f"flt-{f or 'all'}")
@@ -745,6 +751,11 @@ class Navigator(App):
                 self.new_agent_in(p.root + (WT_SEP + p.worktree if p.worktree else ""))
             else:
                 self.notify("That workspace is not inside a project folder.", severity="warning")
+        for var, action in (("NAV_NEWANY", self.new_anywhere), ("NAV_OPENDIR", self.open_folder)):
+            if os.environ.pop(var, None):  # herdr's menu › New session in any folder / Open a project folder
+                self.new_only = True
+                self.digest_checked = True
+                action()
         self.show_digest(world)
         self.set_hint()
         self.load_panes()
@@ -2072,6 +2083,56 @@ class Navigator(App):
             self.notify("That agent is no longer open.", timeout=4)
         t.focus()
 
+    def new_anywhere(self) -> None:
+        """+ New: a session in any folder, not tied to a project you picked (starts in your home folder)."""
+        if not self.world:
+            return
+        folder = os.path.expanduser("~")
+        clis = installed_clis() or ["claude"]
+
+        def done(r):
+            if not r:
+                if getattr(self, "new_only", False):
+                    self.exit()  # opened only for this dialog, from herdr's menu
+                return
+            f = r["folder"] or folder
+            if not os.path.isdir(f):
+                self.notify(f"{f} does not exist.", severity="warning")
+                return
+            p = model.projects.resolve(f)
+            self.finish(lambda: launch.new_session(self.world, p, f, r["cli"], r["name"], r["prefs"], "", focus=True),
+                        busy=f"▶ starting {r['name'] or r['cli']}…")
+        self.push_screen(NewSession(clis, folder, "in any folder", False), done)
+
+    def open_folder(self) -> None:
+        """📂 Open…: a project folder as a Space; one that is already open is jumped to."""
+        if not self.world:
+            return
+        from .startup_ui import Prompt
+
+        def done(text):
+            if not text:
+                if getattr(self, "new_only", False):
+                    self.exit()
+                return
+            path = os.path.abspath(os.path.expanduser(os.path.expandvars(text.strip().strip('"'))))
+            if not os.path.isdir(path):
+                self.notify(f"{path} is not a folder.", severity="warning")
+                return
+            p = model.projects.resolve(path)
+            self.finish(lambda: launch.goto_project(self.world, p), busy=f"opening {p.label}…")
+        self.push_screen(Prompt("Open a project folder as a Space", "folder path, e.g. ~/Documents/my-project"), done)
+
+    def new_in_selected_agents_project(self) -> None:
+        """＋ In project (Agents): a session beside the highlighted agent, in its project or worktree."""
+        t = self.query_one("#agent-table", DataTable)
+        key = t.coordinate_to_cell_key(t.cursor_coordinate).row_key.value if t.row_count else None
+        a, _ = self.agent_rows.get(key, (None, -1))
+        if not a:
+            self.notify("Select an agent first: the new session starts in its project.", timeout=3)
+            return
+        self.new_agent_in(a.project.root + (WT_SEP + a.project.worktree if a.project.worktree else ""))
+
     def action_new_dialog(self, key: str | None = None) -> None:
         v, wt = self.selected(key)
         if not v:
@@ -2216,6 +2277,12 @@ class Navigator(App):
         bid = ev.button.id or ""
         if bid == "btn-new":
             self.new_menu(ev.button)
+        elif bid in ("btn-new-any", "btn-new-any-a"):
+            self.new_anywhere()
+        elif bid in ("btn-open-dir", "btn-open-dir-a"):
+            self.open_folder()
+        elif bid == "btn-new-proj-a":
+            self.new_in_selected_agents_project()
         elif bid == "pane-watch":
             from . import watch
             lay = self.pane_layout

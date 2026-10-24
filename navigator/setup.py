@@ -80,6 +80,9 @@ ACTIONS = [
     (["prefix+f", "f10"], "fold", "Navigator: fold / unfold this project in the sidebar"),
     (["prefix+shift+f", "ctrl+alt+shift+f"], "fold-all", "Navigator: fold / unfold every project in the sidebar"),
     (["prefix+shift+c", "ctrl+alt+shift+c"], "compact", "Navigator: /compact the focused agent with your instructions"),
+    (["prefix+shift+n", "ctrl+alt+shift+n"], "new-here", "Navigator: new session in this project (no worktree)"),
+    (["prefix+shift+t", "ctrl+alt+shift+t"], "new-any", "Navigator: new session in any folder"),
+    (["prefix+shift+w", "ctrl+alt+shift+w"], "open-dir", "Navigator: open a project folder as a Space"),
 ]
 
 UI = {
