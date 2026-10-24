@@ -407,7 +407,7 @@ def running(sessions: list[Session]) -> list[Running]:
     # Codex: recently written top-level threads; children attach to their parent
     children = codex_children(sessions, now)
     for s in sessions:
-        age = now - s.mtime
+        age = now - s.written
         if s.cli != "codex" or s.subagent or age > max(CODEX_BUSY_SECONDS, CODEX_IDLE_SECONDS):
             continue
         # no process to check: the rollout says whether a turn is open (a long tool call writes
@@ -480,7 +480,7 @@ def codex_children(sessions: list[Session], now: float) -> dict[str, list[SubAge
     kids: dict[str, list[SubAgent]] = {}
     seen: dict[str, list[str]] = {}
     for s in sessions:
-        if s.cli != "codex" or not s.subagent or now - s.mtime > CODEX_BUSY_SECONDS:
+        if s.cli != "codex" or not s.subagent or now - s.written > CODEX_BUSY_SECONDS:
             continue
         parent = _codex_parent(s.path)
         seen.setdefault(parent, []).append(s.path)
@@ -490,7 +490,7 @@ def codex_children(sessions: list[Session], now: float) -> dict[str, list[SubAge
             nick = m.get("agent_nickname") or sp.get("agent_nickname") or ""
             kids.setdefault(parent, []).append(SubAgent(
                 name=nick or role or s.title[:30], description=s.title, kind=role or "codex", model="",
-                mtime=s.mtime, activity=activity(s.path)))
+                mtime=s.written, activity=activity(s.path)))
     _CHILDREN.clear()
     _CHILDREN.update(seen)
     return kids

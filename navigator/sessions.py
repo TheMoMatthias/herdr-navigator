@@ -20,7 +20,7 @@ from . import projects, settings
 
 HEAD_BYTES = 96 * 1024
 TAIL_BYTES = 256 * 1024
-CACHE_VERSION = 13  # bumped: a Claude session's time is its last message, not its file's last write
+CACHE_VERSION = 14  # bumped: every CLI's session time is its last message, not its file's last write
 
 
 @dataclass
@@ -37,6 +37,12 @@ class Session:
     origin: str = ""    # e.g. "cli", "Codex Desktop"
     named: bool = False  # title is a name the user/provider gave it, not a first prompt
     empty: bool = False  # no conversation in the file: `claude --resume` answers "No conversation found"
+    wrote: float = 0.0   # the file's last write when that differs from `mtime` (the last message)
+
+    @property
+    def written(self) -> float:
+        """When the transcript last changed: a running turn writes without a message."""
+        return self.wrote or self.mtime
 
     @property
     def project(self) -> projects.Project:
@@ -140,11 +146,52 @@ def _decode_project_dir(name: str) -> str:
 
 
 def _stamp(d: dict) -> float:
-    """A transcript record's own time (epoch seconds), 0 when it has none."""
-    try:
-        return datetime.fromisoformat(str(d.get("timestamp", "")).replace("Z", "+00:00")).timestamp()
-    except ValueError:
-        return 0.0
+    """A transcript record's own time (epoch seconds), 0 when it has none. Reads ISO text and
+    epoch seconds or milliseconds, from the record or its message."""
+    msg = d.get("message") if isinstance(d.get("message"), dict) else {}
+    for src in (d, msg):
+        for k in ("timestamp", "ts", "time", "createdAt", "created_at"):
+            v = src.get(k)
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                return v / 1000 if v > 1e11 else float(v)
+            if isinstance(v, str) and v:
+                try:
+                    return datetime.fromisoformat(v.replace("Z", "+00:00")).timestamp()
+                except ValueError:
+                    continue
+    return 0.0
+
+
+def _spoke(recs, speaks) -> float:
+    """When the session last had a message: the newest stamp among the records `speaks` accepts.
+    A resume or a sync rewrites a transcript without a message, so the file's time alone lies."""
+    return max((_stamp(d) for d in recs if d and speaks(d)), default=0.0)
+
+
+def _last_said(st_mtime: float, spoke: float) -> float:
+    return min(st_mtime, spoke) if spoke else st_mtime
+
+
+def _said_codex(d: dict) -> bool:
+    p = d.get("payload") if isinstance(d.get("payload"), dict) else {}
+    if d.get("type") == "event_msg":
+        return p.get("type") in ("user_message", "agent_message")
+    return d.get("type") == "response_item" and p.get("type") == "message"
+
+
+_SAID = {
+    "claude": lambda d: d.get("type") in ("user", "assistant"),
+    "qwen": lambda d: d.get("type") in ("user", "assistant"),
+    "pi": lambda d: d.get("type") == "message",
+    "gemini": lambda d: d.get("type") in ("user", "gemini"),
+    "droid": lambda d: d.get("type") == "message",
+    "copilot": lambda d: str(d.get("type", "")).startswith(("user.", "assistant.")),
+    "codex": _said_codex,
+}
+
+
+def _spoke_in(cli: str, head: list[str], tail: list[str]) -> float:
+    return _spoke((_loads(line) for line in head + tail), _SAID[cli])
 
 
 def _parse_claude(path: Path) -> Session | None:
@@ -201,7 +248,7 @@ def _parse_claude(path: Path) -> Session | None:
         title=_clip(title or first_prompt or _clean(last_prompt) or "(untitled)"),
         last_prompt=_clip(_clean(last_prompt) or first_prompt, 200),
         branch=branch,
-        mtime=min(st.st_mtime, spoke) if spoke else st.st_mtime,
+        mtime=_last_said(st.st_mtime, spoke),
         path=str(path),
         subagent=entry.startswith("sdk"),
         origin=entry or "cli",
@@ -301,7 +348,8 @@ def _parse_codex(path: Path) -> Session | None:
         title=_clip(first_prompt or "(untitled)"),
         last_prompt=_clip(last_prompt or first_prompt, 200),
         branch=branch,
-        mtime=st.st_mtime,
+        mtime=_last_said(st.st_mtime, _spoke_in("codex", head, tail)),
+        wrote=st.st_mtime,
         path=str(path),
         subagent=meta.get("thread_source") == "subagent",
         origin=meta.get("originator", ""),
@@ -370,7 +418,7 @@ def _parse_pi(path: Path) -> Session | None:
         title=_clip(name or first_prompt or "(untitled)"),
         last_prompt=_clip(last_prompt or first_prompt, 200),
         branch="",
-        mtime=st.st_mtime,
+        mtime=_last_said(st.st_mtime, _spoke_in("pi", head, tail)),
         path=str(path),
         # pi names spawned helper sessions "<agent>#<8 hex>"
         subagent=bool(_PI_SUBAGENT_NAME.search(name)),
@@ -439,7 +487,7 @@ def _parse_qwen(path: Path) -> Session | None:
     return Session(
         cli="qwen", id=sid or path.stem, cwd=cwd, named=bool(title),
         title=_clip(title or first_prompt or "(untitled)"), last_prompt=_clip(last_prompt or first_prompt, 200),
-        branch=branch, mtime=path.stat().st_mtime, path=str(path), subagent=side, origin="cli")
+        branch=branch, mtime=_last_said(path.stat().st_mtime, _spoke_in("qwen", head, tail)), path=str(path), subagent=side, origin="cli")
 
 
 def _qwen_files(cutoff: float) -> list[Path]:
@@ -482,7 +530,7 @@ def _parse_gemini(path: Path) -> Session | None:
     return Session(
         cli="gemini", id=sid or path.stem, cwd=cwd, named=bool(title),
         title=_clip(title or first_prompt or "(untitled)"), last_prompt=_clip(last_prompt or first_prompt, 200),
-        branch="", mtime=path.stat().st_mtime, path=str(path), subagent=sub, origin="cli")
+        branch="", mtime=_last_said(path.stat().st_mtime, _spoke(recs, _SAID["gemini"])), path=str(path), subagent=sub, origin="cli")
 
 
 def _gemini_files(cutoff: float) -> list[Path]:
@@ -506,10 +554,13 @@ def _parse_copilot(path: Path) -> Session | None:
     if not meta.get("cwd"):
         return None
     name = meta.get("name", "")
+    spoke = 0.0
+    if path.name == "events.jsonl":
+        spoke = _spoke_in("copilot", *_read_head_tail(path))
     return Session(
         cli="copilot", id=meta.get("id") or path.parent.name, cwd=meta["cwd"], named=bool(name),
         title=_clip(name or "(untitled)"), last_prompt="", branch=meta.get("branch", ""),
-        mtime=path.stat().st_mtime, path=str(path), origin="cli")
+        mtime=_last_said(path.stat().st_mtime, spoke), path=str(path), origin="cli")
 
 
 def _copilot_files(cutoff: float) -> list[Path]:
@@ -561,7 +612,8 @@ def _parse_droid(path: Path) -> Session | None:
     return Session(
         cli="droid", id=meta["id"], cwd=meta["cwd"], named=bool(meta.get("isSessionTitleManuallySet") and name),
         title=_clip(name or first_prompt or _clean(meta.get("title", "")) or "(untitled)"),
-        last_prompt=_clip(last_prompt or first_prompt, 200), branch="", mtime=path.stat().st_mtime,
+        last_prompt=_clip(last_prompt or first_prompt, 200), branch="",
+        mtime=_last_said(path.stat().st_mtime, _spoke_in("droid", head, tail)),
         path=str(path), subagent=bool(meta.get("callingSessionId")), origin="cli")
 
 

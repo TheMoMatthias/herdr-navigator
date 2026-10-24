@@ -18,7 +18,8 @@ def isolated(tmp_path, monkeypatch):
     settings.load.cache_clear()
 
 
-def test_load_rereads_a_changed_file_without_cache_clear(tmp_path):
+def test_load_rereads_a_changed_file_without_cache_clear(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "RECHECK", 0)  # in the daemon an edit shows within RECHECK seconds
     path = tmp_path / "cfg" / "navigator.toml"
     path.write_text("[sessions]\nmax_age_days = 11\n", encoding="utf-8")
     assert settings.load().max_age_days == 11

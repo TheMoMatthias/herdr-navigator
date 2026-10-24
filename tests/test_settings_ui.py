@@ -345,7 +345,10 @@ def test_general_ticks_still_save():
     run(body, "general")
 
 
-def test_idle_sessions_section_saves_the_switch_and_the_hours():
+def test_idle_sessions_section_saves_the_switch_and_the_hours(monkeypatch):
+    from navigator import tidy
+    monkeypatch.setattr(tidy, "sweep", lambda *a, **k: [])   # switching it on sweeps at once
+
     async def body(app, pilot, pane):
         assert settings.load().tidy == {"enabled": False, "idle_hours": 10, "keep_newest": 3, "protect": ["lead"]}   # off until switched on
         pane.query_one("#td-hours").value = "6"

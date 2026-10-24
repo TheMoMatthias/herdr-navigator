@@ -217,6 +217,7 @@ def test_record_panes_survives_a_restart_and_marks_real_quits(tmp_path, monkeypa
     world = type("W", (), {"agents": [a]})()
     snap = {"panes": [{"pane_id": "w1:p2", "cwd": "C:/r", "agent": "claude"}, {"pane_id": "w1:p3", "cwd": "C:/r"}]}
     empty = type("W", (), {"agents": []})()
+    monkeypatch.setattr(restore, "server_id", lambda: "old:1")
     restore.record_panes(world, snap)
     assert restore.load_panes()["w1:p2"]["name"] == "LEAD"
     # herdr just restarted: the pane is back but empty, and this server has not resumed yet.

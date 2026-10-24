@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import tomllib
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -335,14 +336,29 @@ def settings_path() -> Path:
     return config_dir() / "navigator.toml"
 
 
+_SEEN: dict = {"at": 0.0, "dir": None, "value": None}
+RECHECK = 0.5  # seconds a loaded copy is trusted: one model build asks 300+ times
+
+
 def load() -> Settings:
     """The settings, re-read whenever navigator.toml changes (the resident daemon outlives edits)."""
+    now = time.monotonic()
+    where = (os.environ.get("HERDR_PLUGIN_CONFIG_DIR"), os.environ.get("APPDATA"))
+    if _SEEN["value"] is not None and _SEEN["dir"] == where and now - _SEEN["at"] < RECHECK:
+        return _SEEN["value"]
     path = settings_path()
     try:
         mtime = path.stat().st_mtime_ns
     except OSError:
         mtime = 0
-    return _load(str(path), mtime)
+    value = _load(str(path), mtime)
+    _SEEN.update(at=now, dir=where, value=value)
+    return value
+
+
+def _forget() -> None:
+    _load.cache_clear()
+    _SEEN["value"] = None
 
 
 @lru_cache(maxsize=1)
@@ -388,7 +404,7 @@ def _load(_key: str, _mtime_ns: int) -> Settings:
     )
 
 
-load.cache_clear = _load.cache_clear  # type: ignore[attr-defined]
+load.cache_clear = _forget  # type: ignore[attr-defined]
 
 
 def save_values(section: str, values: dict) -> None:

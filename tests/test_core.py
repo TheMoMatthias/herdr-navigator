@@ -142,6 +142,33 @@ def test_claude_session_time_is_its_last_message_not_its_file_write(tmp_path):
     assert os.path.getmtime(s.path) > s.mtime + 86400
 
 
+def test_every_cli_dates_a_session_by_its_last_message_not_its_file_write(tmp_path):
+    import datetime
+    proj = tmp_path / "P"
+    make_repo(proj)
+    at = lambda h: f"2026-10-22T{h}:00Z"  # noqa: E731
+    bookkeeping = {"type": "session_info", "name": "X", "timestamp": "2026-10-24T09:16:00Z"}
+    write_jsonl(tmp_path / "codex" / "sessions" / "2026" / "10" / "22" / "rollout-c.jsonl", [
+        {"timestamp": at("07:00"), "type": "session_meta", "payload": {"id": "c1", "cwd": str(proj)}},
+        {"timestamp": at("07:05"), "type": "event_msg", "payload": {"type": "agent_message", "message": "ok"}},
+        {"timestamp": "2026-10-24T09:16:00Z", "type": "event_msg", "payload": {"type": "token_count"}},
+    ])
+    write_jsonl(tmp_path / "pi" / "sessions" / "p" / "p1.jsonl", [
+        {"type": "session", "id": "p1", "cwd": str(proj), "timestamp": at("07:00")},
+        {"type": "message", "timestamp": at("07:05"), "message": {"role": "user", "content": "hi"}},
+        bookkeeping,
+    ])
+    write_jsonl(tmp_path / "droid" / ".factory" / "sessions" / "d" / "d1.jsonl", [
+        {"type": "session_start", "id": "d1", "cwd": str(proj), "title": "t"},
+        {"type": "message", "timestamp": 1792652700000, "message": {"role": "user", "content": "hi"}},  # epoch ms
+        {"type": "settings", "timestamp": "2026-10-24T09:16:00Z"},
+    ])
+    want = datetime.datetime(2026, 10, 22, 7, 5, tzinfo=datetime.timezone.utc).timestamp()
+    got = {s.cli: s.mtime for s in sessions.load_sessions(include_hidden=True)}
+    assert got["codex"] == want and got["pi"] == want
+    assert abs(got["droid"] - 1792652700) < 1   # the message's own epoch-ms stamp, not the later settings write
+
+
 def test_claude_first_prompt_skips_command_noise(tmp_path):
     proj = tmp_path / "P"
     make_repo(proj)

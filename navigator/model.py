@@ -403,10 +403,11 @@ def session_ref(ref: dict | None, by_path: dict[str, str]) -> str:
 
 
 def last_write(s: Session | None, transcript: str) -> float:
-    """When the session last wrote. A database-backed CLI (opencode, kilo, hermes) shares one file
-    across all its sessions, so there the session's own last update counts, not the file's."""
-    if s and s.path == transcript and (s.cli == "claude" or not transcript.endswith((".jsonl", ".json"))):
-        return s.mtime  # Claude: its last message (a resume rewrites the file without one)
+    """When the session last had a message, whatever the CLI: the session's own time, which is its
+    last message (a resume rewrites a transcript without one) or, for a database-backed CLI
+    (opencode, kilo, hermes) that shares one file across sessions, its own last update."""
+    if s and s.path == transcript:
+        return s.mtime
     return _mtime(transcript)
 
 
